@@ -157,6 +157,67 @@ impl HardEdge {
     }
 }
 
+/// Blend-Modus einer Surface (QLab: Blend Mode, z. B. Multiply/Screen).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum BlendMode {
+    /// Normale Alpha-Kompositing (Default).
+    #[default]
+    SourceOver,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    Add,
+    Difference,
+}
+
+impl BlendMode {
+    pub const ALL: [BlendMode; 8] = [
+        BlendMode::SourceOver,
+        BlendMode::Multiply,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::Add,
+        BlendMode::Difference,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SourceOver => "Source Over",
+            Self::Multiply => "Multiply",
+            Self::Screen => "Screen",
+            Self::Overlay => "Overlay",
+            Self::Darken => "Darken",
+            Self::Lighten => "Lighten",
+            Self::Add => "Add",
+            Self::Difference => "Difference",
+        }
+    }
+
+    /// Mischfunktion pro Kanal (0..=255).
+    pub fn mix(self, dst: f32, src: f32) -> f32 {
+        match self {
+            Self::SourceOver => src,
+            Self::Multiply => dst * src / 255.0,
+            Self::Screen => 255.0 - (255.0 - dst) * (255.0 - src) / 255.0,
+            Self::Overlay => {
+                if dst < 128.0 {
+                    2.0 * dst * src / 255.0
+                } else {
+                    255.0 - 2.0 * (255.0 - dst) * (255.0 - src) / 255.0
+                }
+            }
+            Self::Darken => dst.min(src),
+            Self::Lighten => dst.max(src),
+            Self::Add => (dst + src).min(255.0),
+            Self::Difference => (dst - src).abs(),
+        }
+    }
+}
+
 /// Ziel auf der Stage: `x`, `y`, Breite, Höhe.
 pub type SurfaceRect = (f32, f32, f32, f32);
 /// Ausschnitt der Quelle: `x0`, `y0`, `x1`, `y1`.
@@ -229,6 +290,9 @@ pub struct SurfaceGeometry {
     /// andere Achse mit (Basis ist das Medienformat, sonst das aktuelle Rechteck).
     #[serde(default)]
     pub lock_aspect: bool,
+    /// Blend-Modus der Surface (QLab: Blend Mode).
+    #[serde(default)]
+    pub blend_mode: BlendMode,
 }
 
 impl SurfaceGeometry {
@@ -245,6 +309,7 @@ impl SurfaceGeometry {
             visible: true,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: BlendMode::default(),
         }
     }
 
@@ -831,6 +896,7 @@ mod tests {
             visible: true,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: Default::default(),
         };
         // Rechte Kante bei x = 300: 20 px innen → Faktor 0.5.
         assert_eq!(s.hard_edge_factor(280.0, 100.0), 0.5);
@@ -947,6 +1013,7 @@ mod tests {
             visible: false,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: Default::default(),
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: SurfaceGeometry = serde_json::from_str(&json).unwrap();

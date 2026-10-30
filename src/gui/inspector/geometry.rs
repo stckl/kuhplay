@@ -248,6 +248,16 @@ fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry, content: Opt
             }
             ui.end_row();
         }
+        theme::field_label(ui, "Blend");
+        egui::ComboBox::from_id_salt("surface_blend_mode")
+            .selected_text(surface.blend_mode.label())
+            .show_ui(ui, |ui| {
+                for mode in crate::core::BlendMode::ALL {
+                    ui.selectable_value(&mut surface.blend_mode, mode, mode.label());
+                }
+            });
+        ui.end_row();
+
         theme::field_label(ui, "Opacity");
         ui.horizontal(|ui| {
             ui.add(egui::Slider::new(&mut surface.opacity, 0.0..=1.0));

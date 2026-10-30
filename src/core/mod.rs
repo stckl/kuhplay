@@ -74,8 +74,8 @@ pub use screen::{
 pub use show::ShowDocument;
 pub use slideshow::{Slide, SlideNav, SlideShow, SlideTransition};
 pub use stage::{
-    BlendCurve, Crop, EdgeSide, GeometryMode, HardEdge, Stage, StageGeometry, StageManager,
-    SurfaceGeometry,
+    BlendCurve, BlendMode, Crop, EdgeSide, GeometryMode, HardEdge, Stage, StageGeometry,
+    StageManager, SurfaceGeometry,
 };
 pub use timecode::{Fps, Timecode};
 pub use video_routing::{

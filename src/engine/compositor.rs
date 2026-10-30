@@ -193,15 +193,17 @@ impl Compositor {
                     let src = &frame.rgba[(sy * src_stride + sx) * 4..][..4];
                     let dst = &mut out
                         [((dy0 as usize + dy) * cw as usize + dx0 as usize + dx) * 4..][..4];
-                    if a >= 1.0 {
-                        // Deckend: direkter Copy.
+                    let mode = surface.blend_mode;
+                    if a >= 1.0 && mode == crate::core::BlendMode::SourceOver {
+                        // Deckend + SourceOver: direkter Copy.
                         dst.copy_from_slice(src);
                     } else {
-                        // Source-Over-Blending.
+                        // Blend-Modus: Farbe mischen, dann mit Alpha aufbringen.
                         for c in 0..3 {
                             let s = src[c] as f32;
                             let d = dst[c] as f32;
-                            dst[c] = (s * a + d * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                            let blended = mode.mix(d, s);
+                            dst[c] = (blended * a + d * (1.0 - a)).clamp(0.0, 255.0) as u8;
                         }
                         dst[3] = dst[3].max((src[3] as f32 * a).clamp(0.0, 255.0) as u8);
                     }
@@ -237,6 +239,7 @@ mod tests {
             visible: true,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: Default::default(),
         };
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(red), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
@@ -281,6 +284,7 @@ mod tests {
             visible: true,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: Default::default(),
         };
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(frame), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
@@ -310,6 +314,7 @@ mod tests {
             visible: true,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: Default::default(),
         };
         let right = SurfaceGeometry {
             x: 4.0,
@@ -322,6 +327,7 @@ mod tests {
             visible: true,
             mode: GeometryMode::Custom,
             lock_aspect: false,
+            blend_mode: Default::default(),
         };
         let surfaces = vec![
             (Uuid::new_v4(), 0, left, Some(blue), 1.0),
@@ -433,5 +439,59 @@ mod tests {
         assert!(comp.is_dirty(id, Some(&f2), 1.0));
         // Opacity geändert = dirty.
         assert!(comp.is_dirty(id, Some(&f1), 0.5));
+    }
+}
+
+#[cfg(test)]
+mod blend_mode_tests {
+    use super::super::frame::new_stage_frame_store;
+    use super::*;
+    use crate::core::BlendMode;
+    use std::sync::Arc;
+
+    fn frame(w: u32, h: u32, rgba: Vec<u8>) -> Arc<VideoFrame> {
+        Arc::new(VideoFrame::new(w, h, rgba))
+    }
+
+    #[test]
+    fn multiply_blends_instead_of_covering() {
+        let blue = frame(2, 2, [0u8, 0, 255, 255].repeat(4));
+        let white = frame(2, 2, [255u8, 255, 255, 255].repeat(4));
+        // Erst blau (SourceOver, Layer 0), dann Weiß mit Multiply (Layer 1).
+        let under = SurfaceGeometry::full_canvas();
+        let mut over = SurfaceGeometry::full_canvas();
+        over.blend_mode = BlendMode::Multiply;
+        let surfaces = vec![
+            (Uuid::new_v4(), 0, under, Some(blue), 1.0),
+            (Uuid::new_v4(), 1, over, Some(white), 1.0),
+        ];
+        let store = new_stage_frame_store();
+        let comp = Compositor::new();
+        comp.composite("S", (2, 2), &surfaces, &store);
+        let out = store.lock().unwrap().get("S").cloned().unwrap();
+        assert_eq!(
+            &out.rgba[0..4],
+            &[0, 0, 255, 255],
+            "Multiply mit Weiß ändert Blau nicht"
+        );
+
+        // Screen mit Schwarz über Blau ändert nichts.
+        let blue2 = frame(2, 2, [0u8, 0, 255, 255].repeat(4));
+        let black = frame(2, 2, [0u8, 0, 0, 255].repeat(4));
+        let under = SurfaceGeometry::full_canvas();
+        let mut over = SurfaceGeometry::full_canvas();
+        over.blend_mode = BlendMode::Screen;
+        let surfaces = vec![
+            (Uuid::new_v4(), 0, under, Some(blue2), 1.0),
+            (Uuid::new_v4(), 1, over, Some(black), 1.0),
+        ];
+        let store = new_stage_frame_store();
+        comp.composite("S2", (2, 2), &surfaces, &store);
+        let out = store.lock().unwrap().get("S2").cloned().unwrap();
+        assert_eq!(
+            &out.rgba[0..4],
+            &[0, 0, 255, 255],
+            "Screen mit Schwarz ändert Blau nicht"
+        );
     }
 }
