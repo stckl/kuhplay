@@ -1669,3 +1669,72 @@ fn stages_page_renders() {
     assert!(output_has_text(&out, "+ New Stage"));
     assert!(output_has_text(&out, "Delete"));
 }
+
+#[test]
+fn inspector_renders_waveform_for_audio_cue() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+
+    // Sinus-WAV als Target eines Audio-Cues.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sine.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 8000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    for i in 0..4000 {
+        let s = ((i as f32 / 8000.0) * 440.0 * 2.0 * std::f32::consts::PI).sin() * 0.8;
+        writer.write_sample((s * i16::MAX as f32) as i16).unwrap();
+    }
+    writer.finalize().unwrap();
+
+    // Ersten Audio-Cue selektieren und Target setzen.
+    let idx = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .position(|c| c.cue_type == CueType::Audio)
+        .expect("demo app hat audio cue");
+    app.carts.active_mut().select(Some(idx));
+    app.carts.active_mut().cues_mut()[idx].target_path = Some(path.display().to_string());
+
+    // Frame rendern (Waveform-Zweig zeichnen) – zweimal (zweiter Lauf: Cache-Hit).
+    render_frame(&ctx, &mut app);
+    render_frame(&ctx, &mut app);
+
+    // Peaks landen im App-Cache.
+    let w = app.waveform_for(&path).expect("dekodierbar");
+    assert!(w.peak() > 0.7, "sinus-peak zu klein: {}", w.peak());
+}
+
+#[test]
+fn masthead_renders_audition_badge() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    app.set_audition_mode(true);
+    // Badge rendern (zweimal – Cache-/State-Pfade abdecken).
+    render_frame(&ctx, &mut app);
+    render_frame(&ctx, &mut app);
+}
+
+#[test]
+fn show_save_load_roundtrip() {
+    let mut app = demo_app();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("demo.kuhplay");
+
+    let cues_before = app.carts.active().len();
+    app.save_show(&path);
+    assert!(path.is_file(), "Show-Datei muss geschrieben werden");
+
+    // Show verändern, dann zurückladen → Zustand wiederhergestellt.
+    app.new_show();
+    assert_eq!(app.carts.active().len(), 0);
+    app.load_show(&path).expect("Show muss laden");
+    assert_eq!(app.carts.active().len(), cues_before);
+    assert_eq!(app.show_name, "Demo Show");
+}
