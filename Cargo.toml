@@ -1,0 +1,117 @@
+[package]
+name = "kuhplay"
+version = "0.1.0"
+edition = "2021"
+description = "Plattformübergreifende Show-Control- und Cue-Playback-Software (QLab-Style) in Rust"
+license = "MIT"
+
+[dependencies]
+# GUI (plattformübergreifend, performant, Dark-Mode-freundlich)
+eframe = "0.30"
+egui = "0.30"
+egui_extras = "0.30" # TableBuilder für die Cue-Liste
+
+# Concurrency: thread-sichere Kanäle zwischen UI- und Engine-Thread
+crossbeam-channel = "0.5"
+
+# Robuste Fehlerbehandlung
+thiserror = "2"
+
+# Serialisierung (Persistenz von Cue-Listen, IDs, JSON-Payloads der Data-Cues)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Async-Runtime (vorbereitet für zukünftige async Backends, z. B.
+# wry-WebView-Events; der Engine-Loop selbst nutzt bewusst crossbeam +
+# einen dedizierten Thread – siehe src/engine/mod.rs)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time", "process", "io-util"] }
+
+# Web-Remote: HTTP + WebSocket Server (axum) für Browser-Fernsteuerung
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+# Companion Plugin: TCP JSON-lines Protokoll (nutzt tokio::net)
+# OSC-Steuerung: UDP (rosc, pure Rust) – QLab „OSC" Netzwerk-Remote
+rosc = "0.10"
+# MIDI-Steuerung: Controller-Input (midir; macOS CoreMIDI, Linux ALSA)
+midir = "0.11"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Native Datei-Dialoge (Medien/Slides/HTML-Dateien im Inspector hinterlegen).
+# macOS: Cocoa (keine System-Dependency); Linux: GTK3 (rfd-Default).
+rfd = "0.15"
+
+# Echtes Media-Playout (Real-Engine, siehe src/engine/real_engine.rs):
+# Audio: symphonia-Dekodierung (pure Rust) + cpal-Ausgabe.
+cpal = "0.18.2"
+symphonia = { version = "0.5.4", features = ["mp3", "aac", "alac", "isomp4", "aiff", "caf"] }
+# Video: ffmpeg-Subprocess (rawvideo/rgba) + Bild-Dekodierung (Diashows).
+image = "0.25.10"
+# Hardware-Displays (Screen-Zuordnung der Stages, QLab „Stage → Screen“).
+display-info = "0.5"
+
+# HTML5-WebView (optional, Feature „webview"): eigener Subprocess
+# (src/bin/kuhplay-webview.rs, tao+wry) für HTML5-Cues. Die Engine nutzt
+# ihn, wenn das Binary auffindbar ist, sonst virtueller Fallback – siehe
+# src/engine/webview_backend.rs.
+wry = { version = "0.47", optional = true }
+# Fenster/Event-Loop für den WebView-Subprocess (macOS: tao braucht den
+# Main-Thread – deshalb eigener Prozess, nicht in der eframe-App).
+tao = { version = "0.30", optional = true }
+# Base64 für Frame-Payloads der WebView-IPC (bereits transitiv im Tree).
+base64 = "0.22"
+
+# macOS: nativer WKWebView-Snapshot (takeSnapshot) für WebView-Compositing
+# im Subprocess – Versionen passend zu wry 0.47 (objc2 0.5), keine neuen
+# Crates im Tree. Auf anderen Plattformen greift der JS-Canvas-Fallback.
+[target.'cfg(target_os = "macos")'.dependencies]
+# Native Menüleiste (siehe src/gui/native_menu.rs).
+muda = "0.17"
+objc2-foundation = { version = "0.2", optional = true, features = [
+    "NSData",
+    "NSError",
+    "NSDictionary",
+    "NSString",
+] }
+objc2-app-kit = { version = "0.2", optional = true, features = [
+    "NSImage",
+    "NSBitmapImageRep",
+] }
+objc2-web-kit = { version = "0.2", optional = true, features = [
+    "WKSnapshotConfiguration",
+] }
+block2 = { version = "0.5", optional = true }
+
+# Zukünftige Media-Anbindung (noch nicht einkompiliert, bewusst commented):
+# gstreamer = "0.23"       # Video/Audio, Hardware-Decoding (Decklink, NDI)
+# gstreamer-app = "0.23"   # App-Sink/Source für Frame-Zugriff
+
+[features]
+# „webview": baut den WebView-Subprocess (tao+wry/WKWebView) für HTML5-Cues.
+# Unter macOS zusätzlich objc2- für den nativen takeSnapshot (Compositing).
+webview = [
+    "wry",
+    "tao",
+    "dep:objc2-foundation",
+    "dep:objc2-app-kit",
+    "dep:objc2-web-kit",
+    "dep:block2",
+]
+
+[[bin]]
+name = "kuhplay-webview"
+path = "src/bin/kuhplay-webview.rs"
+required-features = ["webview"]
+
+[dev-dependencies]
+hound = "3.5.1"
+# Test-Suite: echte Temp-Dateien für Resilienz-Tests
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/bitfocus/companion-module-base/main/manifest.schema.json",
+  "id": "kuhplay",
+  "name": "KuhPlay",
+  "shortname": "kuhplay",
+  "description": "KuhPlay Show Control – GO, Panic, Cue-Trigger und Status-Feedback über TCP (JSON-lines).",
+  "manufacturer": "KuhPlay",
+  "products": ["KuhPlay Show Control"],
+  "keywords": ["show control", "cue", "qlab", "playback", "video"],
+  "version": "1.0.0",
+  "license": "MIT",
+  "runtime": {
+    "apiVersion": "3.4.0"
+  }
+}

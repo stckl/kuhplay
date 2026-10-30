@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KuhPlay Remote</title>
+<style>
+/* Farben und Abstände wie in der App: docs/UI.md §3 und src/gui/theme.rs */
+:root {
+  color-scheme: dark;
+  --bg: #121215; --list: #161619; --stripe: #1b1b1f; --panel: #212126; --raised: #2d2d34; --border: #34343c;
+  --text: #dedee4; --dim: #9696a0; --faint: #5c5c66;
+  --go: #2ecc71; --prewait: #ff9100; --paused: #3498db; --postwait: #27ae96; --error: #eb5a48; --panic: #e85f46;
+  --accent: #ffb000; --selection: #3a5470; --cursor: #323640; --showbg: #3a1612;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--text); font: 13.5px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: var(--raised); border: 0; border-radius: 5px; padding: 4px 8px; cursor: pointer; }
+button:hover:not(:disabled) { background: #3a3a44; }
+button:disabled { color: var(--faint); cursor: default; }
+input, select, textarea { background: var(--bg); border: 1px solid transparent; border-radius: 5px; padding: 3px 6px; min-width: 0; }
+input:focus, select:focus, textarea:focus { outline: 0; border-color: var(--selection); }
+input[type=checkbox] { accent-color: var(--selection); width: 15px; height: 15px; vertical-align: middle; }
+input[type=range] { padding: 0; accent-color: #8a8a96; }
+textarea { width: 100%; resize: vertical; }
+#app { display: grid; height: 100dvh; grid-template: "mast mast mast" auto "tool list side" 1fr "insp insp insp" minmax(0, 38%) "foot foot foot" auto / 136px minmax(0, 1fr) 240px; }
+#mast { grid-area: mast; display: flex; gap: 16px; align-items: center; padding: 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+body.show #mast { background: var(--showbg); outline: 2px solid var(--panic); outline-offset: -2px; }
+#go { width: 132px; height: 64px; font-size: 30px; font-weight: 700; color: #fff; border: 3px solid var(--go); border-radius: 8px; flex: none; }
+#go.idle { border: 1px solid #707684; }
+#standby { flex: 1; min-width: 0; }
+.label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .02em; }
+#sname { font-size: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sname.none { color: var(--faint); font-weight: 400; }
+#snotes { width: 100%; margin-top: 2px; }
+#transport { display: flex; gap: 4px; align-items: center; flex: none; }
+#transport .ico { width: 36px; height: 36px; background: none; font-size: 16px; }
+#transport .ico:hover { background: var(--raised); }
+#panic { height: 40px; width: 96px; border: 2px solid var(--panic); border-radius: 8px; font-size: 15px; margin-left: 4px; }
+#tool { grid-area: tool; background: var(--panel); padding: 8px 4px; overflow: auto; border-right: 1px solid var(--border); }
+#tool .label { padding: 12px 4px 2px; }
+#tool .label:first-child { padding-top: 0; }
+.row-btn { display: block; width: 100%; text-align: left; background: none; padding: 4px 8px; height: 26px; }
+#list { grid-area: list; background: var(--list); display: flex; flex-direction: column; min-height: 0; }
+#actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--panel); }
+#cues { flex: 1; overflow: auto; min-height: 0; }
+table { border-collapse: collapse; width: 100%; }
+th { position: sticky; top: 0; z-index: 1; background: var(--list); text-align: left; font-size: 11px; font-weight: 400; color: var(--dim); padding: 5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 0 6px; height: 28px; white-space: nowrap; }
+tbody tr:nth-child(even) { background: var(--stripe); }
+tr.cursor { background: var(--cursor) !important; }
+tr.sel { background: var(--selection) !important; }
+tr.disarmed td { color: var(--faint); }
+td.time { font-family: ui-monospace, Menlo, monospace; font-size: 13px; text-align: right; position: relative; }
+td.zero { color: var(--faint); } tr.sel td.zero { color: var(--dim); }
+td.num { font-family: ui-monospace, Menlo, monospace; font-weight: 600; }
+td.target { color: var(--dim); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+td.name { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+td.stat { width: 44px; font-size: 13px; cursor: pointer; }
+.bar { position: absolute; inset: 0 auto 0 0; background: rgba(46, 204, 113, .18); pointer-events: none; }
+.t-play { color: var(--go); } .t-pre { color: var(--prewait); } .t-pause { color: var(--paused); } .t-post { color: var(--postwait); } .t-err { color: var(--error); }
+.caret { background: none; padding: 0 3px; }
+#side { grid-area: side; background: var(--panel); border-left: 1px solid var(--border); padding: 8px 12px; overflow: auto; }
+.tabs { display: flex; gap: 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px; overflow-x: auto; flex: none; }
+.tabs button { background: none; padding: 2px 0 4px; color: var(--dim); border-radius: 0; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs button.on { color: var(--text); font-weight: 600; border-color: var(--text); }
+.cart { display: flex; justify-content: space-between; width: 100%; background: none; height: 26px; }
+.cart.on { background: var(--selection); }
+.cart span:last-child { color: var(--dim); font-family: ui-monospace, Menlo, monospace; }
+.link { background: none; color: var(--dim); margin-top: 8px; }
+.active { position: relative; background: var(--raised); border-radius: 5px; border-left: 3px solid var(--go); margin-bottom: 4px; padding: 4px; display: flex; gap: 4px; align-items: center; overflow: hidden; }
+.active.paused { border-color: var(--paused); }
+.active > * { position: relative; }
+.active .info { flex: 1; min-width: 0; }
+.active .info div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.active .remain { font: 11px ui-monospace, Menlo, monospace; color: var(--dim); }
+.active button { width: 28px; height: 28px; background: none; flex: none; }
+.empty { color: var(--faint); text-align: center; padding: 16px; }
+#insp { grid-area: insp; background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px; display: flex; flex-direction: column; min-height: 0; }
+#ihead { font-size: 15px; font-weight: 600; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ibody { flex: 1; overflow: auto; min-height: 0; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px 24px; }
+.form { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 6px 12px; align-items: center; }
+.form > label, .form > .lab { text-align: right; color: var(--dim); }
+.form .wide { grid-column: 1 / -1; }
+.inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.inline input[type=text]:not(.short), .form > input[type=text], .form > select, .form > textarea { width: 100%; }
+.inline input.grow { flex: 1; width: auto; }
+input.short { width: 88px; }
+.swatch { width: 18px; height: 18px; padding: 0; border-radius: 5px; }
+.swatch.on { outline: 2px solid var(--text); }
+.ok { color: var(--go); } .bad { color: var(--error); } .dim { color: var(--dim); }
+.matrix { border-collapse: separate; border-spacing: 2px; width: auto; }
+.matrix td, .matrix th { height: auto; padding: 0; text-align: center; position: static; background: none; border: 0; }
+.matrix td:first-child { text-align: left; color: var(--dim); padding-right: 6px; }
+#foot { grid-area: foot; display: flex; gap: 8px; align-items: center; background: var(--panel); border-top: 1px solid var(--border); padding: 2px 8px; min-height: 28px; flex-wrap: wrap; }
+body.show #foot { background: var(--showbg); }
+.seg.on { background: var(--selection); }
+.seg { background: none; padding: 1px 8px; }
+#broken { background: none; color: var(--error); padding: 1px 4px; }
+#msg { color: var(--error); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#conn { color: var(--dim); font-size: 11px; }
+#conn.off { color: var(--error); font-weight: 600; }
+#modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 5; }
+#modal.open { display: flex; }
+#dialog { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; width: min(860px, 100%); max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
+#dtitle { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 15px; border-bottom: 1px solid var(--border); }
+#dmain { display: grid; grid-template-columns: 136px minmax(0, 1fr); min-height: 0; overflow: hidden; flex: 1; }
+#dnav { padding: 8px; border-right: 1px solid var(--border); overflow: auto; }
+#dnav button.on { background: var(--selection); }
+#dbody { padding: 12px 16px; overflow: auto; min-height: 320px; }
+.section { margin: 16px 0 6px; } .section:first-child { margin-top: 0; }
+.card { background: var(--raised); border-radius: 5px; padding: 8px; margin-bottom: 8px; }
+.note { color: var(--dim); margin-top: 12px; }
+@media (max-width: 800px) {
+  body { overflow: auto; }
+  #app { height: auto; grid-template: "mast" auto "foot" auto "list" 45dvh "tool" auto "insp" auto "side" auto / minmax(0, 1fr); }
+  #mast { flex-wrap: wrap; position: sticky; top: 0; z-index: 3; }
+  #go { width: 110px; } #standby { flex-basis: calc(100% - 130px); }
+  #transport { width: 100%; justify-content: space-between; }
+  #tool { display: flex; flex-wrap: wrap; border: 0; gap: 2px; } #tool .label { display: none; } #tool .row-btn { width: auto; background: var(--raised); }
+  #insp { min-height: 50dvh; } #side { border: 0; border-top: 1px solid var(--border); }
+  td, button { min-height: 32px; } .target-col, .wait-col { display: none; } td.name { min-width: 120px; }
+  #dmain { grid-template-columns: minmax(0, 1fr); overflow: auto; } #dnav { display: flex; flex-wrap: wrap; border: 0; border-bottom: 1px solid var(--border); } #dnav .row-btn { width: auto; }
+  #dbody { overflow: visible; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="mast">
+    <button id="go" title="Space">GO</button>
+    <div id="standby"><div class="label">Standby</div><div id="sname"></div><input id="snotes" type="text" placeholder="Notes (standby cue)…"></div>
+    <div id="transport">
+      <button class="ico" id="pause" title="Pause All">❚❚</button>
+      <button class="ico" id="resume" title="Resume All">▶</button>
+      <button class="ico" id="reset" title="Reset All">↺</button>
+      <button id="panic" title="Esc">Panic</button>
+    </div>
+  </div>
+  <div id="tool"></div>
+  <div id="list"><div id="actions"></div><div id="cues"></div></div>
+  <div id="side"></div>
+  <div id="insp"></div>
+  <div id="foot"></div>
+</div>
+<div id="modal"><div id="dialog"><div id="dtitle"><span>Workspace Settings</span><button id="dclose">Close</button></div><div id="dmain"><div id="dnav"></div><div id="dbody"></div></div></div></div>
+<script>
+'use strict';
+let S = null, W = null, ws = null, statusAt = 0;
+let selected = [], sideTab = 'lists', inspTab = 'Basics', page = 'General', message = '';
+const $ = id => document.getElementById(id);
+const COLORS = [[231,76,60],[230,126,34],[241,196,15],[39,174,96],[41,128,185],[142,68,173],[232,67,147],[127,140,141]];
+const TOOLS = [['Media',['Audio','Video','Html','SlideShow']],['Fade',['Fade']],['Control',['Group','Stop','Script','Control']],['Data',['HtmlData']]];
+const TABS = { Audio:['Basics','Triggers','Time & Loops','Audio Levels'], Video:['Basics','Triggers','Time & Loops','Geometry','Audio Levels'], Fade:['Basics','Triggers','Curve'], Html:['Basics','Triggers','Geometry','Source'], SlideShow:['Basics','Triggers','Geometry','Slides'], HtmlData:['Basics','Triggers','Data'] };
+const ICON = { Audio:'♪', Video:'▣', Html:'◍', SlideShow:'▤', Fade:'◐', Group:'❏', Stop:'■', Script:'✎', Control:'⌃', HtmlData:'{}' };
+
+function send(action, extra = {}) {
+  const c = { action, ...extra };
+  if (ws && ws.readyState === 1) { ws.send(JSON.stringify(c)); return; }
+  fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+    .then(r => { if (!r.ok) setMessage('Command failed.'); }).catch(() => setMessage('No connection to KuhPlay.'));
+}
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => renderFoot();
+  ws.onclose = () => { renderFoot(); setTimeout(connect, 2000); };
+  ws.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'status') {
+      const modeChanged = S && S.show_mode !== ev.show_mode;
+      S = ev; statusAt = performance.now(); renderLive();
+      if (modeChanged) render();
+    }
+    else if (ev.type === 'workspace') { W = ev; render(); }
+    else if (ev.type === 'error') setMessage(ev.message);
+  };
+}
+function setMessage(text) { message = text; renderFoot(); }
+const editable = () => !(S && S.show_mode);
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k in el && k !== 'list') el[k] = v;
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid !== null && kid !== undefined) el.append(kid);
+  return el;
+}
+function fmt(ms) {
+  const t = Math.max(0, Math.round(ms)), m = Math.floor(t / 60000), s = Math.floor(t / 1000) % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + String(t % 1000).padStart(3, '0');
+}
+function parseTime(text) {
+  const parts = text.trim().split(':').map(Number);
+  if (!parts.length || parts.some(Number.isNaN)) return null;
+  return Math.round(parts.reduce((sum, p) => sum * 60 + p, 0) * 1000);
+}
+const allCues = () => W ? W.cues.flatMap(c => [c, ...c.children]) : [];
+const cueById = id => allCues().find(c => c.id === id);
+const primary = () => cueById(selected[0]);
+function statusMark(c) {
+  const running = { Playing:['▶','t-play'], Paused:['❚❚','t-pause'], PreWait:['◷','t-pre'], PostWait:['◷','t-post'], Error:['✕','t-err'] }[c.status];
+  return running || null;
+}
+
+function render() {
+  if (!W) return;
+  document.title = W.show_name + ' – KuhPlay Remote';
+  renderTool(); renderActions(); renderCues(); renderSide(); renderInsp(); renderFoot(); renderMast();
+  if ($('modal').classList.contains('open')) renderSettings();
+}
+function renderLive() { renderMast(); renderFoot(); renderCues(); if (sideTab === 'active' || !W) renderSide(); document.body.classList.toggle('show', !!(S && S.show_mode)); }
+
+function renderMast() {
+  const c = S && S.standby, name = $('sname'), notes = $('snotes'), full = c && cueById(c.id);
+  name.textContent = c ? c.number + ' • ' + c.name : 'No cue standing by';
+  name.className = c ? '' : 'none';
+  $('go').className = c ? '' : 'idle';
+  notes.style.display = editable() ? '' : 'none';
+  notes.disabled = !full;
+  if (document.activeElement !== notes) notes.value = full ? full.notes : '';
+}
+function renderTool() {
+  const on = editable();
+  $('tool').replaceChildren(...TOOLS.flatMap(([group, types]) => [
+    h('div', { class: 'label' }, group),
+    ...types.map(t => h('button', { class: 'row-btn', disabled: !on, onclick: () => send('new_cue', { cue_type: t }) },
+      (ICON[t] || '') + '  ' + (W.options.cue_type.find(o => o.value === t) || { label: t }).label)),
+  ]));
+}
+function renderActions() {
+  const on = editable(), c = primary(), any = selected.length > 0;
+  const armedNow = c ? c.is_armed : true;
+  $('actions').replaceChildren(
+    h('button', { disabled: !on || !any, onclick: () => send('duplicate_cues', { ids: selected }) }, 'Duplicate'),
+    h('button', { disabled: !on || !any, onclick: () => send('group_cues', { ids: selected }) }, 'Group'),
+    h('button', { disabled: !on || !c, onclick: () => selected.forEach(id => send('update_cue', { id, changes: { is_armed: !armedNow } })) }, armedNow ? 'Disarm' : 'Arm'),
+    h('button', { disabled: !on || !c, onclick: () => moveSelected(-1) }, 'Move Up'),
+    h('button', { disabled: !on || !c, onclick: () => moveSelected(1) }, 'Move Down'),
+    h('button', { disabled: !c, onclick: () => send('set_playhead', { id: c.id }) }, 'Set Playhead'),
+    h('button', { disabled: !c, onclick: () => send('go_to', { cue: c.number }) }, 'Play Cue'),
+    h('button', { disabled: !on || !any, onclick: () => {
+      if (confirm(selected.length + ' cue(s) delete?')) { selected.forEach(id => send('delete_cue', { id })); selected = []; }
+    } }, 'Delete'),
+  );
+}
+function moveSelected(delta) {
+  const index = W.cues.findIndex(c => c.id === selected[0]);
+  if (index < 0) return setMessage('Only top-level cues can be moved.');
+  send('move_cue', { id: selected[0], to: Math.max(0, Math.min(W.cues.length - 1, index + delta)) });
+}
+function pick(e, id) {
+  if (e.metaKey || e.ctrlKey) selected = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id];
+  else selected = [id];
+  render();
+}
+function runningInfo(id) {
+  const r = S && S.running.find(x => x.id === id);
+  if (!r) return null;
+  const elapsed = r.elapsed_ms + (r.status === 'Playing' ? performance.now() - statusAt : 0);
+  return { ...r, elapsed };
+}
+function timeCell(ms, c, field) {
+  const wait = field === 'duration' ? '' : ' wait-col';
+  const td = h('td', { class: 'time' + wait + (ms === 0 ? ' zero' : '') });
+  const run = field === 'duration' ? runningInfo(c.id) : null;
+  if (run && ms > 0) {
+    td.className = 'time' + wait + ' ' + (run.status === 'Paused' ? 't-pause' : 't-play');
+    td.append(h('span', { class: 'bar', style: 'width:' + Math.min(100, run.elapsed / ms * 100) + '%' }), fmt(ms - run.elapsed));
+  } else td.append(fmt(ms));
+  td.addEventListener('dblclick', () => { if (editable()) editTime(td, c, field, ms); });
+  return td;
+}
+let editing = false;
+function editTime(td, c, field, ms) {
+  editing = true;
+  const input = h('input', { type: 'text', class: 'short', value: fmt(ms) });
+  const done = commit => {
+    editing = false;
+    const value = commit ? parseTime(input.value) : null;
+    if (value !== null) send('update_cue', { id: c.id, changes: { [field]: value } });
+    renderCues();
+  };
+  input.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.dataset.cancel = '1'; input.blur(); } });
+  input.addEventListener('blur', () => done(!input.dataset.cancel));
+  td.replaceChildren(input); input.focus(); input.select();
+}
+function editText(td, c, field) {
+  if (!editable()) return;
+  editing = true;
+  const input = h('input', { type: 'text', value: c[field], style: 'width:100%' });
+  const done = commit => {
+    editing = false;
+    if (commit && input.value !== c[field]) send('update_cue', { id: c.id, changes: { [field]: input.value } });
+    renderCues();
+  };
+  input.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.dataset.cancel = '1'; input.blur(); } });
+  input.addEventListener('blur', () => done(!input.dataset.cancel));
+  td.replaceChildren(input); input.focus(); input.select();
+}
+function targetText(c) {
+  if (c.cue_type === 'Audio' || c.cue_type === 'Video') return c.target_path ? c.target_path.split('/').pop() : '–';
+  if (c.cue_type === 'Control') return c.control_target ? 'Q ' + c.control_target : 'all cues';
+  if (c.cue_type === 'Html') return 'HTML';
+  if (c.cue_type === 'HtmlData') return 'JSON';
+  if (c.cue_type === 'SlideShow') return c.slideshow ? c.slideshow.slides.length + ' slides' : '–';
+  return '–';
+}
+function cueRow(c, index, child) {
+  const isCursor = !child && S && S.playhead === index;
+  const row = h('tr', { class: [isCursor ? 'cursor' : '', selected.includes(c.id) ? 'sel' : '', c.is_armed ? '' : 'disarmed'].join(' '), onclick: e => pick(e, c.id) });
+  const mark = statusMark(c), broken = W.problems[c.id];
+  const stat = h('td', { class: 'stat', title: 'Click to set the playhead', onclick: e => { if (!child) { e.stopPropagation(); send('set_playhead', { id: c.id }); } } });
+  if (isCursor) stat.append('› ');
+  if (mark) stat.append(h('span', { class: mark[1] }, mark[0] + ' '));
+  if (broken) stat.append(h('span', { class: 't-err', title: broken.join('; ') }, '✕'));
+  const type = h('td', { title: c.cue_type });
+  if (c.cue_type === 'Group' && !child) type.append(h('button', { class: 'caret', onclick: e => { e.stopPropagation(); send('update_cue', { id: c.id, changes: { collapsed: !c.collapsed } }); } }, c.collapsed ? '▸' : '▾'));
+  type.append(ICON[c.cue_type] || '');
+  const num = h('td', { class: 'num', ondblclick: () => editText(num, c, 'number') }, c.number);
+  const name = h('td', { class: 'name', ondblclick: () => editText(name, c, 'name'), style: (child ? 'padding-left:26px;' : '') + (c.color ? `box-shadow: inset 3px 0 rgb(${c.color})` : '') }, c.name);
+  const cont = h('td', { title: c.continue_mode }, c.continue_mode === 'Off' ? '' : h('span', { style: 'color:var(--accent)' }, '»'));
+  row.append(stat, type, num, name, h('td', { class: 'target target-col' }, targetText(c)), timeCell(c.pre_wait, c, 'pre_wait'), timeCell(c.duration, c, 'duration'), timeCell(c.post_wait, c, 'post_wait'), cont);
+  if (!child && editable()) {
+    row.draggable = true;
+    row.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', c.id));
+    row.addEventListener('dragover', e => e.preventDefault());
+    row.addEventListener('drop', e => { e.preventDefault(); send('move_cue', { id: e.dataTransfer.getData('text/plain'), to: index }); });
+  }
+  return row;
+}
+function renderCues() {
+  if (!W || editing) return;
+  const scroll = $('cues').scrollTop, body = h('tbody');
+  W.cues.forEach((c, i) => {
+    body.append(cueRow(c, i, false));
+    if (c.cue_type === 'Group' && !c.collapsed) c.children.forEach(k => body.append(cueRow(k, i, true)));
+  });
+  const head = h('tr', {}, ['', 'Type', 'Q#', 'Name', 'Target', 'Pre-wait', 'Duration', 'Post-wait', '»'].map((t, i) => h('th', { class: i === 4 ? 'target-col' : i === 5 || i === 7 ? 'wait-col' : '' }, t)));
+  $('cues').replaceChildren(h('table', {}, h('thead', {}, head), body));
+  $('cues').scrollTop = scroll;
+}
+function renderSide() {
+  if (!S) return;
+  const tabs = h('div', { class: 'tabs' },
+    h('button', { class: sideTab === 'lists' ? 'on' : '', onclick: () => { sideTab = 'lists'; renderSide(); } }, 'Lists & Carts'),
+    h('button', { class: sideTab === 'active' ? 'on' : '', onclick: () => { sideTab = 'active'; renderSide(); } }, `Active Cues (${S.running.length})`));
+  let body;
+  if (sideTab === 'lists') {
+    body = [...S.carts.map(c => h('button', { class: 'cart' + (c.index === S.active_cart ? ' on' : ''), onclick: () => { selected = []; send('set_active_cart', { index: c.index }); } }, h('span', {}, c.name), h('span', {}, c.cue_count))),
+      h('button', { class: 'link', disabled: !editable(), onclick: () => send('add_cart', { name: 'Cart ' + (S.carts.length + 1) }) }, '+ New Cart')];
+  } else if (!S.running.length) {
+    body = [h('div', { class: 'empty' }, 'No active cues')];
+  } else {
+    body = S.running.map(r => {
+      const info = runningInfo(r.id), paused = r.status === 'Paused', pct = r.duration_ms ? Math.min(100, info.elapsed / r.duration_ms * 100) : 0;
+      return h('div', { class: 'active' + (paused ? ' paused' : '') },
+        h('span', { class: 'bar', style: `position:absolute;width:${pct}%` }),
+        h('button', { title: paused ? 'Resume' : 'Pause', onclick: () => send(paused ? 'resume_cue' : 'pause_cue', { id: r.id }) }, paused ? '▶' : '❚❚'),
+        h('div', { class: 'info' }, h('div', {}, r.number + '  ' + r.name), h('div', { class: 'remain' }, r.duration_ms ? '−' + fmt(r.duration_ms - info.elapsed) : fmt(info.elapsed))),
+        h('button', { title: 'Stop', style: 'color:var(--panic)', onclick: () => send('stop_cue', { id: r.id }) }, '■'));
+    });
+  }
+  $('side').replaceChildren(tabs, ...body);
+}
+function renderFoot() {
+  if (!S) { $('foot').replaceChildren(h('span', { id: 'conn', class: ws && ws.readyState === 1 ? '' : 'off' }, ws && ws.readyState === 1 ? 'Waiting for KuhPlay…' : 'Disconnected')); return; }
+  const total = S.carts.reduce((sum, c) => sum + c.cue_count, 0), brokenIds = W ? Object.keys(W.problems) : [], live = ws && ws.readyState === 1;
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+  $('foot').replaceChildren(
+    h('button', { class: 'seg' + (S.show_mode ? '' : ' on'), onclick: () => send('set_show_mode', { enabled: false }) }, 'Edit'),
+    h('button', { class: 'seg' + (S.show_mode ? ' on' : ''), onclick: () => send('set_show_mode', { enabled: true }) }, 'Show'),
+    brokenIds.length ? h('button', { id: 'broken', title: W.problems[brokenIds[0]].join('\n'), onclick: () => { selected = [brokenIds[0]]; render(); } }, '⚠ ' + brokenIds.length + ' broken') : null,
+    h('span', { class: 'dim' }, plural(total, 'cue') + ' in ' + plural(S.carts.length, 'list')),
+    h('span', { id: 'msg', onclick: () => setMessage('') , title: message }, message),
+    h('span', { id: 'conn', class: live ? '' : 'off' }, live ? 'Connected' : 'Disconnected'),
+    h('button', { disabled: !W || !W.file, title: W && W.file ? 'Save to ' + W.file : 'This show has no file yet', onclick: () => send('save_show') }, 'Save'),
+    h('button', { onclick: () => { $('modal').classList.add('open'); renderSettings(); } }, 'Settings'),
+  );
+}
+
+// ------------------------------------------------------------------ Formulare
+const up = (c, changes) => send('update_cue', { id: c.id, changes });
+function field(label, control) { return [h('label', {}, label), control]; }
+function text(value, commit, props = {}) { return h('input', { type: 'text', value: value ?? '', onchange: e => commit(e.target.value), ...props }); }
+function number(value, commit, props = {}) { return h('input', { type: 'number', class: 'short', step: 'any', value: value ?? 0, onchange: e => { if (e.target.value !== '') commit(Number(e.target.value)); }, ...props }); }
+function timeInput(ms, commit) {
+  const input = h('input', { type: 'text', class: 'short', value: fmt(ms), onchange: e => { const v = parseTime(e.target.value); if (v === null) e.target.value = fmt(ms); else commit(v); } });
+  return input;
+}
+function select(options, value, commit) {
+  const el = h('select', { onchange: e => commit(options[e.target.selectedIndex].value) }, options.map(o => h('option', {}, o.label)));
+  el.selectedIndex = Math.max(0, options.findIndex(o => JSON.stringify(o.value) === JSON.stringify(value)));
+  return el;
+}
+function check(value, label, commit) { return h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!value, onchange: e => commit(e.target.checked) }), label); }
+
+function renderInsp() {
+  const box = $('insp');
+  if (box.contains(document.activeElement) && document.activeElement.matches('input:not([type=checkbox]),textarea') && box.dataset.cue === selected[0]) return;
+  const c = primary();
+  box.dataset.cue = selected[0] || '';
+  if (!c) { box.replaceChildren(h('div', { class: 'empty', style: 'margin:auto;font-size:16px' }, 'No cue selected')); return; }
+  const tabs = TABS[c.cue_type] || ['Basics', 'Triggers'];
+  if (!tabs.includes(inspTab)) inspTab = 'Basics';
+  const body = h('div', { id: 'ibody' });
+  const scroll = $('ibody') ? $('ibody').scrollTop : 0;
+  const content = { Basics: tabBasics, Triggers: tabTriggers, 'Time & Loops': tabTime, 'Audio Levels': tabAudio, Geometry: tabGeometry, Curve: tabCurve, Source: tabSource, Slides: tabSlides, Data: tabData }[inspTab](c);
+  body.append(...[content].flat());
+  const fs = h('fieldset', { disabled: !editable(), style: 'border:0;min-width:0' }, body.childNodes.length ? [...body.childNodes] : []);
+  body.replaceChildren(fs);
+  box.replaceChildren(
+    h('div', { id: 'ihead' }, selected.length > 1 ? selected.length + ' cues selected (editing the first)' : (ICON[c.cue_type] || '') + '  ' + c.number + ' • ' + c.name),
+    h('div', { class: 'tabs' }, tabs.map(t => h('button', { class: t === inspTab ? 'on' : '', onclick: () => { inspTab = t; renderInsp(); } }, t))),
+    body);
+  body.scrollTop = scroll;
+}
+function tabBasics(c) {
+  const left = h('div', { class: 'form' },
+    field('Q#', text(c.number, v => up(c, { number: v }), { class: 'short' })),
+    field('Name', text(c.name, v => up(c, { name: v }))));
+  if (c.cue_type === 'Audio' || c.cue_type === 'Video') {
+    left.append(...field('Target', text(c.target_path, v => up(c, { target_path: v.trim() || null }), { placeholder: 'File path on the KuhPlay computer, or stream URL' })));
+    const problem = W.problems[c.id];
+    left.append(...field('File', h('span', { class: problem ? 'bad' : c.target_path ? 'ok' : 'dim' }, problem ? problem.join('; ') : c.target_path ? 'ok' : 'no target')));
+  }
+  if (c.cue_type === 'Control') {
+    left.append(...field('Target', text(c.control_target, v => up(c, { control_target: v.trim() || null }), { placeholder: 'Cue number (empty = all)' })));
+    left.append(...field('Action', select(W.options.control_action, c.control_action, v => up(c, { control_action: v }))));
+  }
+  if (c.cue_type === 'Group') {
+    left.append(...field('Group Mode', select(W.options.group_mode, c.group_mode, v => up(c, { group_mode: v }))));
+    left.append(...field('Children', h('div', {}, c.children.length ? c.children.map(k => h('div', {}, k.number + '  ' + k.name)) : h('span', { class: 'dim' }, 'no children'))));
+  }
+  const middle = h('div', { class: 'form' },
+    field('Pre Wait', timeInput(c.pre_wait, v => up(c, { pre_wait: v }))),
+    field('Duration', timeInput(c.duration, v => up(c, { duration: v }))),
+    field('Post Wait', timeInput(c.post_wait, v => up(c, { post_wait: v }))),
+    field('Continue', select(W.options.continue_mode, c.continue_mode, v => up(c, { continue_mode: v }))));
+  const swatches = COLORS.map(rgb => h('button', { class: 'swatch' + (c.color && c.color.join() === rgb.join() ? ' on' : ''), style: `background:rgb(${rgb})`, title: 'Cue color', onclick: () => up(c, { color: rgb }) }));
+  const right = h('div', { class: 'form' },
+    field('Type', h('div', { class: 'inline' }, select(W.options.cue_type, c.cue_type, v => up(c, { cue_type: v })), check(c.is_armed, 'Armed', v => up(c, { is_armed: v })))),
+    field('Color', h('div', { class: 'inline', style: 'gap:4px' }, swatches, c.color ? h('button', { onclick: () => up(c, { color: null }) }, 'None') : null)),
+    field('Notes', h('textarea', { rows: 3, value: c.notes, onchange: e => up(c, { notes: e.target.value }) })));
+  return h('div', { class: 'cols' }, left, middle, right);
+}
+function tabTriggers(c) {
+  const tc = c.timecode_in, form = h('div', { class: 'form' },
+    field('Timecode In', check(tc, 'Cue follows external timecode (LTC/MTC)', v => up(c, { timecode_in: v ? { frames: 0, fps: 'Fps25' } : null }))));
+  if (tc) {
+    form.append(...field('FPS', select(W.options.fps, tc.fps, v => up(c, { timecode_in: { ...tc, fps: v } }))));
+    form.append(...field('Offset', number(tc.frames, v => up(c, { timecode_in: { ...tc, frames: Math.max(0, Math.round(v)) } }))));
+  }
+  return [form, h('p', { class: 'note' }, 'MIDI, OSC and network triggers are not available yet.')];
+}
+function tabTime(c) {
+  const mode = typeof c.loop_mode === 'string' ? c.loop_mode : 'Count';
+  const loopOptions = [{ value: 'Once', label: 'Once' }, { value: 'Count', label: 'Count' }, { value: 'Infinite', label: 'Infinite' }];
+  const form = h('div', { class: 'form' }, field('Loop', h('div', { class: 'inline' },
+    select(loopOptions, mode, v => up(c, { loop_mode: v === 'Count' ? { Count: 2 } : v })),
+    mode === 'Count' ? number(c.loop_mode.Count, v => up(c, { loop_mode: { Count: Math.max(1, Math.round(v)) } })) : null)));
+  const slices = c.slices.map((s, i) => {
+    const set = patch => up(c, { slices: c.slices.map((x, j) => j === i ? { ...x, ...patch } : x) });
+    return h('div', { class: 'inline' }, '#' + (i + 1), 'start', timeInput(s.start, v => set({ start: v })), 'end', timeInput(s.end, v => set({ end: v })), 'plays', number(s.play_count, v => set({ play_count: Math.max(1, Math.round(v)) })),
+      h('button', { onclick: () => up(c, { slices: c.slices.filter((_, j) => j !== i) }) }, 'Remove'));
+  });
+  form.append(...field('Slices', h('div', { style: 'display:grid;gap:4px' }, slices.length ? slices : h('span', { class: 'dim' }, 'No slices: the loop mode applies'),
+    h('div', {}, h('button', { onclick: () => up(c, { slices: [...c.slices, { start: 0, end: 1000, play_count: 1 }] }) }, '+ Add Slice')))));
+  return form;
+}
+function tabAudio(c) {
+  const route = c.route || { channels: 2, pan: 0, first_channel: 0 };
+  const save = r => up(c, { route: r });
+  const mask = s => {
+    if (route.matrix) return route.matrix[s];
+    const t = Math.max(route.first_channel, 1) - 1 + s;
+    return t < 16 ? 1 << t : 0;
+  };
+  const toggle = (s, ch) => {
+    const matrix = route.matrix ? [...route.matrix] : Array.from({ length: 16 }, (_, i) => mask(i));
+    matrix[s] ^= 1 << ch;
+    save({ ...route, matrix });
+  };
+  const db = c.volume > 0 ? (20 * Math.log10(c.volume)).toFixed(1) + ' dB' : '-inf dB';
+  const form = h('div', { class: 'form' },
+    field('Volume', h('div', { class: 'inline' }, h('input', { type: 'range', min: 0, max: 1, step: 0.01, value: c.volume, onchange: e => up(c, { volume: Number(e.target.value) }) }), number(c.volume, v => up(c, { volume: Math.min(1, Math.max(0, v)) })), db)),
+    field('File Channels', h('div', { class: 'inline' }, number(route.channels, v => {
+      const channels = Math.min(16, Math.max(1, Math.round(v)));
+      const next = { ...route, channels };
+      if (route.matrix) next.matrix = route.matrix.map((m, i) => i >= route.channels && i < channels ? 1 << i : m);
+      save(next);
+    }), 'Pan', h('input', { type: 'range', min: -1, max: 1, step: 0.01, value: route.pan, onchange: e => save({ ...route, pan: Number(e.target.value) }) }), h('button', { onclick: () => up(c, { route: null }) }, 'Reset'))));
+  const names = W.audio_patch.channels;
+  const table = h('table', { class: 'matrix' }, h('tr', {}, h('th'), names.map((ch, i) => h('th', { title: ch.name + (ch.output ? ' (output ' + ch.output + ')' : ' (off)') }, i + 1))));
+  for (let s = 0; s < route.channels; s++) {
+    table.append(h('tr', {}, h('td', {}, 'File ' + (s + 1)), names.map((ch, i) => h('td', {}, h('input', { type: 'checkbox', title: 'File channel ' + (s + 1) + ' to ' + ch.name, checked: (mask(s) & (1 << i)) !== 0, onchange: () => toggle(s, i) })))));
+  }
+  form.append(...field('Routing', h('div', { style: 'overflow:auto' }, table)));
+  return form;
+}
+function tabGeometry(c) {
+  const stageNames = W.stages.map(s => ({ value: s.name, label: s.name }));
+  const left = h('div', { class: 'form' },
+    field('Stage', h('div', { class: 'inline' }, select([{ value: null, label: 'None' }, ...stageNames], c.stage, v => up(c, { stage: v })), text('', v => { if (v.trim()) up(c, { stage: v.trim() }); }, { placeholder: 'New stage…', class: 'grow' }))),
+    field('Layer', number(c.layer, v => up(c, { layer: Math.max(0, Math.round(v)) }))));
+  const stage = W.stages.find(s => s.name === c.stage);
+  if (stage) {
+    const screens = [{ value: null, label: 'None' }, ...W.screens.map(s => ({ value: s.id, label: s.name }))];
+    const set = changes => send('update_stage', { name: stage.name, changes });
+    left.append(...field('Canvas', h('div', { class: 'inline' }, number(stage.geometry.width, v => set({ geometry: { ...stage.geometry, width: v } })), '×', number(stage.geometry.height, v => set({ geometry: { ...stage.geometry, height: v } })))));
+    left.append(...field('Screen', select(screens, stage.screen, v => set({ screen: v }))));
+    left.append(...field('Stage Visible', check(stage.visible, 'Visible', v => set({ visible: v }))));
+  }
+  const parts = [left];
+  if (c.cue_type === 'Video' || c.cue_type === 'SlideShow') {
+    const s = c.surface, right = h('div', { class: 'form' });
+    const set = patch => up(c, { surface: { ...s, ...patch } });
+    if (!s) right.append(h('div', { class: 'wide' }, h('button', { onclick: () => up(c, { surface: { x: 0, y: 0, width: 1920, height: 1080, area_of_interest: null, hard_edge: null, opacity: 1, visible: true } }) }, 'Add Surface')));
+    else {
+      right.append(
+        ...field('Position', h('div', { class: 'inline' }, 'X', number(s.x, v => set({ x: v })), 'Y', number(s.y, v => set({ y: v })))),
+        ...field('Size', h('div', { class: 'inline' }, 'W', number(s.width, v => set({ width: Math.max(1, v) })), 'H', number(s.height, v => set({ height: Math.max(1, v) })))),
+        ...field('Opacity', h('div', { class: 'inline' }, h('input', { type: 'range', min: 0, max: 1, step: 0.01, value: s.opacity, onchange: e => set({ opacity: Number(e.target.value) }) }), check(s.visible, 'Visible', v => set({ visible: v })))),
+        ...field('Area of Interest', check(s.area_of_interest, 'Crop source', v => set({ area_of_interest: v ? { left: 0, top: 0, right: 1, bottom: 1 } : null }))));
+      if (s.area_of_interest) {
+        const a = s.area_of_interest, crop = key => number(a[key], v => set({ area_of_interest: { ...a, [key]: Math.min(1, Math.max(0, v)) } }));
+        right.append(...field('Crop', h('div', { class: 'inline' }, 'L', crop('left'), 'T', crop('top'), 'R', crop('right'), 'B', crop('bottom'))));
+      }
+      right.append(...field('Hard Edge', check(s.hard_edge, 'Blend edge', v => set({ hard_edge: v ? { side: 'Right', width: 100, curve: 'Cosine' } : null }))));
+      if (s.hard_edge) {
+        const e = s.hard_edge;
+        right.append(...field('Blend', h('div', { class: 'inline' }, select(W.options.edge_side, e.side, v => set({ hard_edge: { ...e, side: v } })), number(e.width, v => set({ hard_edge: { ...e, width: Math.max(1, v) } })), select(W.options.blend_curve, e.curve, v => set({ hard_edge: { ...e, curve: v } })))));
+      }
+    }
+    parts.push(right);
+  }
+  return h('div', { class: 'cols' }, parts);
+}
+function tabCurve(c) {
+  return h('div', { class: 'form' },
+    field('Param', select(W.options.fade_param, c.fade_param, v => up(c, { fade_param: v }))),
+    field('Curve', select(W.options.fade_curve, c.fade_curve, v => up(c, { fade_curve: v }))),
+    field('Fade from', number(c.from_volume ?? 1, v => up(c, { from_volume: Math.min(1, Math.max(0, v)) }))),
+    field('Fade to', number(c.target_volume ?? 1, v => up(c, { target_volume: Math.min(c.fade_param === 'Rate' ? 4 : 1, Math.max(0, v)) }))));
+}
+function tabSource(c) {
+  const source = c.html_source || { Url: 'https://' }, kind = Object.keys(source)[0], value = source[kind];
+  const kinds = [{ value: 'File', label: 'File' }, { value: 'Url', label: 'URL' }, { value: 'Inline', label: 'Inline HTML' }];
+  const input = kind === 'Inline'
+    ? h('textarea', { rows: 5, value, onchange: e => up(c, { html_source: { Inline: e.target.value } }) })
+    : text(value, v => up(c, { html_source: { [kind]: v } }));
+  const script = text(c.js_test_script, v => up(c, { js_test_script: v }), { class: 'grow' });
+  return h('div', { class: 'form' },
+    field('HTML Source', select(kinds, kind, v => up(c, { html_source: { [v]: value } }))),
+    field(kind === 'Inline' ? 'HTML' : kind === 'File' ? 'Path' : 'URL', input),
+    field('JS Test', h('div', { class: 'inline' }, script, h('button', { onclick: () => send('eval_js', { id: c.id, script: script.value }) }, 'Send JS'))));
+}
+function tabSlides(c) {
+  const show = c.slideshow || { slides: [], crossfade: 0, auto_advance: true, loop_slides: false };
+  const set = patch => up(c, { slideshow: { ...show, ...patch } });
+  const rows = show.slides.map((s, i) => {
+    const change = patch => set({ slides: show.slides.map((x, j) => j === i ? { ...x, ...patch } : x) });
+    return h('div', { class: 'inline' }, '#' + (i + 1), text(s.path, v => change({ path: v }), { class: 'grow', placeholder: 'Image path on the KuhPlay computer' }), number(s.hold / 1000, v => change({ hold: Math.round(Math.max(0.1, v) * 1000) })), 's',
+      h('button', { onclick: () => set({ slides: show.slides.filter((_, j) => j !== i) }) }, 'Remove'));
+  });
+  return h('div', { class: 'cols' },
+    h('div', { style: 'display:grid;gap:4px;align-content:start' }, rows, h('div', {}, h('button', { onclick: () => set({ slides: [...show.slides, { path: '', hold: 3000 }] }) }, '+ Add Slide'))),
+    h('div', { class: 'form', style: 'align-content:start' },
+      field('Crossfade (s)', number(show.crossfade / 1000, v => set({ crossfade: Math.round(Math.max(0, v) * 1000) }))),
+      field('Auto-Advance', check(show.auto_advance, 'Advance automatically', v => set({ auto_advance: v }))),
+      field('Loop Slides', check(show.loop_slides, 'Restart after the last slide', v => set({ loop_slides: v })))));
+}
+function tabData(c) {
+  const targets = allCues().filter(x => x.cue_type === 'Html').map(x => ({ value: x.id, label: x.number + '  ' + x.name }));
+  let valid = true, error = '';
+  try { JSON.parse(c.data_json_text); } catch (e) { valid = false; error = e.message; }
+  return h('div', { class: 'form' },
+    field('Target HTML', select([{ value: null, label: 'Select target…' }, ...targets], c.data_target, v => up(c, { data_target: v }))),
+    field('JSON Payload', h('textarea', { rows: 4, value: c.data_json_text, onchange: e => up(c, { data_json_text: e.target.value }) })),
+    field('JSON valid', h('span', { class: valid ? 'ok' : 'bad' }, valid ? 'ok' : error)),
+    field('Send Test', h('div', {}, h('button', { disabled: !valid || !c.data_target, title: 'Needs a target and valid JSON', onclick: () => send('push_json', { id: c.id }) }, 'Push JSON to Target'))));
+}
+
+// ------------------------------------------------------------------ Settings
+function renderSettings() {
+  if (!W) return;
+  const body = $('dbody');
+  if (body.contains(document.activeElement) && document.activeElement.matches('input:not([type=checkbox]),textarea')) return;
+  const pages = { General: pageGeneral, Audio: pageAudio, Video: pageVideo, Network: () => infoRows(W.network, 'Set at startup via KUHPLAY_REMOTE_* and KUHPLAY_OSC_* environment variables.'), MIDI: () => infoRows(W.midi, 'Set at startup via KUHPLAY_MIDI, KUHPLAY_MIDI_DEVICE and KUHPLAY_MIDI_MAP.'), 'Key Map': pageKeys };
+  $('dnav').replaceChildren(...Object.keys(pages).map(p => h('button', { class: 'row-btn' + (p === page ? ' on' : ''), onclick: () => { page = p; renderSettings(); } }, p)));
+  const scroll = body.scrollTop;
+  body.replaceChildren(h('fieldset', { disabled: !editable() && page !== 'Key Map', style: 'border:0;min-width:0' }, [pages[page]()].flat()));
+  body.scrollTop = scroll;
+}
+function pageGeneral() {
+  return h('div', { class: 'form' },
+    field('Show Name', text(W.show_name, v => send('set_show_name', { name: v }))),
+    field('File', h('span', { class: 'dim' }, W.file || 'Not saved yet. Open and Save As are only available in the app.')),
+    field('Show Mode', check(S && S.show_mode, 'Editing disabled', v => send('set_show_mode', { enabled: v }))),
+    field('Audition Mode', check(W.audition_mode, 'Video cues play without a stage target', v => send('set_audition', { enabled: v }))),
+    field('New Show', h('div', {}, h('button', { onclick: () => { if (confirm('Discard the current show and start a new one?')) send('new_show'); } }, 'New Show'))));
+}
+function pageAudio() {
+  const device = W.audio_output || W.default_audio_device, info = W.audio_devices.find(d => d.name === device), maxOutput = info ? info.channels : 16;
+  const options = [{ value: null, label: 'System Default' + (W.default_audio_device ? ' (' + W.default_audio_device + ')' : '') }, ...W.audio_devices.map(d => ({ value: d.name, label: d.name }))];
+  if (W.audio_output && !W.audio_devices.some(d => d.name === W.audio_output)) options.push({ value: W.audio_output, label: W.audio_output + ' (not connected)' });
+  const running = S && S.running.length > 0, form = h('div', { class: 'form' },
+    field('Output', h('div', { class: 'inline' }, Object.assign(select(options, W.audio_output, v => send('set_audio_output', { device: v })), { disabled: running }), h('button', { onclick: () => send('refresh_audio_devices') }, 'Refresh'))),
+    field('Format', h('span', {}, info ? info.channels + ' channels, ' + info.sample_rate + ' Hz' : 'Unknown')));
+  if (running) form.append(h('div', { class: 'wide dim' }, 'Stop all cues to change the device.'));
+  const patch = W.audio_patch, change = (i, values) => send('set_audio_patch', { patch: { channels: patch.channels.map((c, j) => j === i ? { ...c, ...values } : c) } });
+  const outputs = [{ value: 0, label: 'Off' }]; for (let o = 1; o <= Math.max(maxOutput, 1); o++) outputs.push({ value: o, label: 'Output ' + o });
+  const rows = h('div', { class: 'form' }, patch.channels.flatMap((c, i) => {
+    const opts = c.output > maxOutput ? [...outputs, { value: c.output, label: 'Output ' + c.output + ' (not on device)' }] : outputs;
+    return field('Ch ' + (i + 1), h('div', { class: 'inline' }, text(c.name, v => change(i, { name: v }), { class: 'grow' }), select(opts, c.output, v => change(i, { output: v }))));
+  }));
+  return [form, h('div', { class: 'label section' }, 'Channels'), rows, h('p', { class: 'note' }, 'Device, channel names and outputs are saved with the show.')];
+}
+function pageVideo() {
+  const modes = [['off', 'Off'], ['preview', 'Preview Windows'], ['displays', 'Displays']];
+  const top = h('div', { class: 'form' }, field('Output', h('div', { class: 'inline' }, modes.map(([m, label]) => h('button', { class: 'seg' + (W.output_mode === m ? ' on' : ''), onclick: () => send('set_output_mode', { mode: m }) }, label)))));
+  const displays = W.displays.map(d => h('div', { class: 'dim' }, `${d.name}: ${d.width}×${d.height} at ${d.x}, ${d.y}`));
+  const screens = W.screens.map(s => {
+    const set = changes => send('update_screen', { id: s.id, changes });
+    return h('div', { class: 'card' }, h('div', { class: 'form' },
+      field('Name', text(s.name, v => set({ name: v }))),
+      field('Position', h('div', { class: 'inline' }, 'X', number(s.x, v => set({ x: Math.round(v) })), 'Y', number(s.y, v => set({ y: Math.round(v) })))),
+      field('Size', h('div', { class: 'inline' }, 'W', number(s.width, v => set({ width: Math.max(1, Math.round(v)) })), 'H', number(s.height, v => set({ height: Math.max(1, Math.round(v)) })))),
+      field('Rotation', select(W.options.rotation, s.rotation, v => set({ rotation: v }))),
+      field('Test Pattern', h('div', { class: 'inline' }, check(s.test_pattern, 'Show', v => set({ test_pattern: v })), select(W.options.test_pattern_kind, s.test_pattern_kind, v => set({ test_pattern_kind: v })), s.test_pattern_kind === 'LedWall' ? number(s.checker_size, v => set({ checker_size: Math.max(8, Math.round(v)) })) : null)),
+      h('div', { class: 'wide' }, h('button', { onclick: () => { if (confirm('Delete screen ' + s.name + '?')) send('remove_screen', { id: s.id }); } }, 'Delete Screen'))));
+  });
+  const screenOptions = [{ value: null, label: 'None' }, ...W.screens.map(s => ({ value: s.id, label: s.name }))];
+  const stages = W.stages.map(s => h('div', { class: 'form' }, field(s.name, select(screenOptions, s.screen, v => send('update_stage', { name: s.name, changes: { screen: v } })))));
+  return [top, h('div', { class: 'label section' }, 'Displays'), displays, h('p', { class: 'dim' }, 'Displays are arranged in the system settings of the KuhPlay computer.'),
+    h('div', { class: 'label section' }, 'Screens'), screens, h('button', { onclick: () => send('add_screen', { name: 'Screen ' + (W.screens.length + 1) }) }, '+ Add Screen'),
+    h('div', { class: 'label section' }, 'Stages'), stages, h('button', { onclick: () => send('add_stage', { name: 'Stage ' + (W.stages.length + 1) }) }, '+ Add Stage')];
+}
+function infoRows(rows, note) { return [h('div', { class: 'form' }, rows.flatMap(([k, v]) => field(k, h('span', {}, v)))), h('p', { class: 'note' }, note)]; }
+function pageKeys() {
+  let group = '';
+  return [...W.shortcuts.flatMap(s => {
+    const head = s.group !== group ? h('div', { class: 'label section' }, s.group) : null;
+    group = s.group;
+    return [head, h('div', { class: 'form' }, h('span', {}, s.label), h('span', { class: 'dim' }, s.keys))];
+  }).filter(Boolean), h('p', { class: 'note' }, 'These shortcuts belong to the app. In this page: Space = GO, Esc = Panic.')];
+}
+
+// ------------------------------------------------------------------ Start
+$('go').onclick = () => send('go');
+$('panic').onclick = () => send('panic');
+$('pause').onclick = () => send('pause_all');
+$('resume').onclick = () => send('resume_all');
+$('reset').onclick = () => send('reset');
+$('dclose').onclick = () => $('modal').classList.remove('open');
+$('snotes').onchange = e => { if (S && S.standby) send('update_cue', { id: S.standby.id, changes: { notes: e.target.value } }); };
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea,select')) return;
+  if (e.code === 'Space') { e.preventDefault(); send('go'); }
+  if (e.key === 'Escape') { if ($('modal').classList.contains('open')) $('modal').classList.remove('open'); else send('panic'); }
+});
+setInterval(() => { if (S && S.running.length) { renderCues(); if (sideTab === 'active') renderSide(); } }, 100);
+connect();
+</script>
+</body>
+</html>

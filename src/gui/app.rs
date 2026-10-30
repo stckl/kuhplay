@@ -1,0 +1,2564 @@
+//! Zentrale Anwendungsstruktur ([`eframe::App`]) – QLab 5 Workspace-Layout.
+//!
+//! Verbindet Domain ([`CartManager`]/[`CueList`](crate::core::CueList)) und
+//! Engine ([`EngineHandle`]) mit der `egui`-Oberfläche. Alle
+//! Zustandsänderungen laufen über Methoden dieser Struktur; die Panels
+//! selbst sind in eigene Module ausgelagert.
+//!
+//! ## Layout (QLab 5 „The Workspace")
+//!
+//! Verbindlich beschrieben in **`docs/UI.md`** (Layout, Farben,
+//! Typografie, Komponenten). Gezeichnet wird es in
+//! [`ShowApp::draw_workspace`]:
+//!
+//! ```text
+//! Menüleiste
+//! Masthead:  [GO]  STANDBY / Q# • Name / Notes        [⏸][▶][↺][Panic]
+//! Toolbox | Cue-Liste                                  | Sidebar
+//! Inspector (volle Breite)
+//! Footer (unterste Zeile)
+//! ```
+//!
+//! * Toolbox = einzige Cue-Typ-Button-Quelle (Masthead-Toolbar entfällt).
+//! * Screens/Stages: eigenes Fenster „Workspace Settings" (Seite „Video").
+//! * UI-Layout (Panel-Sichtbarkeit, Tabs) persistiert via `eframe::Storage`
+//!   ([`super::state::UiState`]).
+//!
+//! **Wichtig:** Panel-Reihenfolge in egui ist `top → bottom → side →
+//! central` – das CentralPanel muss zuletzt hinzugefügt werden und claimt
+//! den Restplatz. Bei Bottom-Panels ist das ZUERST hinzugefügte das
+//! UNTERSTE (Footer vor Inspector).
+//!
+//! ## Erweiterung
+//!
+//! * **Persistenz:** Show als JSON speichern/laden (Datei-Dialog via `rfd`,
+//!   siehe `ShowDocument`).
+//! * **Mehrere Engine-Instanzen:** Audio- und Video-Engine parallel betreiben.
+//! * **Netzwerk-Remote:** Engine-Commands zusätzlich per OSC/WebSocket an
+//!   andere Rechner (Show-Caller) weiterleiten.
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use egui::{Key, RichText};
+use uuid::Uuid;
+
+use crate::core::{
+    cue_type_for_file, CartManager, Cue, CueStatus, CueType, ScreenManager, ShowDocument,
+    ShowResult, Stage, StageManager,
+};
+use crate::engine::waveform::{Waveform, WaveformCache, WAVEFORM_BUCKETS};
+use crate::engine::{EngineCommand, EngineEvent, EngineHandle};
+use crate::remote::{
+    CartInfo, CueInfo, RemoteCommand, RemoteConfig, RemoteEvent, RemoteStatus, RemoteWorkspace,
+    RunningCue, StandbyCue,
+};
+
+use super::shortcuts::ShortcutAction;
+use super::{
+    cue_table, footer, inspector, masthead, menu_bar, shortcuts, sidebar, stage_view, theme,
+    toolbox,
+};
+
+/// Tab-Auswahl der Sidebar (QLab 5: „Lists & Carts" / „Active Cues";
+/// Screens liegen in den Workspace Settings → Video).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SidebarTab {
+    /// Cue-Listen & Carts.
+    ListsCarts,
+    /// Laufende Cues mit Einzel-Steuerung.
+    ActiveCues,
+}
+
+/// Tab-Auswahl des Inspectors (QLab 5: typabhängige Tabs, TODO.md Phase 4).
+///
+/// Serde per Varianten-Name – neue Varianten sind abwärtskompatibel
+/// (alte gespeicherte Zustände deserialisieren weiter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum InspectorTab {
+    /// Grundparameter (QLab-Basics-Reihenfolge, zweispaltig).
+    Basics,
+    /// Trigger (Timecode-In / Chasing).
+    Triggers,
+    /// Time & Loops (Loop-Modus, Slices, Waveform) – Audio/Video.
+    TimeLoops,
+    /// Geometry (Stage/Layer/Surface) – Video/HTML5/Diashow.
+    Geometry,
+    /// Audio Levels (Volume/Patch) – Audio/Video.
+    AudioLevels,
+    /// Curve (Fade-Parameter/-Kurve/Start/Ziel) – Fade-Cues.
+    Curve,
+    /// Source (HTML-Quelle + JS-Test) – HTML5-Cues.
+    Source,
+    /// Slides (Slide-Liste + Transitions) – Diashow-Cues.
+    Slides,
+    /// Data (Ziel-HTML + JSON-Payload) – HTML-Data-Cues.
+    Data,
+}
+
+impl InspectorTab {
+    /// Anzeigename des Tabs (QLab-5-Begriffe, TODO.md Phase 4).
+    pub fn label(self) -> &'static str {
+        match self {
+            InspectorTab::Basics => "Basics",
+            InspectorTab::Triggers => "Triggers",
+            InspectorTab::TimeLoops => "Time & Loops",
+            InspectorTab::Geometry => "Geometry",
+            InspectorTab::AudioLevels => "Audio Levels",
+            InspectorTab::Curve => "Curve",
+            InspectorTab::Source => "Source",
+            InspectorTab::Slides => "Slides",
+            InspectorTab::Data => "Data",
+        }
+    }
+}
+
+/// Hauptanwendung: Show-Zustand (Carts), Engine-Verbindung und
+/// Panel-Sichtbarkeit (QLab 5 Workspace).
+pub struct ShowApp {
+    /// Cue-Listen & Carts (Domain-Modell).
+    pub carts: CartManager,
+    /// Playback-Engine (non-blocking).
+    pub engine: EngineHandle,
+    /// Name der Show (Fenster-Titel + Persistenz).
+    pub show_name: String,
+    /// Show-Mode: Editing deaktiviert (QLab-Sicherheitsfunktion).
+    pub show_mode: bool,
+    /// Audition-Mode: Video-Cues spielen ohne Stage-Ziel (Audio normal).
+    pub audition_mode: bool,
+    /// Reiner UI-Zustand (Panel-Sichtbarkeit, Tabs, Fenster) – serde-fähig
+    /// für die Layout-Persistenz via `eframe::Storage` (TODO.md Phase 0b).
+    pub ui: super::state::UiState,
+    /// Aktuell geöffnete Datei (für „Save Show" ohne Dialog).
+    current_file: Option<PathBuf>,
+    /// Space-GO wurde gedrückt (Ausführung nach den Panels, damit Hotkeys
+    /// nicht mit fokussierten Buttons kollidieren).
+    pending_go: bool,
+    /// Zuletzt aufgetretener Fehler (UI-Anzeige).
+    last_error: Option<String>,
+    /// Widget-IDs aller Textfelder des aktuellen Frames. Für das
+    /// Hotkey-Gate „Textfeld fokussiert?“: egui 0.30 unterscheidet
+    /// Textfelder nicht von Slidern (beide fordern Fokus beim Klick),
+    /// daher registrieren die Zeichenfunktionen ihre Textfelder hier.
+    pub text_field_ids: HashSet<egui::Id>,
+    /// Textfeld-IDs des vorherigen Frames (die Hotkeys lesen diese – ein
+    /// Frame Verzögerung ist unkritisch, da Felder vor dem Anklicken
+    /// bereits existieren müssen).
+    text_field_ids_prev: HashSet<egui::Id>,
+    /// Zwischengespeicherter Gate-Wert „Textfeld fokussiert" (aktualisiert
+    /// am Ende jedes Frames via [`ShowApp::refresh_text_field_gate`]).
+    /// Cache statt Live-Abfrage, weil egui den Fokus bei Esc bereits in
+    /// `begin_pass` löscht – bevor die Hotkeys laufen.
+    text_field_active: bool,
+    /// Startzeitpunkte laufender Cues (für elapsed-Anzeige in der Sidebar).
+    started_at: HashMap<Uuid, Instant>,
+    /// Akkumulierte aktive Zeit pausierter Cues.
+    banked: HashMap<Uuid, Duration>,
+    /// Startzeitpunkte von Cues in Pre-Wait (Countdown in der Pre-Wait-
+    /// Spalte, TODO.md Phase 2).
+    prewait_started: HashMap<Uuid, Instant>,
+    /// Stage-Manager: alle Video-Stages mit Screen-Mapping & Geometrie.
+    pub stages: StageManager,
+    /// Screen-Manager: physische Ausgabebereiche (QLab „Screens") –
+    /// frei platzierbar (Teile eines Displays, mehrere Displays, mehrere
+    /// Screens pro Display), mit Drehung und Testbild.
+    pub screens: ScreenManager,
+    /// Offen gehaltene Stage-Vorschau-Fenster (QLab „Stage Window").
+    pub stage_windows: HashSet<String>,
+    /// Flags: welche Screens gerade als Vollbild-Ausgabe auf einem Display laufen.
+    pub stage_screen_open: stage_view::StageScreenOpen,
+    /// Erkannte Displays (für Screen-Mapping in der UI).
+    pub displays: Vec<display_info::DisplayInfo>,
+    /// Im Screen-Editor ausgewählter Screen (für Eigenschaften-Panel).
+    pub screen_editor_selected: Option<Uuid>,
+    /// Optionaler Auto-Demo-Modus (automatische GO-Abfolge für Screen-Tests).
+    autodemo: Option<AutodemoState>,
+    /// Remote-Server (Web-Remote + Companion), falls aktiviert.
+    remote: Option<RemoteServers>,
+    /// Zuletzt an die Web-Remote gesendete Show (nur bei Änderung neu senden).
+    last_workspace_json: String,
+    /// Aktuelle Video-Ausgabe.
+    pub output_mode: OutputMode,
+    /// Von Hand geschlossene Vorschau-Fenster (bis zum nächsten Moduswechsel).
+    pub(super) closed_previews: HashSet<Uuid>,
+    /// macOS-Menüleiste; `None` = egui-Menüleiste (auch in Headless-Tests).
+    #[cfg(target_os = "macos")]
+    pub(super) native_menu: Option<super::native_menu::NativeMenu>,
+    /// Aktives Audio-Ausgabegerät (`None` = System-Standard).
+    audio_output: Option<String>,
+    /// Zuordnung der Audio-Kanäle zu Geräte-Ausgängen.
+    pub audio_patch: crate::core::AudioPatch,
+    /// Geräteliste der Audio-Seite; `None` = beim nächsten Öffnen neu abfragen.
+    pub(super) audio_devices: Option<AudioDeviceList>,
+    /// Remote-Konfiguration aus der Umgebung (Anzeige in den Settings).
+    pub(super) remote_config: RemoteConfig,
+    /// Seit dem letzten Push relevante Änderung → Remote-Status broadcasten.
+    remote_dirty: bool,
+    /// Zeitpunkt des letzten Remote-Status-Push (sonst periodisch 1×/s).
+    last_status_push: Instant,
+    /// Broken-Cue-Cache (inkl. Gruppen-Kinder für das ✕ in der Cue-Liste;
+    /// der Footer zählt nur Top-Level-Cues) – siehe
+    /// [`problems::cue_problems`](super::problems::cue_problems).
+    problems: Vec<BrokenCue>,
+    /// Zeitpunkt der letzten Broken-Neuberechnung (`None` = noch nie;
+    /// Neuberechnung max. alle 2 s, nicht jeden Frame das Dateisystem).
+    problems_at: Option<Instant>,
+    /// Waveform-Peaks pro Datei (Cache für die Inspector-Vorschau).
+    pub waveforms: WaveformCache,
+}
+
+/// Zustand des optionalen Auto-Demo-Modus (für automatische Screen-Tests).
+struct AutodemoState {
+    /// Zeitpunkt des nächsten GO.
+    next_go: Instant,
+    /// Anzahl bereits ausgelöster GOs.
+    count: u32,
+}
+
+/// Ein kaputter Cue (Eintrag des Broken-Cache, TODO.md Phase 2).
+#[derive(Debug, Clone)]
+struct BrokenCue {
+    /// Cart-Index.
+    cart: usize,
+    /// Index in der Liste (bei Gruppen-Kindern: Index der Gruppe).
+    index: usize,
+    /// Cue-ID.
+    id: Uuid,
+    /// `true` = Gruppen-Kind (nur Top-Level-Cues zählen für den Footer).
+    child: bool,
+    /// Broken-Gründe (Tooltip des ✕ in der Cue-Liste).
+    problems: Vec<String>,
+}
+
+/// Status-Werte, die als „laufend" gelten (für den Remote-Status).
+fn is_running_status(status: CueStatus) -> bool {
+    matches!(
+        status,
+        CueStatus::PreWait | CueStatus::Playing | CueStatus::Paused | CueStatus::PostWait
+    )
+}
+
+/// Gestartete Remote-Server (Web-Remote HTTP/WS + Companion TCP).
+///
+/// Hält den tokio-Runtime, auf dem die Server laufen (muss leben, solange
+/// die App läuft), plus die Kanäle: eingehende Commands (pro Server) und
+/// ausgehende Event-Broadcasts (pro Server, da beide eigene
+/// `broadcast::Sender` besitzen).
+pub struct RemoteServers {
+    /// tokio-Runtime der Server (Worker-Threads laufen hier).
+    _runtime: tokio::runtime::Runtime,
+    /// Commands vom Web-Remote (HTTP/WS).
+    web_commands: Option<tokio::sync::mpsc::Receiver<RemoteCommand>>,
+    /// Commands von Companion (TCP).
+    companion_commands: Option<tokio::sync::mpsc::Receiver<RemoteCommand>>,
+    /// Commands von OSC (UDP).
+    osc_commands: Option<tokio::sync::mpsc::Receiver<RemoteCommand>>,
+    /// Commands von MIDI (Controller-Input).
+    /// Laufender MIDI-Start im Hintergrund (`None`: fertig oder deaktiviert).
+    midi_start: Option<std::sync::mpsc::Receiver<MidiStartResult>>,
+    midi_commands: Option<tokio::sync::mpsc::Receiver<RemoteCommand>>,
+    /// Hält die MIDI-Verbindung offen (Drop = disconnect).
+    _midi_guard: Option<crate::remote::midi::MidiInputGuard>,
+    /// CoreMIDI hat den Client abgelehnt (nur ein Neustart hilft).
+    midi_init_failed: bool,
+    /// Event-Broadcast an Web-Remote-Clients.
+    web_events: Option<tokio::sync::broadcast::Sender<RemoteEvent>>,
+    /// Event-Broadcast an Companion-Clients.
+    companion_events: Option<tokio::sync::broadcast::Sender<RemoteEvent>>,
+    /// Event-Broadcast an OSC-Out.
+    osc_events: Option<tokio::sync::broadcast::Sender<RemoteEvent>>,
+}
+
+/// Überträgt die Felder aus `changes` (JSON-Objekt) auf eine Kopie von `value`.
+/// Felder in `protected` bleiben unverändert.
+fn merge_json<T: serde::Serialize + serde::de::DeserializeOwned>(
+    value: &T,
+    changes: serde_json::Value,
+    protected: &[&str],
+) -> Result<T, String> {
+    let serde_json::Value::Object(changes) = changes else {
+        return Err("Changes must be a JSON object.".to_string());
+    };
+    let mut merged = serde_json::to_value(value).map_err(|e| e.to_string())?;
+    let object = merged.as_object_mut().ok_or("Not a JSON object.")?;
+    for (key, change) in changes {
+        if !protected.contains(&key.as_str()) {
+            object.insert(key, change);
+        }
+    }
+    serde_json::from_value(merged).map_err(|e| format!("Invalid value: {e}"))
+}
+
+/// Wohin Stages ausgegeben werden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputMode {
+    /// Keine automatische Ausgabe; einzelne Stages lassen sich von Hand öffnen.
+    #[default]
+    Off,
+    /// Ein Vorschau-Fenster pro Screen (Arbeit an einem einzelnen Display).
+    Preview,
+    /// Vollbild auf den Displays.
+    Displays,
+}
+
+/// Ausgabegeräte für die Audio-Seite der Workspace Settings.
+pub(super) struct AudioDeviceList {
+    pub(super) devices: Vec<crate::engine::audio_backend::OutputDevice>,
+    pub(super) default_name: Option<String>,
+}
+
+/// Ergebnis des MIDI-Starts im Hintergrund-Thread.
+type MidiStartResult = Result<
+    (
+        tokio::sync::mpsc::Receiver<RemoteCommand>,
+        crate::remote::midi::MidiInputGuard,
+    ),
+    crate::remote::midi::MidiError,
+>;
+
+impl RemoteServers {
+    /// Startet die aktivierten Remote-Server. `None`, wenn deaktiviert oder
+    /// der Runtime nicht gebaut werden konnte (App läuft dann ohne Remote).
+    fn start(config: RemoteConfig) -> Option<Self> {
+        if !config.web_enabled
+            && !config.companion_enabled
+            && !config.osc_enabled
+            && !config.midi_enabled
+        {
+            return None;
+        }
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .thread_name("kuhplay-remote")
+            .worker_threads(2)
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!(%e, "remote runtime konnte nicht erstellt werden");
+                return None;
+            }
+        };
+        // tokio::spawn in den Server-Startern braucht einen Runtime-Kontext.
+        let _guard = runtime.enter();
+        let (web_commands, web_events) = if config.web_enabled {
+            let (rx, tx) = crate::remote::web::start_web_remote(config.web_port);
+            (Some(rx), Some(tx))
+        } else {
+            (None, None)
+        };
+        let (companion_commands, companion_events) = if config.companion_enabled {
+            let (rx, tx) = crate::remote::companion::start_companion_server(config.companion_port);
+            (Some(rx), Some(tx))
+        } else {
+            (None, None)
+        };
+        let (osc_commands, osc_events) = if config.osc_enabled {
+            let (rx, tx) = crate::remote::osc::start_osc_server(
+                config.osc_port,
+                config.osc_out.clone(),
+                &config.osc_prefix,
+            );
+            (Some(rx), Some(tx))
+        } else {
+            (None, None)
+        };
+        // MIDI läuft callback-basiert (kein Server, kein Runtime nötig);
+        // Fehler (z. B. kein Device) sind nicht fatal – App läuft ohne MIDI.
+        // MIDI im Hintergrund starten: CoreMIDI braucht fürs Anlegen des
+        // Clients teils mehrere Sekunden, das darf den App-Start nicht aufhalten.
+        // Das Ergebnis holt `poll_midi_start` ab.
+        let midi_start = config.midi_enabled.then(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (device, map) = (config.midi_device.clone(), config.midi_map);
+            std::thread::spawn(move || {
+                let result = crate::remote::midi::start_midi_input(device.as_deref(), &map);
+                // Empfänger weg (App zu): Ergebnis wird nicht mehr gebraucht.
+                let _ = tx.send(result);
+            });
+            rx
+        });
+        tracing::info!(
+            web = config.web_enabled,
+            web_port = config.web_port,
+            companion = config.companion_enabled,
+            companion_port = config.companion_port,
+            osc = config.osc_enabled,
+            osc_port = config.osc_port,
+            midi = config.midi_enabled,
+            "remote server gestartet"
+        );
+        Some(Self {
+            _runtime: runtime,
+            web_commands,
+            companion_commands,
+            osc_commands,
+            midi_start,
+            midi_commands: None,
+            _midi_guard: None,
+            midi_init_failed: false,
+            web_events,
+            companion_events,
+            osc_events,
+        })
+    }
+}
+
+impl ShowApp {
+    /// Erzeugt die App mit einer Demo-Show (Default-UI-Layout).
+    pub fn new(engine: EngineHandle) -> Self {
+        Self::new_inner(engine, None)
+    }
+
+    /// Erzeugt die App mit einer Demo-Show und lädt das persistierte
+    /// UI-Layout aus dem `eframe::Storage` (fehlend/ungültig → Defaults).
+    pub fn new_with_storage(engine: EngineHandle, storage: &dyn eframe::Storage) -> Self {
+        Self::new_inner(engine, Some(storage))
+    }
+
+    /// Gemeinsamer Konstruktor (UI-Layout optional aus Storage laden).
+    fn new_inner(engine: EngineHandle, storage: Option<&dyn eframe::Storage>) -> Self {
+        let mut carts = CartManager::new();
+        for cue in super::demo::demo_cues() {
+            carts.active_mut().add(cue);
+        }
+        carts.select(None);
+        let stages = StageManager::new();
+        let autodemo = std::env::var_os("KUHPLAY_AUTODEMO")
+            .is_some_and(|v| v == "1" || v == "true")
+            .then(|| AutodemoState {
+                next_go: Instant::now() + Duration::from_millis(1500),
+                count: 0,
+            });
+        // Default-Screens: einer pro Display (QLab legt Screens pro Display an).
+        let displays = stage_view::detect_displays();
+        let screens = ScreenManager::from_displays(&displays);
+        // UI-Layout aus Storage laden (fehlend/ungültig → QLab-Defaults).
+        let ui = storage
+            .and_then(|s| s.get_string(super::state::UI_STATE_STORAGE_KEY))
+            .map(|json| super::state::UiState::from_json(&json))
+            .unwrap_or_default();
+        let mut app = Self {
+            carts,
+            engine,
+            show_name: "Demo Show".to_string(),
+            show_mode: false,
+            audition_mode: false,
+            ui,
+            current_file: None,
+            pending_go: false,
+            last_error: None,
+            text_field_ids: HashSet::new(),
+            text_field_ids_prev: HashSet::new(),
+            text_field_active: false,
+            started_at: HashMap::new(),
+            banked: HashMap::new(),
+            prewait_started: HashMap::new(),
+            stages,
+            screens,
+            stage_windows: HashSet::new(),
+            stage_screen_open: stage_view::new_stage_screen_open(),
+            displays,
+            screen_editor_selected: None,
+            autodemo,
+            remote: None,
+            last_workspace_json: String::new(),
+            output_mode: OutputMode::Off,
+            closed_previews: HashSet::new(),
+            #[cfg(target_os = "macos")]
+            native_menu: None,
+            audio_output: None,
+            audio_patch: crate::core::AudioPatch::default(),
+            audio_devices: None,
+            remote_config: RemoteConfig::default(),
+            remote_dirty: false,
+            last_status_push: Instant::now(),
+            problems: Vec::new(),
+            problems_at: None,
+            waveforms: WaveformCache::new(),
+        };
+        // Alle Stages beim Start an die Engine melden (QLab: Stage-Konfiguration).
+        for stage in app.stages.stages().to_vec() {
+            app.configure_stage(stage);
+        }
+        // Auto-Demo: Stage 1 dem ersten Screen zuordnen (Vollbild-Ausgabe auf
+        // dem ersten Display), Stage-Vorschau-Fenster öffnen und optional das
+        // Testbild aktivieren (KUHPLAY_AUTOTESTPATTERN=1 – zum Screen-Setup).
+        if app.autodemo.is_some() {
+            app.stage_windows = app.stages.names().into_iter().collect();
+            if let Some(first_screen) = app.screens.screens().first().map(|s| s.id) {
+                app.assign_stage_to_screen("Stage 1", Some(first_screen));
+                app.open_stage_screen("Stage 1");
+            }
+            let autotest = std::env::var_os("KUHPLAY_AUTOTESTPATTERN")
+                .is_some_and(|v| v == "1" || v == "true");
+            if autotest {
+                if let Some(id) = app.screens.screens().first().map(|s| s.id) {
+                    app.set_screen_test_pattern(id, true);
+                }
+            }
+        }
+        // Remote-Server starten (Web-Remote + Companion, konfigurierbar via
+        // Umgebungsvariablen – siehe RemoteConfig::from_env).
+        app.remote_config = RemoteConfig::from_env();
+        app.remote = RemoteServers::start(app.remote_config.clone());
+        app
+    }
+
+    /// Zugriff auf den Cart-Manager (nur lesend).
+    pub fn carts(&self) -> &CartManager {
+        &self.carts
+    }
+
+    /// Zugriff auf den Cart-Manager (mutabel).
+    pub fn carts_mut(&mut self) -> &mut CartManager {
+        &mut self.carts
+    }
+
+    // ------------------------------------------------------------------
+    // Stages & Screens (QLab: Stage → Screen, Hard Edge, Area of Interest)
+    // ------------------------------------------------------------------
+
+    /// Übernimmt eine Stage-Änderung: im Manager speichern und an die
+    /// Engine melden (`ConfigureStage`).
+    pub fn configure_stage(&mut self, stage: Stage) {
+        let name = stage.name.clone();
+        if let Some(existing) = self.stages.find_mut(&name) {
+            *existing = stage;
+        } else {
+            self.stages.add(stage);
+        }
+        if let Some(found) = self.stages.find(&name) {
+            let _ = self.engine.send(EngineCommand::ConfigureStage {
+                stage: found.clone(),
+            });
+        }
+    }
+
+    /// Stellt sicher, dass eine Stage existiert (Default 1920×1080) und
+    /// meldet sie an die Engine. Rückgabe: `true` bei Neuanlage.
+    pub fn ensure_stage(&mut self, name: &str) -> bool {
+        let created = self.stages.ensure(name);
+        if created {
+            if let Some(found) = self.stages.find(name) {
+                let _ = self.engine.send(EngineCommand::ConfigureStage {
+                    stage: found.clone(),
+                });
+            }
+        }
+        created
+    }
+
+    /// Ordnet eine Stage einem Screen zu (`None` = nur In-App-Vorschau) und
+    /// meldet die Änderung an die Engine. Ist auf dem Screen ein Testbild
+    /// aktiv, wird es für diese Stage an die Engine gemeldet.
+    pub fn assign_stage_to_screen(&mut self, stage_name: &str, screen: Option<Uuid>) {
+        if let Some(stage) = self.stages.find_mut(stage_name) {
+            stage.screen = screen;
+            let stage = stage.clone();
+            let _ = self.engine.send(EngineCommand::ConfigureStage { stage });
+        }
+        // Testbild des Screens (falls aktiv) an die Engine melden.
+        if let Some(id) = screen {
+            let active = self.screens.find(id).is_some_and(|s| s.test_pattern);
+            if active {
+                self.set_screen_test_pattern(id, true);
+            }
+        }
+    }
+
+    /// Aktiviert/deaktiviert das Testbild eines Screens (Rahmen/Kreis/Raster/
+    /// Schachbrett/Beschriftung) – QLab „Test Pattern".
+    pub fn set_screen_test_pattern(&mut self, screen: Uuid, enabled: bool) {
+        if let Some(s) = self.screens.find_mut(screen) {
+            s.test_pattern = enabled;
+        }
+        let pattern = enabled
+            .then(|| self.screens.pattern_spec_for(screen))
+            .flatten();
+        let _ = self
+            .engine
+            .send(EngineCommand::SetTestPattern { screen, pattern });
+    }
+
+    /// Schaltet das Testbild für **alle** Screens an/aus (LED-Wand-Setup).
+    pub fn set_all_test_patterns(&mut self, enabled: bool) {
+        let ids = self.screens.ids();
+        for id in ids {
+            self.set_screen_test_pattern(id, enabled);
+        }
+    }
+
+    /// Beim App-Start: Stages ohne Screen auf den ersten Screen legen, damit
+    /// GO ein Bild zeigt; mit nur einem Display Vorschau statt Vollbild, das
+    /// sonst die App selbst verdecken würde.
+    pub fn apply_startup_output(&mut self) {
+        if self.displays.len() <= 1 {
+            self.set_output_mode(OutputMode::Preview);
+        }
+        self.assign_unassigned_stages();
+    }
+
+    /// Legt Stages ohne Screen auf den ersten Screen.
+    pub fn assign_unassigned_stages(&mut self) {
+        let Some(first) = self.screens.screens().first().map(|s| s.id) else {
+            return;
+        };
+        let unassigned: Vec<Stage> = self
+            .stages
+            .stages()
+            .iter()
+            .filter(|stage| stage.screen.is_none())
+            .cloned()
+            .collect();
+        for mut stage in unassigned {
+            stage.screen = Some(first);
+            self.configure_stage(stage);
+        }
+    }
+
+    /// Wechselt die Video-Ausgabe. „Displays" öffnet alle zugeordneten Stages
+    /// im Vollbild, die anderen Modi schließen sie.
+    pub fn set_output_mode(&mut self, mode: OutputMode) {
+        self.output_mode = mode;
+        self.closed_previews.clear();
+        let names: Vec<String> = self
+            .stages
+            .stages()
+            .iter()
+            .filter(|stage| stage.screen.is_some())
+            .map(|stage| stage.name.clone())
+            .collect();
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            for name in names {
+                open.insert(name, mode == OutputMode::Displays);
+            }
+        }
+    }
+
+    /// Öffnet die Vollbild-Ausgabe einer Stage auf ihrem zugeordneten Screen.
+    pub fn open_stage_screen(&mut self, name: &str) {
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            open.insert(name.to_string(), true);
+        }
+    }
+
+    /// Schließt die Vollbild-Ausgabe einer Stage.
+    pub fn close_stage_screen(&mut self, name: &str) {
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            open.insert(name.to_string(), false);
+        }
+    }
+
+    /// Liest die verfügbaren Displays neu ein (für Screen-Mapping).
+    pub fn refresh_displays(&mut self) {
+        self.displays = stage_view::detect_displays();
+    }
+
+    // ------------------------------------------------------------------
+    // GO / Panic / Reset / Pause / Resume (Masthead + Sidebar)
+    // ------------------------------------------------------------------
+
+    /// GO: nächsten armed Cue des aktiven Carts triggern, inkl.
+    /// Auto-Continue-Ketten (QLab „Cue Sequences").
+    pub fn go_now(&mut self) {
+        match self.carts.go_chained() {
+            Some(outcome) => self.dispatch(outcome.commands),
+            None => tracing::warn!("GO: no armed cue in standby"),
+        }
+        self.remote_dirty = true;
+    }
+
+    /// Panic: alles sofort stoppen (workspace-weit, QLab-Sidebar).
+    pub fn panic(&mut self) {
+        self.dispatch(vec![EngineCommand::StopAll]);
+        self.carts.stop_all_running_all();
+        self.clear_timing();
+        self.remote_dirty = true;
+    }
+
+    /// Reset: alle Cues stoppen + Playhead aller Carts an den Anfang
+    /// (QLab-Sidebar: Reset wirkt workspace-weit).
+    pub fn reset_all(&mut self) {
+        self.dispatch(vec![EngineCommand::StopAll]);
+        self.carts.reset_all();
+        self.clear_timing();
+        self.remote_dirty = true;
+    }
+
+    /// Pause All: alle laufenden Cues pausieren (QLab-Sidebar).
+    pub fn pause_all(&mut self) {
+        let commands = self.carts.pause_all_running();
+        self.dispatch(commands);
+        self.remote_dirty = true;
+    }
+
+    /// Resume All: alle pausierten Cues fortsetzen (QLab-Sidebar).
+    pub fn resume_all(&mut self) {
+        let commands = self.carts.resume_all_running();
+        self.dispatch(commands);
+        self.remote_dirty = true;
+    }
+
+    // ------------------------------------------------------------------
+    // Einzel-Cue-Steuerung (Sidebar „Active Cues")
+    // ------------------------------------------------------------------
+
+    /// Stoppt einen einzelnen laufenden Cue → Commands zurückgeben.
+    pub fn stop_running(&mut self, id: Uuid) -> Vec<EngineCommand> {
+        self.carts.stop_running(id)
+    }
+
+    /// Pausiert einen einzelnen laufenden Cue → Commands zurückgeben.
+    pub fn pause_running(&mut self, id: Uuid) -> Vec<EngineCommand> {
+        self.carts.pause_running(id)
+    }
+
+    /// Setzt einen einzelnen pausierten Cue fort → Commands zurückgeben.
+    pub fn resume_running(&mut self, id: Uuid) -> Vec<EngineCommand> {
+        self.carts.resume_running(id)
+    }
+
+    // ------------------------------------------------------------------
+    // Edit-Aktionen (Masthead-Toolbar, Menü, Kontextmenü)
+    // ------------------------------------------------------------------
+
+    /// Fügt einen Cue des Typs nach der Selektion ein (QLab-Verhalten),
+    /// nummeriert ihn automatisch (höchste vorhandene Nummer + 1, nie
+    /// doppelt) und selektiert ihn.
+    pub fn add_cue(&mut self, cue_type: CueType) {
+        let list = self.carts.active_mut();
+        let at = list.selected_insert_index();
+        let n = list.next_free_number();
+        list.insert(
+            at,
+            Cue::new(n.to_string(), format!("New Cue {n}"), cue_type),
+        );
+        list.select(Some(at));
+    }
+
+    /// Legt aus einer Datei (Drag & Drop aus dem Finder, TODO.md Phase 6)
+    /// einen passenden Cue an: Endung → Cue-Typ (siehe [`cue_type_for_file`]),
+    /// Datei als Target, Dateiname als Cue-Name; neuer Cue wird selektiert.
+    /// Im Show-Mode oder bei unbekannter Endung → `None`.
+    /// Rückgabe: ID des neuen Cues. Public für headless GUI-Tests.
+    pub fn add_cue_from_file(&mut self, path: &Path) -> Option<Uuid> {
+        if self.show_mode {
+            return None;
+        }
+        let cue_type = cue_type_for_file(path)?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let list = self.carts.active_mut();
+        let n = list.next_free_number();
+        let at = list.cues().len();
+        let cue = Cue::new(n.to_string(), name, cue_type).with_target(path.to_string_lossy());
+        let id = cue.id;
+        list.insert(at, cue);
+        list.select(Some(at));
+        Some(id)
+    }
+
+    /// Löscht den Cue an `index` (aktiver Cart) – ein laufender Cue wird
+    /// vorher gestoppt (Engine `Stop`), sonst würde er nach dem Löschen
+    /// weiterlaufen (QLab stoppt gelöschte Cues ebenfalls).
+    pub fn delete_cue_at(&mut self, index: usize) {
+        if let Some(cue) = self.carts.active().cues().get(index) {
+            let id = cue.id;
+            let commands = self.carts.stop_running(id);
+            self.dispatch(commands);
+        }
+        let _ = self.carts.active_mut().remove(index);
+    }
+
+    /// Löscht einen Cue per ID (Top-Level oder Group-Kind, TODO.md Phase 3
+    /// Item 7) – ein laufender Cue wird vorher gestoppt.
+    pub fn delete_cue_by_id(&mut self, id: Uuid) {
+        let commands = self.carts.stop_running(id);
+        self.dispatch(commands);
+        let _ = self.carts.active_mut().remove_by_id(id);
+    }
+
+    /// Löscht die primäre Selektion (stoppt sie vorher, siehe
+    /// `delete_cue_by_id`; auch Group-Kind möglich).
+    pub fn delete_selected(&mut self) {
+        if let Some(id) = self.carts.active().primary_selection() {
+            self.delete_cue_by_id(id);
+        }
+    }
+
+    /// Dupliziert Cues per ID (Kontextmenü „Duplicate", Mehrfachauswahl).
+    /// Rückgabe: IDs der Kopien.
+    pub fn duplicate_cues(&mut self, ids: &[Uuid]) -> Vec<Uuid> {
+        self.carts.active_mut().duplicate_ids(ids)
+    }
+
+    /// Gruppiert Cues per ID zu einem neuen Group-Cue (Kontextmenü
+    /// „Group Cues"). Rückgabe: ID der neuen Gruppe.
+    pub fn group_cues(&mut self, ids: &[Uuid]) -> Option<Uuid> {
+        self.carts.active_mut().group_ids(ids)
+    }
+
+    /// Setzt den Armed-Zustand mehrerer Cues (Kontextmenü „Arm/Disarm",
+    /// Mehrfachauswahl; auch Group-Kinder).
+    pub fn set_cues_armed(&mut self, ids: &[Uuid], armed: bool) {
+        let list = self.carts.active_mut();
+        for id in ids {
+            if let Some(cue) = list.find_cue_mut(*id) {
+                cue.is_armed = armed;
+            }
+        }
+    }
+
+    /// Setzt die Anzeigefarbe mehrerer Cues (Kontextmenü „Set Color",
+    /// Mehrfachauswahl; auch Group-Kinder).
+    pub fn set_cues_color(&mut self, ids: &[Uuid], color: Option<[u8; 3]>) {
+        let list = self.carts.active_mut();
+        for id in ids {
+            if let Some(cue) = list.find_cue_mut(*id) {
+                cue.color = color;
+            }
+        }
+    }
+
+    /// Verschiebt den selektierten Cue um `delta` (−1 = hoch, +1 = runter).
+    pub fn move_selected(&mut self, delta: i32) {
+        let Some(i) = self.carts.selected_index() else {
+            return;
+        };
+        let list = self.carts.active_mut();
+        if delta < 0 {
+            list.move_up(i);
+        } else {
+            list.move_down(i);
+        }
+    }
+
+    /// Setzt den Armed-Zustand des selektierten Cues.
+    pub fn set_selected_armed(&mut self, armed: bool) {
+        if let Some(cue) = self.carts.selected_mut() {
+            cue.is_armed = armed;
+        }
+    }
+
+    /// Setzt die Anzeigefarbe des selektierten Cues (QLab „Cue Color",
+    /// `None` = keine Farbe).
+    pub fn set_selected_color(&mut self, color: Option<[u8; 3]>) {
+        if let Some(cue) = self.carts.selected_mut() {
+            cue.color = color;
+        }
+    }
+
+    /// Waveform-Peaks für eine Datei (gecacht; `None` bei Dekodierfehler).
+    pub fn waveform_for(&mut self, path: &Path) -> Option<std::sync::Arc<Waveform>> {
+        self.waveforms.get_or_compute(path, WAVEFORM_BUCKETS)
+    }
+
+    /// Zuletzt aufgetretener Fehler (für die Footer-Fehleranzeige + Tests).
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// Verwirft die angezeigte Fehlermeldung (Footer „×").
+    pub fn dismiss_error(&mut self) {
+        self.last_error = None;
+    }
+
+    // ------------------------------------------------------------------
+    // UI-Layout-Persistenz (QLab: Workspace bleibt über Neustarts erhalten)
+    // ------------------------------------------------------------------
+
+    /// Speichert den UI-Zustand (Panel-Sichtbarkeit, Tabs, Fenster) als
+    /// JSON im `eframe::Storage` (wird von `eframe::App::save` aufgerufen).
+    pub fn save_ui_state(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(super::state::UI_STATE_STORAGE_KEY, self.ui.to_json());
+    }
+
+    /// Lädt den UI-Zustand aus dem `eframe::Storage` (fehlend/ungültig →
+    /// die bisherigen Werte bleiben; `from_json` liefert Defaults).
+    pub fn load_ui_state(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(json) = storage.get_string(super::state::UI_STATE_STORAGE_KEY) {
+            self.ui = super::state::UiState::from_json(&json);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Broken Cues (QLab: Warnungs-Zähler im Footer, ✕ in der Cue-Liste)
+    // ------------------------------------------------------------------
+
+    /// Aktualisiert den Broken-Cache (max. alle 2 s – Dateisystem-Checks
+    /// nicht jeden Frame; siehe [`super::problems::cue_problems`]).
+    /// Gruppen-Kinder werden einzeln gecacht (✕ in der eingerückten Zeile);
+    /// der Footer-Zähler zählt nur Top-Level-Cues (kein Doppelzählen).
+    pub fn refresh_problems(&mut self) {
+        let stale = self
+            .problems_at
+            .is_none_or(|at| at.elapsed() >= Duration::from_secs(2));
+        if !stale {
+            return;
+        }
+        self.problems_at = Some(Instant::now());
+        let mut found = Vec::new();
+        for cart_idx in 0..self.carts.cart_count() {
+            let list = self.carts.cart(cart_idx);
+            for (index, cue) in list.cues().iter().enumerate() {
+                let cue_problems = super::problems::cue_problems(cue, self);
+                if !cue_problems.is_empty() {
+                    found.push(BrokenCue {
+                        cart: cart_idx,
+                        index,
+                        id: cue.id,
+                        child: false,
+                        problems: cue_problems,
+                    });
+                }
+                for child in &cue.children {
+                    let child_problems = super::problems::cue_problems(child, self);
+                    if !child_problems.is_empty() {
+                        found.push(BrokenCue {
+                            cart: cart_idx,
+                            index,
+                            id: child.id,
+                            child: true,
+                            problems: child_problems,
+                        });
+                    }
+                }
+            }
+        }
+        self.problems = found;
+    }
+
+    /// Anzahl kaputter Cues (QLab-Footer: „⚠ N"; Top-Level-Cues, Gruppen-
+    /// Kinder zählen nicht doppelt).
+    pub fn broken_count(&mut self) -> usize {
+        self.refresh_problems();
+        self.problems.iter().filter(|b| !b.child).count()
+    }
+
+    /// Probleme des ersten kaputten Cues (Tooltip des Footer-Indikators).
+    pub fn first_broken_problems(&mut self) -> Option<Vec<String>> {
+        self.refresh_problems();
+        self.problems
+            .iter()
+            .find(|b| !b.child)
+            .map(|b| b.problems.clone())
+    }
+
+    /// Springt zum ersten kaputten Cue (Footer-Indikator: Cart aktivieren,
+    /// Cue selektieren + Playhead setzen).
+    pub fn jump_to_first_broken(&mut self) {
+        self.refresh_problems();
+        let Some((cart, index)) = self
+            .problems
+            .iter()
+            .find(|b| !b.child)
+            .map(|b| (b.cart, b.index))
+        else {
+            return;
+        };
+        if self.carts.active_index() != cart {
+            let _ = self.carts.set_active(cart);
+        }
+        let list = self.carts.active_mut();
+        list.select(Some(index));
+        list.set_cursor(index);
+    }
+
+    /// Probleme eines einzelnen Cues (gecacht; für das ✕ in der Cue-Liste,
+    /// Phase 2). Funktioniert auch für Gruppen-Kinder (eigener Eintrag);
+    /// die Gruppe rollt Kinder-Probleme zusätzlich hoch.
+    pub fn problems_of(&mut self, cue: &Cue) -> Vec<String> {
+        self.refresh_problems();
+        self.problems
+            .iter()
+            .find(|b| b.id == cue.id)
+            .map(|b| b.problems.clone())
+            .unwrap_or_default()
+    }
+
+    // ------------------------------------------------------------------
+    // Anzeige-Metadaten für die Cue-Tabelle (TODO.md Phase 2)
+    // ------------------------------------------------------------------
+
+    /// Vergangene Zeit seit Phasenbeginn (Playing/Paused/Post-Wait) – für
+    /// die Fortschrittsbalken in der Cue-Liste (Phase 2). Während Post-Wait
+    /// läuft `started_at` bis `Completed` weiter → Gesamtzeit seit Start.
+    pub fn phase_elapsed_of(&self, cue: &Cue) -> Option<Duration> {
+        match cue.status {
+            CueStatus::Playing | CueStatus::PostWait => {
+                let banked = self.banked.get(&cue.id).copied().unwrap_or_default();
+                self.started_at
+                    .get(&cue.id)
+                    .map(|start| banked + start.elapsed())
+            }
+            CueStatus::Paused => self.banked.get(&cue.id).copied(),
+            _ => None,
+        }
+    }
+
+    /// Verbleibende Pre-Wait-Zeit (Countdown in der Pre-Wait-Spalte,
+    /// TODO.md Phase 2). `None`, wenn der Cue nicht in Pre-Wait ist.
+    pub fn pre_wait_remaining(&self, cue: &Cue) -> Option<Duration> {
+        if cue.status != CueStatus::PreWait {
+            return None;
+        }
+        let start = self.prewait_started.get(&cue.id)?;
+        Some(cue.pre_wait.saturating_sub(start.elapsed()))
+    }
+
+    /// Pflegt die Pre-Wait-Startzeitpunkte: Cues, die neu in Pre-Wait sind,
+    /// bekommen `Instant::now()`, Einträge nicht mehr laufender Cues
+    /// werden entfernt.
+    fn reconcile_prewait_timings(&mut self) {
+        let now = Instant::now();
+        let mut seen = HashSet::new();
+        for cue in self.carts.active().cues() {
+            if cue.status == CueStatus::PreWait {
+                seen.insert(cue.id);
+                self.prewait_started.entry(cue.id).or_insert(now);
+            }
+            for child in &cue.children {
+                if child.status == CueStatus::PreWait {
+                    seen.insert(child.id);
+                    self.prewait_started.entry(child.id).or_insert(now);
+                }
+            }
+        }
+        self.prewait_started.retain(|id, _| seen.contains(id));
+    }
+
+    /// Baut die Anzeige-Metadaten für die Cue-Tabelle (Broken-Cache,
+    /// Phasen-Zeiten, Pre-Wait-Countdown; TODO.md Phase 2). Einmalig pro
+    /// Frame aufrufen (verwaltet dabei auch die Pre-Wait-Zeitpunkte).
+    pub fn cue_row_meta(&mut self) -> HashMap<Uuid, cue_table::CueRowMeta> {
+        self.reconcile_prewait_timings();
+        // Cues klonen: problems_of braucht &mut self (Cache), die Liste wird
+        // danach für die Tabelle mutable geborgt.
+        let snapshot: Vec<Cue> = self.carts.active().cues().to_vec();
+        let mut map = HashMap::new();
+        for cue in &snapshot {
+            map.insert(
+                cue.id,
+                cue_table::CueRowMeta {
+                    problems: self.problems_of(cue),
+                    elapsed: self.phase_elapsed_of(cue),
+                    pre_wait_remaining: self.pre_wait_remaining(cue),
+                },
+            );
+            for child in &cue.children {
+                map.insert(
+                    child.id,
+                    cue_table::CueRowMeta {
+                        problems: self.problems_of(child),
+                        elapsed: self.phase_elapsed_of(child),
+                        pre_wait_remaining: self.pre_wait_remaining(child),
+                    },
+                );
+            }
+        }
+        map
+    }
+
+    // ------------------------------------------------------------------
+    // Show-Mode (QLab-Sicherheitsfunktion)
+    // ------------------------------------------------------------------
+
+    /// Schaltet den Show-Mode um (Editing deaktiviert/aktiviert).
+    pub fn set_show_mode(&mut self, show_mode: bool) {
+        self.show_mode = show_mode;
+        self.remote_dirty = true;
+    }
+
+    /// Toggelt den Show-Mode.
+    pub fn toggle_show_mode(&mut self) {
+        self.set_show_mode(!self.show_mode);
+    }
+
+    // ------------------------------------------------------------------
+    // Remote-Steuerung (Web-Remote + Companion)
+    // ------------------------------------------------------------------
+
+    /// Non-blocking Poll eingehender Remote-Commands (beide Server).
+    /// Public für headless Tests der Web-Remote.
+    pub fn poll_remote_commands(&mut self) {
+        self.poll_midi_start();
+        let Some(remote) = &mut self.remote else {
+            return;
+        };
+        let mut commands = Vec::new();
+        if let Some(rx) = &mut remote.web_commands {
+            while let Ok(cmd) = rx.try_recv() {
+                commands.push(cmd);
+            }
+        }
+        if let Some(rx) = &mut remote.companion_commands {
+            while let Ok(cmd) = rx.try_recv() {
+                commands.push(cmd);
+            }
+        }
+        if let Some(rx) = &mut remote.osc_commands {
+            while let Ok(cmd) = rx.try_recv() {
+                commands.push(cmd);
+            }
+        }
+        if let Some(rx) = &mut remote.midi_commands {
+            while let Ok(cmd) = rx.try_recv() {
+                commands.push(cmd);
+            }
+        }
+        for cmd in commands {
+            self.handle_remote_command(cmd);
+        }
+    }
+
+    /// Übernimmt das Ergebnis des MIDI-Starts, sobald der Hintergrund-Thread
+    /// fertig ist. Public für headless GUI-Tests.
+    pub fn poll_midi_start(&mut self) {
+        let Some(remote) = &mut self.remote else {
+            return;
+        };
+        let Some(pending) = &remote.midi_start else {
+            return;
+        };
+        let result = match pending.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                remote.midi_start = None;
+                tracing::warn!("midi start thread beendet ohne Ergebnis");
+                return;
+            }
+        };
+        remote.midi_start = None;
+        match result {
+            Ok((rx, guard)) => {
+                remote.midi_commands = Some(rx);
+                remote._midi_guard = Some(guard);
+            }
+            Err(e) => {
+                tracing::warn!(%e, "midi input nicht gestartet");
+                if matches!(e, crate::remote::midi::MidiError::Init(_)) {
+                    remote.midi_init_failed = true;
+                    // Vor der Show sichtbar machen: MIDI bliebe sonst unbemerkt aus.
+                    self.last_error =
+                        Some("MIDI unavailable. Restart KuhPlay to retry.".to_string());
+                }
+            }
+        }
+    }
+
+    /// `true`, solange der MIDI-Start im Hintergrund läuft.
+    pub fn midi_starting(&self) -> bool {
+        self.remote
+            .as_ref()
+            .is_some_and(|remote| remote.midi_start.is_some())
+    }
+
+    /// Verarbeitet ein Remote-Command (Web-Remote / Companion) wie die
+    /// entsprechende UI-Aktion.
+    pub fn handle_remote_command(&mut self, cmd: RemoteCommand) {
+        if self.show_mode && cmd.is_edit() {
+            self.report_remote_error("Show Mode is active: editing is disabled.".to_string());
+            return;
+        }
+        if let Err(message) = self.apply_remote_command(cmd) {
+            self.report_remote_error(message);
+        }
+        self.remote_dirty = true;
+    }
+
+    fn report_remote_error(&self, message: String) {
+        tracing::warn!(%message, "remote command abgelehnt");
+        self.broadcast_remote_event(RemoteEvent::Error { message });
+    }
+
+    /// Führt ein Remote-Command aus, wie die entsprechende UI-Aktion.
+    fn apply_remote_command(&mut self, cmd: RemoteCommand) -> Result<(), String> {
+        match cmd {
+            RemoteCommand::Go => self.go_now(),
+            RemoteCommand::Panic => {
+                self.panic();
+                self.broadcast_remote_event(RemoteEvent::Panicked);
+            }
+            RemoteCommand::PauseAll => self.pause_all(),
+            RemoteCommand::ResumeAll => self.resume_all(),
+            RemoteCommand::Reset => self.reset_all(),
+            RemoteCommand::GoTo { cue } => match self.carts.go_to_number(&cue) {
+                Some(outcome) => self.dispatch(outcome.commands),
+                None => {
+                    tracing::warn!(%cue, "remote go_to: cue nicht gefunden oder nicht triggerbar")
+                }
+            },
+            RemoteCommand::Arm { cue, armed } => {
+                if !self.carts.set_armed_by_number(&cue, armed) {
+                    tracing::warn!(%cue, "remote arm: cue nicht gefunden");
+                }
+            }
+            RemoteCommand::PauseCue { id } => {
+                let commands = self.pause_running(id);
+                self.dispatch(commands);
+            }
+            RemoteCommand::ResumeCue { id } => {
+                let commands = self.resume_running(id);
+                self.dispatch(commands);
+            }
+            RemoteCommand::StopCue { id } => {
+                let commands = self.stop_running(id);
+                self.dispatch(commands);
+            }
+            RemoteCommand::SetShowMode { enabled } => {
+                self.set_show_mode(enabled);
+                self.broadcast_remote_event(RemoteEvent::ShowModeChanged { enabled });
+            }
+            RemoteCommand::GetStatus => {}
+            RemoteCommand::NewCue { cue_type } => self.add_cue(cue_type),
+            RemoteCommand::UpdateCue { id, changes } => self.remote_update_cue(id, changes)?,
+            RemoteCommand::DeleteCue { id } => self.delete_cue_by_id(id),
+            RemoteCommand::DuplicateCues { ids } => {
+                self.duplicate_cues(&ids);
+            }
+            RemoteCommand::GroupCues { ids } => {
+                self.group_cues(&ids);
+            }
+            RemoteCommand::MoveCue { id, to } => {
+                let list = self.carts.active_mut();
+                let from = list
+                    .cues()
+                    .iter()
+                    .position(|cue| cue.id == id)
+                    .ok_or("Only top-level cues can be moved.")?;
+                list.move_to(from, to);
+            }
+            RemoteCommand::SetPlayhead { id } => {
+                let index = self
+                    .carts
+                    .active()
+                    .cues()
+                    .iter()
+                    .position(|cue| cue.id == id)
+                    .ok_or("The playhead can only be set on top-level cues.")?;
+                self.carts.set_cursor(index);
+            }
+            RemoteCommand::SetActiveCart { index } => {
+                self.carts.set_active(index).map_err(|e| e.to_string())?
+            }
+            RemoteCommand::AddCart { name } => {
+                self.carts.add_cart(name);
+            }
+            RemoteCommand::SetShowName { name } => self.show_name = name,
+            RemoteCommand::NewShow => self.new_show(),
+            RemoteCommand::SaveShow => {
+                let path = self
+                    .current_file
+                    .clone()
+                    .ok_or("This show has no file yet. Use Save As in the app.")?;
+                self.save_show(&path);
+                if let Some(err) = &self.last_error {
+                    return Err(err.clone());
+                }
+            }
+            RemoteCommand::SetAudition { enabled } => self.set_audition_mode(enabled),
+            RemoteCommand::SetAudioOutput { device } => self.set_audio_output(device),
+            RemoteCommand::SetAudioPatch { patch } => self.set_audio_patch(*patch),
+            RemoteCommand::RefreshAudioDevices => self.audio_devices = None,
+            RemoteCommand::SetOutputMode { mode } => self.set_output_mode(match mode.as_str() {
+                "off" => OutputMode::Off,
+                "preview" => OutputMode::Preview,
+                "displays" => OutputMode::Displays,
+                other => return Err(format!("Unknown output mode: {other}")),
+            }),
+            RemoteCommand::AddScreen { name } => {
+                let screen = crate::core::Screen::new(name, 0, 0, 1920, 1080);
+                self.screens.add(screen).map_err(|e| e.to_string())?;
+            }
+            RemoteCommand::UpdateScreen { id, changes } => {
+                self.remote_update_screen(id, changes)?
+            }
+            RemoteCommand::RemoveScreen { id } => {
+                let assigned: Vec<Stage> = self
+                    .stages
+                    .stages()
+                    .iter()
+                    .filter(|stage| stage.screen == Some(id))
+                    .cloned()
+                    .collect();
+                for mut stage in assigned {
+                    stage.screen = None;
+                    self.configure_stage(stage);
+                }
+                self.screens.remove(id);
+            }
+            RemoteCommand::AddStage { name } => {
+                self.ensure_stage(&name);
+            }
+            RemoteCommand::UpdateStage { name, changes } => {
+                let stage = self
+                    .stages
+                    .find(&name)
+                    .ok_or_else(|| format!("Stage not found: {name}"))?;
+                let updated = merge_json(stage, changes, &["id", "name"])?;
+                self.configure_stage(updated);
+            }
+            RemoteCommand::EvalJs { id, script } => {
+                self.dispatch(vec![EngineCommand::EvalJs { cue_id: id, script }]);
+            }
+            RemoteCommand::PushJson { id } => {
+                let cue = self.carts.find_cue_any(id).ok_or("Cue not found.")?;
+                let target = cue.data_target.ok_or("Choose a target HTML cue first.")?;
+                let payload = cue.data_payload().map_err(|e| e.to_string())?;
+                self.dispatch(vec![EngineCommand::PushJson { target, payload }]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Ändert Felder eines Cues. Laufzeit-Zustand und Identität bleiben.
+    fn remote_update_cue(&mut self, id: Uuid, changes: serde_json::Value) -> Result<(), String> {
+        const PROTECTED: &[&str] = &[
+            "id",
+            "status",
+            "children",
+            "parent_group",
+            "group_iterations_done",
+        ];
+        let cue = self.carts.find_cue_any(id).ok_or("Cue not found.")?;
+        let updated: Cue = merge_json(cue, changes, PROTECTED)?;
+        if let Some(route) = &updated.route {
+            route.validate().map_err(|e| e.to_string())?;
+        }
+        let (volume_changed, playing) = (
+            updated.volume != cue.volume,
+            cue.status == CueStatus::Playing,
+        );
+        if let Some(stage) = updated.stage.clone() {
+            self.ensure_stage(&stage);
+        }
+        let volume = updated.volume;
+        *self.carts.find_cue_any_mut(id).ok_or("Cue not found.")? = updated;
+        if volume_changed && playing {
+            self.dispatch(vec![EngineCommand::SetVolume { cue_id: id, volume }]);
+        }
+        Ok(())
+    }
+
+    /// Ändert Felder eines Screens und meldet ein geändertes Testbild.
+    fn remote_update_screen(&mut self, id: Uuid, changes: serde_json::Value) -> Result<(), String> {
+        let screen = self.screens.find(id).ok_or("Screen not found.")?;
+        let updated: crate::core::Screen = merge_json(screen, changes, &["id"])?;
+        let pattern_changed = updated.test_pattern != screen.test_pattern
+            || updated.test_pattern_kind != screen.test_pattern_kind
+            || updated.checker_size != screen.checker_size;
+        let pattern = updated.test_pattern;
+        *self.screens.find_mut(id).ok_or("Screen not found.")? = updated;
+        if pattern_changed {
+            self.set_screen_test_pattern(id, pattern);
+        }
+        Ok(())
+    }
+
+    /// Baut die komplette Show für die Web-Remote.
+    pub fn build_remote_workspace(&mut self) -> RemoteWorkspace {
+        use crate::core::{
+            BlendCurve, ContinueMode, ControlAction, EdgeSide, FadeCurve, FadeParam, Fps,
+            GroupMode, ScreenRotation, TestPatternKind,
+        };
+        use crate::engine::audio_backend::{default_output_name, output_devices};
+        use crate::remote::{RemoteAudioDevice, RemoteDisplay, RemoteOption, RemoteShortcut};
+        fn options<T: serde::Serialize + Copy>(
+            items: &[T],
+            label: impl Fn(T) -> String,
+        ) -> Vec<RemoteOption> {
+            items
+                .iter()
+                .map(|item| RemoteOption {
+                    value: serde_json::to_value(item).unwrap_or_default(),
+                    label: label(*item),
+                })
+                .collect()
+        }
+        let list = self.audio_devices.get_or_insert_with(|| AudioDeviceList {
+            devices: output_devices(),
+            default_name: default_output_name(),
+        });
+        let audio_devices = list
+            .devices
+            .iter()
+            .map(|d| RemoteAudioDevice {
+                name: d.name.clone(),
+                channels: d.channels,
+                sample_rate: d.sample_rate,
+            })
+            .collect();
+        let default_audio_device = list.default_name.clone();
+        let cues: Vec<Cue> = self.carts.active().cues().to_vec();
+        let mut problems = HashMap::new();
+        for cue in cues.iter().chain(cues.iter().flat_map(|c| &c.children)) {
+            let found = self.problems_of(cue);
+            if !found.is_empty() {
+                problems.insert(cue.id, found);
+            }
+        }
+        let on_off = |on: bool, value: String| if on { value } else { "Off".to_string() };
+        let config = &self.remote_config;
+        let map = config.midi_map;
+        let midi_status = if !config.midi_enabled {
+            "Off"
+        } else if self.midi_connected() {
+            "Connected"
+        } else if self.midi_init_failed() {
+            "Unavailable, restart KuhPlay to retry"
+        } else {
+            "No device connected"
+        };
+        RemoteWorkspace {
+            show_name: self.show_name.clone(),
+            file: self.current_file.as_ref().map(|p| p.display().to_string()),
+            audition_mode: self.audition_mode,
+            output_mode: match self.output_mode {
+                OutputMode::Off => "off",
+                OutputMode::Preview => "preview",
+                OutputMode::Displays => "displays",
+            }
+            .to_string(),
+            audio_output: self.audio_output.clone(),
+            audio_patch: self.audio_patch.clone(),
+            audio_devices,
+            default_audio_device,
+            cues,
+            problems,
+            stages: self.stages.stages().to_vec(),
+            screens: self.screens.screens().to_vec(),
+            displays: self
+                .displays
+                .iter()
+                .map(|d| RemoteDisplay {
+                    name: d.name.clone(),
+                    x: d.x,
+                    y: d.y,
+                    width: d.width,
+                    height: d.height,
+                })
+                .collect(),
+            options: [
+                (
+                    "cue_type",
+                    options(&CueType::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "continue_mode",
+                    options(&ContinueMode::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "group_mode",
+                    options(&GroupMode::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "control_action",
+                    options(&ControlAction::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "fade_param",
+                    options(&FadeParam::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "fade_curve",
+                    options(&FadeCurve::ALL, |v| v.label().to_string()),
+                ),
+                ("fps", options(&Fps::ALL, |v| v.label().to_string())),
+                (
+                    "edge_side",
+                    options(&EdgeSide::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "blend_curve",
+                    options(&BlendCurve::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "rotation",
+                    options(&ScreenRotation::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "test_pattern_kind",
+                    options(&TestPatternKind::ALL, |v| v.label().to_string()),
+                ),
+            ]
+            .into_iter()
+            .map(|(key, values)| (key.to_string(), values))
+            .collect(),
+            shortcuts: shortcuts::ALL
+                .iter()
+                .map(|s| RemoteShortcut {
+                    group: s.group.to_string(),
+                    label: s.label.to_string(),
+                    keys: s.display(),
+                })
+                .collect(),
+            network: vec![
+                (
+                    "Web Remote".to_string(),
+                    on_off(config.web_enabled, format!("Port {}", config.web_port)),
+                ),
+                (
+                    "Companion".to_string(),
+                    on_off(
+                        config.companion_enabled,
+                        format!("Port {}", config.companion_port),
+                    ),
+                ),
+                (
+                    "OSC In".to_string(),
+                    on_off(config.osc_enabled, format!("Port {}", config.osc_port)),
+                ),
+                (
+                    "OSC Prefix".to_string(),
+                    on_off(config.osc_enabled, config.osc_prefix.clone()),
+                ),
+            ],
+            midi: vec![
+                ("Input".to_string(), midi_status.to_string()),
+                ("Go".to_string(), format!("Note {}", map.go)),
+                ("Panic".to_string(), format!("Note {}", map.panic)),
+                ("Pause".to_string(), format!("Note {}", map.pause)),
+                ("Resume".to_string(), format!("Note {}", map.resume)),
+                ("Reset".to_string(), format!("Note {}", map.reset)),
+            ],
+        }
+    }
+
+    /// Schickt Status und, falls geändert, die Show an die Remote-Clients:
+    /// sofort bei Änderungen, sonst einmal pro Sekunde.
+    pub fn pump_remote(&mut self) {
+        if self.remote.is_none() {
+            return;
+        }
+        if !self.remote_dirty && self.last_status_push.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.remote_dirty = false;
+        self.last_status_push = Instant::now();
+        self.broadcast_remote_status();
+        let web = self
+            .remote
+            .as_ref()
+            .and_then(|remote| remote.web_events.clone());
+        if let Some(web) = web {
+            let workspace = self.build_remote_workspace();
+            let json = serde_json::to_string(&workspace).unwrap_or_default();
+            if json != self.last_workspace_json {
+                self.last_workspace_json = json;
+                let _ = web.send(RemoteEvent::Workspace(Box::new(workspace)));
+            }
+        }
+    }
+
+    /// Sendet ein Event an alle verbundenen Remote-Clients (Web + Companion
+    /// + OSC-Out).
+    fn broadcast_remote_event(&self, event: RemoteEvent) {
+        if let Some(remote) = &self.remote {
+            if let Some(tx) = &remote.web_events {
+                let _ = tx.send(event.clone());
+            }
+            if let Some(tx) = &remote.companion_events {
+                let _ = tx.send(event.clone());
+            }
+            if let Some(tx) = &remote.osc_events {
+                let _ = tx.send(event.clone());
+            }
+        }
+    }
+
+    /// Baut einen Status-Snapshot für Remote-Clients aus dem App-Zustand.
+    pub fn build_remote_status(&self) -> RemoteStatus {
+        let active = self.carts.active();
+        let standby = active.standby().map(|c| StandbyCue {
+            id: c.id,
+            number: c.number.clone(),
+            name: c.name.clone(),
+            armed: c.is_armed,
+        });
+        let running = active
+            .cues()
+            .iter()
+            .filter(|c| is_running_status(c.status))
+            .map(|c| RunningCue {
+                id: c.id,
+                number: c.number.clone(),
+                name: c.name.clone(),
+                status: format!("{:?}", c.status),
+                elapsed_ms: self
+                    .elapsed_of(c)
+                    .map(crate::remote::duration_ms)
+                    .unwrap_or(0),
+                duration_ms: c.duration.as_millis() as u64,
+            })
+            .collect();
+        let carts = (0..self.carts.cart_count())
+            .map(|i| CartInfo {
+                index: i,
+                name: self.carts.cart_name(i).to_string(),
+                cue_count: self.carts.cart_cue_count(i),
+            })
+            .collect();
+        let cues = active
+            .cues()
+            .iter()
+            .map(|c| CueInfo {
+                id: c.id,
+                number: c.number.clone(),
+                name: c.name.clone(),
+                cue_type: format!("{:?}", c.cue_type),
+                armed: c.is_armed,
+                status: format!("{:?}", c.status),
+                is_running: is_running_status(c.status),
+                duration_ms: c.duration.as_millis() as u64,
+            })
+            .collect();
+        RemoteStatus::from_app(
+            &self.show_name,
+            self.show_mode,
+            self.carts.active_index(),
+            self.carts.cart_name(self.carts.active_index()),
+            active.cursor(),
+            standby,
+            running,
+            carts,
+            cues,
+        )
+    }
+
+    /// Pusht den aktuellen Status-Snapshot an alle Remote-Clients. Die
+    /// Server cachen ihn für `GET /api/status` und neue Verbindungen.
+    fn broadcast_remote_status(&self) {
+        let status = self.build_remote_status();
+        self.broadcast_remote_event(RemoteEvent::Status(status));
+    }
+
+    /// Q-Nummer + Name eines Cues (für Remote-Events) – über alle Carts
+    /// gesucht (der Cue kann in einem nicht-aktiven Cart liegen).
+    fn cue_label(&self, id: Uuid) -> (String, String) {
+        self.carts
+            .find_cue_any(id)
+            .map(|c| (c.number.clone(), c.name.clone()))
+            .unwrap_or_default()
+    }
+
+    // ------------------------------------------------------------------
+    // Timing-Anzeige (Sidebar „Active Cues")
+    // ------------------------------------------------------------------
+
+    /// Elapsed-Zeit eines aktiven Cues (Playing: laufend akkumuliert,
+    /// Paused: akkumulierter Wert bis zur Pause).
+    pub fn elapsed_of(&self, cue: &Cue) -> Option<Duration> {
+        match cue.status {
+            CueStatus::Playing => {
+                let banked = self.banked.get(&cue.id).copied().unwrap_or_default();
+                self.started_at
+                    .get(&cue.id)
+                    .map(|start| banked + start.elapsed())
+            }
+            CueStatus::Paused => self.banked.get(&cue.id).copied(),
+            _ => None,
+        }
+    }
+
+    fn note_started(&mut self, id: Uuid) {
+        self.started_at.insert(id, Instant::now());
+    }
+
+    fn note_paused(&mut self, id: Uuid) {
+        if let Some(start) = self.started_at.remove(&id) {
+            *self.banked.entry(id).or_default() += start.elapsed();
+        }
+    }
+
+    fn note_resumed(&mut self, id: Uuid) {
+        self.started_at.insert(id, Instant::now());
+    }
+
+    fn note_finished(&mut self, id: Uuid) {
+        self.note_paused(id);
+        self.banked.remove(&id);
+    }
+
+    fn clear_timing(&mut self) {
+        self.started_at.clear();
+        self.banked.clear();
+        self.prewait_started.clear();
+    }
+
+    // ------------------------------------------------------------------
+    // Persistenz (File-Menü)
+    // ------------------------------------------------------------------
+
+    /// Wechselt das Audio-Ausgabegerät (`None` = System-Standard). Übernommen
+    /// wird es erst, wenn die Engine `AudioOutputChanged` meldet; schlägt der
+    /// Wechsel fehl, bleibt das bisherige Gerät aktiv und der Footer zeigt den
+    /// Fehler.
+    pub fn set_audio_output(&mut self, device: Option<String>) {
+        if device != self.audio_output {
+            self.dispatch(vec![EngineCommand::SetAudioOutput { device }]);
+        }
+    }
+
+    /// Übernimmt die Kanal-Zuordnung und meldet sie an die Engine.
+    pub fn set_audio_patch(&mut self, patch: crate::core::AudioPatch) {
+        let outputs = patch.outputs();
+        self.audio_patch = patch;
+        self.dispatch(vec![EngineCommand::SetAudioPatch { outputs }]);
+    }
+
+    /// Aktives Audio-Ausgabegerät (`None` = System-Standard).
+    pub fn audio_output(&self) -> Option<&str> {
+        self.audio_output.as_deref()
+    }
+
+    /// Speichert die Show als JSON-Datei (`.kuhplay`).
+    pub fn save_show(&mut self, path: &Path) {
+        let doc = ShowDocument {
+            name: self.show_name.clone(),
+            carts: self.carts.clone(),
+            stages: self.stages.clone(),
+            screens: self.screens.clone(),
+            audio_output: self.audio_output.clone(),
+            audio_patch: self.audio_patch.clone(),
+        };
+        let result = doc
+            .to_json()
+            .and_then(|json| std::fs::write(path, json).map_err(crate::core::ShowError::from));
+        match result {
+            Ok(()) => {
+                self.current_file = Some(path.to_path_buf());
+                self.last_error = None;
+            }
+            Err(err) => {
+                self.last_error = Some(err.to_string());
+                tracing::error!(%err, "failed to save show");
+            }
+        }
+    }
+
+    /// Lädt eine Show aus einer JSON-Datei.
+    pub fn load_show(&mut self, path: &Path) -> ShowResult<()> {
+        let json = std::fs::read_to_string(path)?;
+        let doc = ShowDocument::from_json(&json)?;
+        self.show_name = doc.name;
+        self.carts = doc.carts;
+        // Stages + Screens übernehmen; bei leeren Defaults neu aufbauen.
+        self.stages = if doc.stages.is_empty() {
+            StageManager::new()
+        } else {
+            doc.stages
+        };
+        self.screens = if doc.screens.is_empty() {
+            ScreenManager::from_displays(&self.displays)
+        } else {
+            doc.screens
+        };
+        self.set_audio_output(doc.audio_output);
+        self.set_audio_patch(doc.audio_patch);
+        self.screen_editor_selected = None;
+        self.stage_windows.clear();
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            open.clear();
+        }
+        // Alle Stages an die Engine melden.
+        for stage in self.stages.stages().to_vec() {
+            self.configure_stage(stage);
+        }
+        self.current_file = Some(path.to_path_buf());
+        self.clear_timing();
+        self.last_error = None;
+        Ok(())
+    }
+
+    /// Neue leere Show (File → New Show).
+    pub fn new_show(&mut self) {
+        self.set_audio_output(None);
+        self.set_audio_patch(crate::core::AudioPatch::default());
+        self.carts = CartManager::new();
+        self.stages = StageManager::new();
+        self.screens = ScreenManager::from_displays(&self.displays);
+        self.screen_editor_selected = None;
+        self.stage_windows.clear();
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            open.clear();
+        }
+        // Default-Stage an die Engine melden.
+        if let Some(stage) = self.stages.stages().first().cloned() {
+            self.configure_stage(stage);
+        }
+        self.show_name = "Untitled Show".to_string();
+        self.current_file = None;
+        self.show_mode = false;
+        self.clear_timing();
+    }
+
+    /// Öffnet den nativen Datei-Dialog und lädt die gewählte Show.
+    ///
+    /// **Hinweis:** `rfd` blockiert kurz den UI-Thread (macOS: native Dialoge
+    /// laufen auf dem Main-Thread); die Engine arbeitet weiter.
+    pub fn open_show_dialog(&mut self, _ctx: &egui::Context) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("KuhPlay Show", &["kuhplay", "json"])
+            .set_title("Open Show")
+            .pick_file()
+        {
+            if let Err(err) = self.load_show(&path) {
+                self.last_error = Some(err.to_string());
+                tracing::error!(%err, "failed to load show");
+            }
+        }
+    }
+
+    /// Speichert die Show; ohne geöffnete Datei → „Save As"-Dialog.
+    pub fn save_show_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(path) = &self.current_file {
+            let path = path.clone();
+            self.save_show(&path);
+        } else {
+            self.save_show_as_dialog(ctx);
+        }
+    }
+
+    /// Öffnet den „Save As"-Dialog und speichert die Show.
+    pub fn save_show_as_dialog(&mut self, _ctx: &egui::Context) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("KuhPlay Show", &["kuhplay", "json"])
+            .set_title("Save Show As")
+            .set_file_name(format!("{}.kuhplay", self.show_name))
+            .save_file()
+        {
+            self.save_show(&path);
+        }
+    }
+
+    /// Beendet die App (⌘Q / File → Quit).
+    pub fn quit(&self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    // ------------------------------------------------------------------
+    // Engine-Kommunikation
+    // ------------------------------------------------------------------
+
+    /// Sendet Commands an die Engine (non-blocking; Fehler werden geloggt,
+    /// nie gepanict – Live-Betrieb). Im Audition-Mode werden Stage-Ziele
+    /// aus Video-Commands entfernt (siehe [`Self::apply_audition`]).
+    pub fn dispatch(&mut self, commands: Vec<EngineCommand>) {
+        for command in commands {
+            let command = self.apply_audition(command);
+            // Fades melden kein `Started` (keine Pre-Wait-Phase in der
+            // Engine) – Startzeit hier setzen, sonst fehlt die Restzeit.
+            if let EngineCommand::Fade { cue_id, .. } = &command {
+                self.note_started(*cue_id);
+            }
+            if let Err(err) = self.engine.send(command) {
+                self.last_error = Some(err.to_string());
+                tracing::error!("failed to dispatch engine command: {err}");
+            }
+        }
+    }
+
+    /// Audition-Mode (QLab „Workspace → Audition Mode"): Video-Cues spielen
+    /// ohne Stage-Ziel – das Bild landet nicht auf einer Stage, Audio bleibt
+    /// unverändert (Audio-Play ignoriert `stage` in der Engine ohnehin).
+    pub fn set_audition_mode(&mut self, enabled: bool) {
+        self.audition_mode = enabled;
+        self.remote_dirty = true;
+    }
+
+    /// Entfernt im Audition-Mode das Stage-Ziel aus Video-Commands
+    /// (`Play`, `PlayHtml`, `PlaySlideShow`); alle anderen Commands bleiben.
+    pub fn apply_audition(&self, command: EngineCommand) -> EngineCommand {
+        if !self.audition_mode {
+            return command;
+        }
+        match command {
+            EngineCommand::Play {
+                cue_id,
+                path,
+                duration,
+                pre_wait,
+                post_wait,
+                loop_mode,
+                slices,
+                route,
+                timecode_in,
+                stage: _,
+                layer,
+                surface,
+            } => EngineCommand::Play {
+                cue_id,
+                path,
+                duration,
+                pre_wait,
+                post_wait,
+                loop_mode,
+                slices,
+                route,
+                timecode_in,
+                stage: None,
+                layer,
+                surface,
+            },
+            EngineCommand::PlayHtml {
+                cue_id,
+                source,
+                stage: _,
+                layer,
+                duration,
+                pre_wait,
+                post_wait,
+            } => EngineCommand::PlayHtml {
+                cue_id,
+                source,
+                stage: None,
+                layer,
+                duration,
+                pre_wait,
+                post_wait,
+            },
+            EngineCommand::PlaySlideShow {
+                cue_id,
+                show,
+                stage: _,
+                layer,
+                duration,
+                pre_wait,
+                post_wait,
+                surface,
+            } => EngineCommand::PlaySlideShow {
+                cue_id,
+                show,
+                stage: None,
+                layer,
+                duration,
+                pre_wait,
+                post_wait,
+                surface,
+            },
+            other => other,
+        }
+    }
+
+    /// HTML5-Cue-Ziele des aktiven Carts (für HTML-Data-Cues im Inspector).
+    pub fn html_targets(&self) -> Vec<(Uuid, String)> {
+        self.carts
+            .active()
+            .cues()
+            .iter()
+            .filter(|c| c.cue_type == CueType::Html)
+            .map(|c| (c.id, format!("{}  {}", c.number, c.name)))
+            .collect()
+    }
+
+    // ------------------------------------------------------------------
+    // Engine-Events → Domain-Status (+ Timing-Hooks + Auto-Follow)
+    // ------------------------------------------------------------------
+
+    /// `true`, wenn CoreMIDI den MIDI-Client abgelehnt hat.
+    pub(super) fn midi_init_failed(&self) -> bool {
+        self.remote
+            .as_ref()
+            .is_some_and(|remote| remote.midi_init_failed)
+    }
+
+    /// `true`, wenn ein MIDI-Input-Device verbunden ist.
+    pub(super) fn midi_connected(&self) -> bool {
+        self.remote
+            .as_ref()
+            .is_some_and(|remote| remote._midi_guard.is_some())
+    }
+
+    /// Non-blocking Poll der Engine-Events → Status-Updates (über alle Carts,
+    /// da Engine-Events auch Cues in nicht-aktiven Carts betreffen).
+    /// Public für headless GUI-Tests (tests/gui_interaction.rs).
+    pub fn poll_engine_events(&mut self) {
+        while let Some(event) = self.engine.try_recv_event() {
+            match event {
+                EngineEvent::Started { cue_id } => {
+                    self.apply_status(cue_id, CueStatus::Playing);
+                    self.note_started(cue_id);
+                    let (number, name) = self.cue_label(cue_id);
+                    self.broadcast_remote_event(RemoteEvent::CueStarted {
+                        id: cue_id,
+                        number,
+                        name,
+                    });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::Paused { cue_id } => {
+                    self.apply_status(cue_id, CueStatus::Paused);
+                    self.note_paused(cue_id);
+                    self.broadcast_remote_event(RemoteEvent::CuePaused { id: cue_id });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::Resumed { cue_id } => {
+                    self.apply_status(cue_id, CueStatus::Playing);
+                    self.note_resumed(cue_id);
+                    self.broadcast_remote_event(RemoteEvent::CueResumed { id: cue_id });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::Finished { cue_id } => {
+                    // Post-Wait-Phase oder direkt Completed (je nach Cue).
+                    // Über alle Carts gesucht (Engine-Events betreffen auch
+                    // Cues in nicht-aktiven Carts).
+                    let post_wait = self
+                        .carts
+                        .find_cue_any(cue_id)
+                        .map(|c| c.post_wait)
+                        .unwrap_or_default();
+                    let target = if post_wait > Duration::ZERO {
+                        CueStatus::PostWait
+                    } else {
+                        CueStatus::Completed
+                    };
+                    self.apply_status_with_follow(cue_id, target);
+                    if target == CueStatus::Completed {
+                        self.note_finished(cue_id);
+                    }
+                    self.broadcast_remote_event(RemoteEvent::CueFinished { id: cue_id });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::PostWaitElapsed { cue_id } => {
+                    self.apply_status_with_follow(cue_id, CueStatus::Completed);
+                    self.note_finished(cue_id);
+                    self.broadcast_remote_event(RemoteEvent::CueFinished { id: cue_id });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::Stopped { cue_id } => {
+                    self.apply_status(cue_id, CueStatus::Stopped);
+                    self.note_finished(cue_id);
+                    self.broadcast_remote_event(RemoteEvent::CueStopped { id: cue_id });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::AudioOutputChanged { device } => {
+                    self.audio_output = device;
+                }
+                EngineEvent::Error { cue_id, message } => {
+                    if let Some(id) = cue_id {
+                        self.apply_status(id, CueStatus::Error);
+                        self.note_finished(id);
+                        self.broadcast_remote_event(RemoteEvent::CueError {
+                            id,
+                            message: message.clone(),
+                        });
+                    }
+                    self.last_error = Some(message);
+                    self.remote_dirty = true;
+                }
+                EngineEvent::HtmlLoaded { cue_id } => {
+                    tracing::debug!(%cue_id, "html5 webview instance loaded");
+                }
+                EngineEvent::JsExecuted { cue_id, at, .. } => {
+                    tracing::debug!(%cue_id, ?at, "js executed in webview");
+                }
+                EngineEvent::JsonReceived { target, at, .. } => {
+                    tracing::debug!(%target, ?at, "json payload pushed to webview");
+                }
+                EngineEvent::SlideChanged { cue_id, index, at } => {
+                    tracing::debug!(%cue_id, index, ?at, "slideshow changed slide");
+                }
+                // Informative Events (V1 ohne UI-Anzeige, über Events abgedeckt).
+                EngineEvent::Position { .. }
+                | EngineEvent::LoopIteration { .. }
+                | EngineEvent::FadeProgress { .. }
+                | EngineEvent::FrameDrop { .. }
+                | EngineEvent::TimecodeJump { .. }
+                | EngineEvent::Loaded { .. }
+                | EngineEvent::StageConfigured { .. }
+                | EngineEvent::Pong(_) => {}
+            }
+        }
+    }
+
+    /// Wendet einen Status an (State-Machine validiert; Fehler werden geloggt,
+    /// nie gepanict – Live-Betrieb).
+    fn apply_status(&mut self, cue_id: Uuid, status: CueStatus) {
+        if let Err(err) = self.carts.set_status(cue_id, status) {
+            tracing::warn!(%cue_id, %err, "status update rejected by state machine");
+        }
+    }
+
+    /// Status anwenden + Auto-Follow (QLab „Cue Sequences": bei `Completed`
+    /// feuert der nächste Cue, wenn dieser auf Auto-Follow steht).
+    fn apply_status_with_follow(&mut self, cue_id: Uuid, status: CueStatus) {
+        let (result, follow_commands) = self.carts.set_status_with_follow(cue_id, status);
+        if let Err(err) = result {
+            tracing::warn!(%cue_id, %err, "status update rejected by state machine");
+        }
+        self.dispatch(follow_commands);
+    }
+
+    /// Globale Hotkeys (QLab-Style, TODO.md Phase 5): liest die zentrale
+    /// Tabelle [`shortcuts::ALL`] – Space = GO, Esc = Panic, ↑/↓ = Playhead,
+    /// ⌘/⌥⌘+↑/↓ = Cue verschieben, ⌘0–9 = neue Cues, ⌘F/⌘G = Find,
+    /// ⌘D/⌘G = Duplicate/Find Next, ⌘I/L/K = Panels, ⌘N/O/S/⇧⌘S/Q = Datei.
+    /// Public für headless GUI-Tests (tests/gui_interaction.rs).
+    ///
+    /// Gate: Nur ein fokussiertes **Textfeld** blockiert Space/Esc (dort
+    /// sollen die Tasten im Feld wirken). egui 0.30 kann das nicht selbst
+    /// erkennen (Slider fordern genau wie Textfelder Fokus beim Klick),
+    /// daher registrieren die Zeichenfunktionen ihre Textfeld-IDs in
+    /// [`ShowApp::text_field_ids`] und der Gate-Wert wird pro Frame in
+    /// [`ShowApp::text_field_active`] gecacht (Esc löscht den Fokus bereits
+    /// in egui's `begin_pass`, bevor die Hotkeys laufen – eine Live-Abfrage
+    /// wäre auf der Esc-Frame daher immer leer). Pfeiltasten blockiert
+    /// zusätzlich JEDES fokussierte Widget, weil Slider/Textfelder Pfeile
+    /// selbst konsumieren (Wert/Cursor ändern).
+    pub fn handle_hotkeys(&mut self, ctx: &egui::Context) {
+        let text_input = self.text_field_active;
+        let any_focus = ctx.memory(|m| m.focused().is_some());
+        // WICHTIG: Innerhalb von `ctx.input` darf KEINE andere
+        // `ctx`-Methode aufgerufen werden (`Context::input` hält den
+        // Write-Lock – `ctx.memory_mut`/`send_viewport_cmd` im Closure
+        // deadlocken). Daher: erst matchende Aktionen sammeln, dann
+        // außerhalb des Closures dispatchen.
+        let mut matched: Vec<ShortcutAction> = Vec::new();
+        ctx.input(|i| {
+            // Eine zentrale Tabelle (TODO.md Phase 5): Menüanzeige,
+            // Shortcuts-Fenster und dieses Verhalten lesen alle aus
+            // `shortcuts::ALL` – so kann nichts auseinanderlaufen.
+            for sc in shortcuts::ALL {
+                let Some(key) = sc.key else { continue };
+                if !i.key_pressed(key) || !sc.matches(key, &i.modifiers) {
+                    continue;
+                }
+                matched.push(sc.action);
+            }
+        });
+        let mut consume_space = false;
+        for action in matched {
+            let editable = !self.show_mode;
+            match action {
+                // Space = GO – auch wenn z. B. ein Slider fokussiert ist
+                // (QLab); nur Textfelder (Tippen) blockieren. Das Event
+                // wird konsumiert, damit ein fokussierter Button
+                // (Tab-Fokus) nicht zusätzlich feuert (kein Doppel-GO).
+                ShortcutAction::Go => {
+                    if text_input {
+                        continue;
+                    }
+                    self.pending_go = true;
+                    consume_space = true;
+                }
+                // Esc = Panic – nicht während Texteingabe (Esc beendet
+                // dort die Eingabe und räumt den Fokus auf).
+                ShortcutAction::PanicAll => {
+                    if text_input {
+                        continue;
+                    }
+                    self.panic();
+                }
+                // Nackte Klammern: Pause All / Resume All (QLab 5) –
+                // nicht während Texteingabe.
+                ShortcutAction::PauseAll => {
+                    if text_input {
+                        continue;
+                    }
+                    self.pause_all();
+                }
+                ShortcutAction::ResumeAll => {
+                    if text_input {
+                        continue;
+                    }
+                    self.resume_all();
+                }
+                ShortcutAction::ResetAll => {
+                    if text_input {
+                        continue;
+                    }
+                    self.reset_all();
+                }
+                // Pfeile: Playhead bewegen (nackt) bzw. selektierten Cue
+                // verschieben (⌘/⌥⌘). Pfeiltasten blockiert zusätzlich
+                // JEDES fokussierte Widget (Slider/Textfelder konsumieren
+                // Pfeile selbst).
+                ShortcutAction::PlayheadUp => {
+                    if any_focus {
+                        continue;
+                    }
+                    let c = self.carts.cursor().saturating_sub(1);
+                    self.carts.set_cursor(c);
+                }
+                ShortcutAction::PlayheadDown => {
+                    if any_focus {
+                        continue;
+                    }
+                    self.carts.set_cursor(self.carts.cursor() + 1);
+                }
+                ShortcutAction::MoveCueUp => {
+                    if any_focus || !editable {
+                        continue;
+                    }
+                    self.move_selected(-1);
+                }
+                ShortcutAction::MoveCueDown => {
+                    if any_focus || !editable {
+                        continue;
+                    }
+                    self.move_selected(1);
+                }
+                // ⌘0–⌘9: neuen Cue des Typs anlegen (QLab Cues-Menü).
+                ShortcutAction::NewCue(cue_type) => {
+                    if !editable {
+                        continue;
+                    }
+                    self.add_cue(cue_type);
+                }
+                ShortcutAction::ToggleInspector => {
+                    self.ui.inspector_visible = !self.ui.inspector_visible;
+                }
+                ShortcutAction::ToggleSidebar => {
+                    self.ui.sidebar_visible = !self.ui.sidebar_visible;
+                }
+                ShortcutAction::ToggleToolbox => {
+                    self.ui.toolbox_visible = !self.ui.toolbox_visible;
+                }
+                ShortcutAction::NewShow => self.new_show(),
+                ShortcutAction::OpenShow => self.open_show_dialog(ctx),
+                ShortcutAction::SaveShow => self.save_show_dialog(ctx),
+                ShortcutAction::SaveShowAs => self.save_show_as_dialog(ctx),
+                ShortcutAction::WorkspaceSettings => {
+                    self.ui.workspace_settings_open = true;
+                }
+                ShortcutAction::Quit => self.quit(ctx),
+                // ⌘F: Find-Leiste toggeln + Fokus; ⌘G: nächster Treffer.
+                ShortcutAction::Find => {
+                    self.ui.find.open = !self.ui.find.open;
+                    if self.ui.find.open {
+                        ctx.memory_mut(|m| m.request_focus(cue_table::find_bar_id()));
+                    } else {
+                        self.ui.find.query.clear();
+                        self.ui.find.current = 0;
+                    }
+                }
+                ShortcutAction::FindNext => {
+                    if !self.ui.find.open {
+                        self.ui.find.open = true;
+                        ctx.memory_mut(|m| m.request_focus(cue_table::find_bar_id()));
+                    }
+                    self.find_next();
+                }
+                // ⌫/Delete/⌘⌫: selektierten Cue löschen – nur Edit-Mode
+                // und nie während Texteingabe/anderem Fokus.
+                ShortcutAction::DeleteCue => {
+                    if text_input || any_focus || !editable {
+                        continue;
+                    }
+                    self.delete_selected();
+                }
+                ShortcutAction::DuplicateCues => {
+                    if !editable {
+                        continue;
+                    }
+                    let ids = self.carts.active().selection().to_vec();
+                    if !ids.is_empty() {
+                        self.duplicate_cues(&ids);
+                    }
+                }
+                ShortcutAction::GroupCues => {
+                    if !editable {
+                        continue;
+                    }
+                    let ids = self.carts.active().selection().to_vec();
+                    if !ids.is_empty() {
+                        self.group_cues(&ids);
+                    }
+                }
+            }
+        }
+        if consume_space {
+            ctx.input_mut(|i| {
+                i.events.retain(|e| {
+                    !matches!(
+                        e,
+                        egui::Event::Key {
+                            key: Key::Space,
+                            pressed: true,
+                            ..
+                        }
+                    )
+                });
+            });
+        }
+    }
+
+    /// Find (⌘F/⌘G, TODO.md Phase 5): nächster Treffer – Playhead +
+    /// Selektion springen dorthin (Auto-Scroll scrollt zur Cursor-Zeile).
+    /// Public für headless GUI-Tests.
+    pub fn find_next(&mut self) {
+        let list = self.carts.active_mut();
+        cue_table::find_next_hit(list, &mut self.ui.find);
+    }
+
+    /// Führt ein ausstehendes Space-GO aus (in `update` nach den Panels,
+    /// damit Hotkeys nicht mit fokussierten Buttons kollidieren).
+    /// Public für headless GUI-Tests (tests/gui_interaction.rs).
+    pub fn flush_pending_go(&mut self) {
+        if self.pending_go {
+            self.pending_go = false;
+            self.go_now();
+        }
+    }
+
+    /// `true`, wenn aktuell ein Textfeld fokussiert ist (Hotkey-Gate:
+    /// Textfelder sollen die Tasten selbst bekommen). Nutzt die
+    /// Textfeld-Registrierung des vorherigen Frames (siehe
+    /// [`ShowApp::text_field_ids`]) – plus den Zellen-Editor der Cue-Tabelle
+    /// (TODO.md Phase 3: Esc bricht den Inline-Edit ab statt Panic).
+    pub fn text_field_focused(&self, ctx: &egui::Context) -> bool {
+        let Some(focused) = ctx.memory(|m| m.focused()) else {
+            return false;
+        };
+        if self.text_field_ids_prev.contains(&focused) {
+            return true;
+        }
+        ctx.data_mut(|d| d.get_temp::<egui::Id>(super::cue_table::cell_edit_active_id()))
+            .is_some_and(|edit_id| edit_id == focused)
+    }
+
+    /// Übernimmt die Textfeld-Registrierung: das aktuelle Frame wird zum
+    /// „vorherigen" (die Hotkeys lesen die Registrierung des Vor-Frames –
+    /// ein Frame Verzögerung ist unkritisch, da Felder vor dem Anklicken
+    /// bereits existieren müssen). Public für headless GUI-Tests.
+    pub fn swap_text_field_registry(&mut self) {
+        std::mem::swap(&mut self.text_field_ids_prev, &mut self.text_field_ids);
+        self.text_field_ids.clear();
+    }
+
+    /// Zeichnet den kompletten Workspace (Panels + Fenster) in der
+    /// verbindlichen Reihenfolge aus docs/UI.md §2:
+    /// `menu_bar → masthead → footer → inspector → toolbox → sidebar →
+    /// cue list`. Bei egui ist das zuerst hinzugefügte Bottom-Panel das
+    /// UNTERSTE – deshalb Footer vor Inspector (Footer = unterste Zeile).
+    ///
+    /// Public, damit die headless GUI-Tests exakt dasselbe Layout rendern.
+    pub fn draw_workspace(&mut self, ctx: &egui::Context) {
+        use theme::{palette, size};
+
+        #[cfg(target_os = "macos")]
+        let native_menu = self.native_menu.is_some();
+        #[cfg(not(target_os = "macos"))]
+        let native_menu = false;
+        if !native_menu {
+            egui::TopBottomPanel::top("menu_bar")
+                .frame(
+                    egui::Frame::none()
+                        .fill(palette::BACKGROUND)
+                        .inner_margin(egui::Margin::symmetric(6.0, 2.0)),
+                )
+                .show(ctx, |ui| {
+                    menu_bar::draw(ui, self);
+                });
+        }
+        if self.ui.masthead_visible {
+            // Show-Mode sofort erkennbar: roter Rahmen um den Masthead.
+            let mut masthead_frame =
+                theme::panel_frame(size::SPACE_MEDIUM_LARGE, size::SPACE_MEDIUM_LARGE);
+            if self.show_mode {
+                masthead_frame = masthead_frame
+                    .stroke(egui::Stroke::new(2.0, palette::PANIC))
+                    .fill(palette::SHOW_MODE_BG);
+            }
+            egui::TopBottomPanel::top("masthead")
+                .frame(masthead_frame)
+                .exact_height(size::MASTHEAD_HEIGHT)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    masthead::draw(ui, self);
+                });
+        }
+        // Footer ZUERST unter den Bottom-Panels → unterste Zeile.
+        let mut footer_frame = theme::panel_frame(size::SPACE_MEDIUM, 2.0);
+        if self.show_mode {
+            footer_frame = footer_frame.fill(palette::SHOW_MODE_BG);
+        }
+        egui::TopBottomPanel::bottom("footer")
+            .frame(footer_frame)
+            .exact_height(size::FOOTER_HEIGHT)
+            .resizable(false)
+            .show(ctx, |ui| {
+                footer::draw(ui, self);
+            });
+        if self.ui.inspector_visible {
+            egui::TopBottomPanel::bottom("inspector")
+                .frame(theme::panel_frame(
+                    size::SPACE_LARGE,
+                    size::SPACE_MEDIUM_LARGE,
+                ))
+                .resizable(true)
+                .min_height(120.0)
+                .default_height(size::INSPECTOR_HEIGHT)
+                .show(ctx, |ui| {
+                    inspector::draw(ui, self);
+                });
+        }
+        if self.ui.toolbox_visible {
+            egui::SidePanel::left("toolbox")
+                .frame(theme::panel_frame(size::SPACE_SMALL, size::SPACE_MEDIUM))
+                .resizable(true)
+                .default_width(size::TOOLBOX_WIDTH)
+                .width_range(110.0..=220.0)
+                .show(ctx, |ui| {
+                    toolbox::draw(ui, self);
+                });
+        }
+        if self.ui.sidebar_visible {
+            egui::SidePanel::right("sidebar")
+                .frame(theme::panel_frame(
+                    size::SPACE_MEDIUM_LARGE,
+                    size::SPACE_MEDIUM,
+                ))
+                .resizable(true)
+                .default_width(size::SIDEBAR_WIDTH)
+                .width_range(180.0..=420.0)
+                .show(ctx, |ui| {
+                    sidebar::draw(ui, self);
+                });
+        }
+
+        // CentralPanel IMMER zuletzt (egui-Regel) – claimt den Restplatz.
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(palette::LIST_BG))
+            .show(ctx, |ui| {
+                // Find-Leiste über der Cue-Liste (TODO.md Phase 5, ⌘F).
+                if self.ui.find.open {
+                    cue_table::draw_find_bar(
+                        ui,
+                        self.carts.active_mut(),
+                        &mut self.ui.find,
+                        &mut self.text_field_ids,
+                    );
+                }
+                // Anzeige-Metadaten (Broken-✕, Fortschrittsbalken,
+                // Pre-Wait-Countdown) vor dem Zeichnen bauen (Phase 2).
+                let row_meta = self.cue_row_meta();
+                // Tabelle zeichnen; strukturelle Aktionen (Löschen,
+                // Duplizieren, Gruppieren, Drag & Drop) werden NACH dem
+                // Rendern ausgeführt (TODO.md Phase 3).
+                let actions = cue_table::draw(
+                    ui,
+                    self.carts.active_mut(),
+                    !self.show_mode,
+                    &row_meta,
+                    &mut self.ui.cue_columns,
+                    &self.ui.find,
+                );
+                for id in &actions.delete {
+                    // Löschen stoppt laufende Cues vorher (Engine `Stop`).
+                    self.delete_cue_by_id(*id);
+                }
+                if let Some((from, to)) = actions.move_to {
+                    self.carts.active_mut().move_to(from, to);
+                }
+                if let Some((cue, group)) = actions.move_into_group {
+                    self.carts.active_mut().move_into_group(cue, group);
+                }
+                if !actions.duplicate.is_empty() {
+                    self.duplicate_cues(&actions.duplicate);
+                }
+                if !actions.group.is_empty() {
+                    self.group_cues(&actions.group);
+                }
+                if let Some((ids, armed)) = &actions.arm {
+                    self.set_cues_armed(ids, *armed);
+                }
+                if let Some((ids, color)) = &actions.color {
+                    self.set_cues_color(ids, *color);
+                }
+            });
+
+        // About-Fenster (zentral, nicht-modal).
+        if self.ui.about_open {
+            egui::Window::new("About KuhPlay")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(RichText::new("KuhPlay").size(24.0).strong());
+                    ui.label("QLab-style show control & cue playback – Rust/egui.");
+                    ui.separator();
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    if ui.button("Close").clicked() {
+                        self.ui.about_open = false;
+                    }
+                });
+        }
+
+        // „Keyboard Shortcuts"-Fenster (Help-Menü, TODO.md Phase 5):
+        // rendert dieselbe zentrale Tabelle wie Menüs und Hotkeys.
+        shortcuts::draw_window(ctx, &mut self.ui.shortcuts_open);
+
+        stage_view::draw_screen_previews(self, ctx);
+
+        // Workspace-Settings-Fenster (QLab: Workspace → Workspace Settings;
+        // Screens/Stages auf der Seite „Video").
+        super::workspace_settings::draw(ctx, self);
+    }
+
+    /// Aktualisiert den gecachten Hotkey-Gate-Wert „Textfeld fokussiert"
+    /// (am Ende von `update` aufgerufen, nach dem Rendern der Panels).
+    /// Public für headless GUI-Tests.
+    pub fn refresh_text_field_gate(&mut self, ctx: &egui::Context) {
+        self.text_field_active = self.text_field_focused(ctx);
+    }
+}
+
+impl eframe::App for ShowApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Theme wird einmalig in `main` (CreationContext) gesetzt – nicht
+        // jeden Frame (TODO.md Phase 0b).
+        self.swap_text_field_registry();
+        self.poll_engine_events();
+        self.poll_remote_commands();
+        self.handle_hotkeys(ctx);
+
+        // Datei-Drop aus dem Finder (TODO.md Phase 6): Audio-/Video-/
+        // Bild-Dateien legen passende Cues im aktiven Cart an.
+        let dropped: Vec<egui::DroppedFile> = ctx.input(|i| i.raw.dropped_files.clone());
+        for file in &dropped {
+            if let Some(path) = &file.path {
+                self.add_cue_from_file(path);
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        self.poll_native_menu(ctx);
+        self.draw_workspace(ctx);
+
+        // Stage-Vorschau-Fenster (QLab „Stage Window") und Vollbild-Screen-
+        // Ausgaben (borderless auf dem zugeordneten Display).
+        stage_view::draw_stage_windows(self, ctx);
+        stage_view::draw_screen_viewports(self, ctx);
+
+        // Optionaler Auto-Demo-Modus: automatische GO-Abfolge für Screen-Tests.
+        if let Some(demo) = &mut self.autodemo {
+            if demo.count < 4 && Instant::now() >= demo.next_go {
+                demo.count += 1;
+                demo.next_go = Instant::now() + Duration::from_secs(3);
+                self.pending_go = true;
+            }
+        }
+
+        self.flush_pending_go();
+
+        // Hotkey-Gate für das nächste Frame aktualisieren (nach den Panels,
+        // damit Klicks des aktuellen Frames berücksichtigt sind).
+        self.refresh_text_field_gate(ctx);
+
+        self.pump_remote();
+
+        // Repaint für Live-Updates (Engine-Events, Timecode, elapsed-Anzeige).
+        ctx.request_repaint_after(Duration::from_millis(50));
+    }
+
+    /// Persistiert das UI-Layout (Panel-Sichtbarkeit, Tabs, Fenster) beim
+    /// Beenden (QLab: Workspace bleibt über Neustarts erhalten).
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.save_ui_state(storage);
+    }
+}

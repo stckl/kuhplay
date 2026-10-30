@@ -1,0 +1,10 @@
+{
+  "name": "companion-module-kuhplay",
+  "version": "1.0.0",
+  "description": "KuhPlay Show Control module for Bitfocus Companion (TCP JSON-lines remote)",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "companion-module-base": "^3.4.0"
+  }
+}
