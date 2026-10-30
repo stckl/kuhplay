@@ -1,15 +1,12 @@
-//! Integrationstests für das **Screen-Feature** (QLab 5 „Video → Screens").
+//! Integrationstests fuer die Video-Ausgabe (QLab 5: Stage -> Region ->
+//! Output Route -> Device; Datei hiess frueher screens.rs).
 //!
-//! * **Geometrie:** Screens als frei definierbare Rechtecke im globalen
-//!   Display-Koordinatenraum – Teile eines Displays, über mehrere
-//!   Displays gespannt, mehrere Screens pro Display.
-//! * **Drehung:** 90/180/270° vertauscht den Fußabdruck (Breite/Höhe),
-//!   die Drehung ist eine Display-Eigenschaft (Inhalt dreht sich mit).
-//! * **Engine-Bridge:** `SetTestPattern` wird von Mock- und Real-Engine
-//!   entgegengenommen (kein Panic, Event-Loop bleibt antworten).
-//! * **Stage→Screen:** Zuordnung per ID, Screen-Label/-Spec für das
-//!   Testbild, Screen-Löschen (die GUI löst dangling References auf).
-
+//! * **Legacy-Geometrie:** Screen-Rechtecke (altes Modell, nur noch zum
+//!   Laden alter Shows) im globalen Display-Koordinatenraum.
+//! * **Engine-Bridge:** `ConfigureRoutes` wird von Mock- und Real-Engine
+//!   entgegengenommen; die Real-Engine rendert Route-Bilder (schwarz,
+//!   Testbild, LED-Wand) in den Route-Frame-Store.
+//! * **Routen ohne Stage:** harmlos, die Engine bleibt antworten.
 use std::time::{Duration, Instant};
 
 use kuhplay::core::{

@@ -243,18 +243,42 @@ Post-wait · Continue**.
   „Off". Der Signalweg ist Cue (Tab „Audio Levels", Matrix) → Kanal → Ausgang.
   Umlegen wirkt sofort, auch live; nur Show Mode sperrt es.
 * Network: PIN der Web-Remote anzeigen und ändern (4 bis 8 Ziffern).
-* Stages: eigener Bereich unter Video. Anlegen, umbenennen, Canvas-Größe, Screen,
-  Sichtbarkeit, löschen (nur wenn kein Cue sie nutzt). Weicht das Seitenverhältnis
-  der Stage vom Screen ab, weist ein Hinweis auf die Verzerrung hin.
-* Video-Ausgabe: Off, Preview Windows (ein eigenes Fenster pro Screen, frei verschiebbar) oder Displays
-  (Vollbild). Mit nur einem Display startet die App mit Preview Windows, weil
-  ein Vollbild sonst die App selbst verdeckt.
-* Testbild: entsteht in Screen-Auflösung (1 Bildpunkt = 1 Ausgangspixel), mit
-  Aufbau wie das QLab-Raster: monochrom, 1 px Linien, Skala, Diagonalen, Kreise und
-  Beschriftung im weißen Kasten. Ist der
-  Kreis auf der Leinwand eine Ellipse, verzerrt die Darstellung dahinter.
-* Die Karte im Screen-Editor zeigt alle Displays und Screens. Während eines
-  Drags bleibt ihr Maßstab fest.
+* Video (QLab 5 „Workspace → Video“) mit drei Reitern:
+  - **Video Outputs (Stages):** Tabelle pro Stage (Name, Auflösung, Devices,
+    Edit, Monitor, Delete). „New Stage“-Menü: leere Stage (1920×1080), Stage
+    mit Ausgabe (neue Route + Full-Canvas-Region) oder Multi-Output-Stage
+    (Anzahl/Auflösung/Überlappung der Projektoren; erzeugt je Projektor eine
+    Route und eine Stage mit überlappenden Regionen). Löschen nur, wenn kein
+    Cue die Stage nutzt.
+  - **Output Routing:** Tabelle der Routen (logische Ausgänge): Name,
+    Auflösung in echten Pixeln, Device (Display oder Blackmagic), Testbild,
+    Farbe, Edit, Delete. Fehlende Geräte erscheinen kursiv mit „(missing)“.
+    Route-Editor: Name, Größe, „Set from Device“, Drehung, Rear Projection,
+    Skalierung (Center/Fit/Stretch/Fill), Device, Teilbereich (Full/Part).
+  - **Output Devices:** erkannte Displays mit Auflösung (Pixel und Punkte)
+    und Wiederholrate; Hinweis, dass Anordnung/Auflösung in den
+    Systemeinstellungen geändert werden.
+* Stage-Editor (eigenes Fenster, „Edit Stage…“): Name, Layer, Keep Rendering,
+  Größe mit „Resize…“; links Regionsliste (Buchstabe in Routenfarbe,
+  Route-Auswahl, Grid, Delete, „New region with output…“) mit Move/Draw-
+  Umschalter; rechts Größe, Position, Edge Blends, Auto, Blend-Gamma;
+  Zeichenfläche mit Stage, Regionen in Routenfarbe: ziehen verschiebt,
+  Ecken-Griffe ändern die Größe, Einrasten an Rand, Mittellinien und anderen
+  Regionen (⌘ schaltet Einrasten aus); Pfeiltasten: 1 Pixel, ⇧ 10 Pixel, ⌥
+  Größe; Blend-Bereich schraffiert, Region ohne Route gepunktet.
+* Video-Ausgabe: Off, Preview Windows (ein eigenes Fenster pro Route, frei
+  verschiebbar) oder Displays (ein randloses Fenster pro belegtem Display,
+  das alle Routen des Displays zeigt, Teilbereiche an ihrer Stelle). Mit nur
+  einem Display startet die App mit Preview Windows, weil ein Vollbild sonst
+  die App selbst verdeckt. Stage-Monitor („Monitor“) zeigt das Canvas.
+* Testbild: gehört zur Route und entsteht in Route-Auflösung (1 Bildpunkt =
+  1 Ausgangspixel), mit Aufbau wie das QLab-Raster: monochrom, 1 px Linien,
+  Skala, Diagonalen, Kreise und Beschriftung im weißen Kasten. Ist der Kreis
+  auf der Leinwand eine Ellipse, verzerrt die Darstellung dahinter. Das
+  Region-Grid liegt nur über der Fläche der jeweiligen Region.
+* Alte Shows (Screens, `Stage::screen`) laden weiter: Beim Laden werden sie
+  in Routen und Regionen migriert ( proportionale Aufteilung, `Stretch`),
+  gespeichert wird nur das neue Modell.
 
 ---
 

@@ -18,8 +18,8 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 | **Ablauf** | Playhead und GO, mehrere Cue-Listen (Carts), Gruppen (Simultaneous, Sequential, Timeline, Loop, Shuffle), Timecode-Chasing (LTC/MTC) |
 | **Audio** | Dekodierung mit symphonia, Ausgabe mit cpal, Geräteauswahl, Fades (Volume, Rate, Opacity; linear oder dB), Slices mit Play-Count |
 | **Audio-Routing** | Matrix pro Cue: Datei-Kanal → 16 benannte Kanäle → Geräte-Ausgänge; Umlegen wirkt live |
-| **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge, Screen-Editor mit Testbildern (auch LED-Wand) |
-| **Ausgabe** | Vollbild auf Displays oder Vorschau-Fenster pro Screen, ideal für die Arbeit am Laptop |
+| **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing wie QLab 5: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand) |
+| **Ausgabe** | Ein randloses Fenster pro belegtem Display (alle Routen des Displays, auch Teilbereiche) oder Vorschau-Fenster pro Route, ideal für die Arbeit am Laptop; Stage-Monitor pro Stage |
 | **HTML5** | Eigene WebView (Feature `webview`), JavaScript-Trigger und JSON-Push für Lower-Thirds, Spielstände, Countdowns |
 | **Fernsteuerung** | Web-Remote, Bitfocus Companion, OSC, MIDI |
 | **Sicherheit im Betrieb** | Show-Mode sperrt alle Bearbeitungen, Panic, Erkennung kaputter Cues |
@@ -47,11 +47,11 @@ Wichtige Tasten: **Space** GO · **Esc** Panic · **↑/↓** Playhead ·
 ## Web-Remote
 
 Die Oberfläche läuft im Browser unter `http://<rechner>:8080`, auch am Handy:
-Cue-Liste, Inspector mit allen Tabs, Audio-Routing, Screens und Stages.
+Cue-Liste, Inspector mit allen Tabs, Audio-Routing, Stages und Output Routes.
 
 Show öffnen und „Speichern unter" gibt es dort ebenfalls, für `.kuhplay`-Dateien
 auf dem KuhPlay-Rechner (Pfad eintippen). Nur in der App gibt es die nativen
-Datei-Dialoge, Waveforms und die Screen-Karte zum Ziehen.
+Datei-Dialoge, Waveforms und die Stage-Karte zum Ziehen.
 
 Beim Verbinden fragt der Browser nach einem **PIN**. KuhPlay legt ihn beim ersten
 Start zufällig an, er steht unter *Settings → Network* und lässt sich dort ändern.
@@ -77,7 +77,7 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_OSC_OUT`, `KUHPLAY_OSC_PREFIX` | Ziel `host:port` oder `off`, Adress-Präfix | `127.0.0.1:9001`, `/kuhplay` |
 | `KUHPLAY_MIDI`, `KUHPLAY_MIDI_DEVICE` | MIDI an/aus, Gerätename (Teilstring) | an, erstes Gerät |
 | `KUHPLAY_MIDI_MAP` | Noten, z. B. `go=36,panic=37,pause=38,resume=39,reset=40` | Noten 0–4 |
-| `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS`, `_PIXFMT` | Decklink-Ausgabe über ffmpeg | aus |
+| `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS`, `_PIXFMT` | Decklink-Ausgabe über ffmpeg: Die Stage liefert über ihre Region das Route-Bild auf die Karte | aus |
 | `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
 
 ## Release bauen
@@ -98,9 +98,9 @@ und Notarisierung, sonst blockiert Gatekeeper den Start.
 
 ```text
 src/
-├── core/      Domain ohne GUI: Cues, Cue-Listen, Stages, Screens, Routing, Show-Datei
-├── engine/    Playout im eigenen Thread: Audio, Video, Compositor, WebView, Decklink
-├── gui/       Oberfläche mit egui: Workspace, Inspector, Screen-Editor, macOS-Menü
+├── core/      Domain ohne GUI: Cues, Cue-Listen, Stages/Regionen, Output Routes, Show-Datei
+├── engine/    Playout im eigenen Thread: Audio, Video, Compositor, Route-Renderer, WebView, Decklink
+├── gui/       Oberfläche mit egui: Workspace, Inspector, Stage-Editor, macOS-Menü
 ├── remote/    Web-Remote (axum), Companion, OSC, MIDI
 └── bin/       WebView-Prozess für HTML5-Cues
 companion/     Modul für Bitfocus Companion

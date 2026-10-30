@@ -15,7 +15,7 @@
 //! * [`cue_table`] – zentrale Cue-Liste (QLab-Spaltenlayout)
 //! * [`stage_editor`] – Stage-Editor (Regionen, Edge Blends, Layer)
 //! * [`workspace_settings`] – Fenster „Workspace Settings" (Nav + Seiten)
-//! * [`stage_view`] – Stage-Fenster & Hardware-Screen-Ausgabe (Vollbild)
+//! * [`stage_view`] – Stage-Monitor, Route-Vorschau & Device-Ausgabe (Vollbild)
 //! * [`app`] – `ShowApp` (eframe::App) mit Panel-Orchestrierung
 //! * [`state`] – `UiState`: persistiertes UI-Layout (serde)
 //! * [`problems`] – Broken-Cue-Erkennung (QLab „broken cue")
