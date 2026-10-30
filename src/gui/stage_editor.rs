@@ -19,7 +19,7 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use uuid::Uuid;
 
-use crate::core::{region_letter, regions_in_reading_order, Region};
+use crate::core::{region_letter, regions_in_reading_order, Crop, Region};
 
 use super::app::ShowApp;
 use super::theme::{self, palette};
@@ -145,6 +145,113 @@ fn draw_regions_panel(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                 .find(|s| s.id == stage_id)
                 .unwrap()
                 .keep_rendering = keep;
+            configure = true;
+        }
+        ui.end_row();
+
+        // --- Stage-Crop (Sichtfenster der Stage, normalisiert 0..1) ---
+        theme::field_label(ui, "Crop");
+        let mut crop_on = stage.crop.is_some();
+        let mut crop = stage.crop.unwrap_or_else(Crop::none);
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut crop_on, "Crop stage").changed() && crop_on {
+                crop = Crop::none();
+            }
+            if crop_on {
+                ui.add(
+                    egui::DragValue::new(&mut crop.left)
+                        .speed(0.01)
+                        .range(0.0..=1.0)
+                        .prefix("L "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut crop.top)
+                        .speed(0.01)
+                        .range(0.0..=1.0)
+                        .prefix("T "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut crop.right)
+                        .speed(0.01)
+                        .range(0.0..=1.0)
+                        .prefix("R "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut crop.bottom)
+                        .speed(0.01)
+                        .range(0.0..=1.0)
+                        .prefix("B "),
+                );
+            }
+        });
+        if crop_on || crop != Crop::none() {
+            let new_crop = crop_on.then_some(crop);
+            if let Some(s) = app
+                .stages
+                .stages_mut()
+                .iter_mut()
+                .find(|s| s.id == stage_id)
+            {
+                s.crop = new_crop;
+            }
+            configure = true;
+        }
+        ui.end_row();
+
+        // --- Stage-Edge (Randabblendung am Route-Ausgang) ---
+        theme::field_label(ui, "Edge");
+        let mut edge = stage.edge;
+        let mut soft = stage.soft_edge;
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut edge.left)
+                    .speed(1.0)
+                    .range(0.0..=4096.0)
+                    .prefix("L "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut edge.right)
+                    .speed(1.0)
+                    .range(0.0..=4096.0)
+                    .prefix("R "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut edge.top)
+                    .speed(1.0)
+                    .range(0.0..=4096.0)
+                    .prefix("T "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut edge.bottom)
+                    .speed(1.0)
+                    .range(0.0..=4096.0)
+                    .prefix("B "),
+            );
+            if ui
+                .checkbox(&mut soft, "Soft Edge")
+                .on_hover_text("Soft Edge: gamma-blended ramp; Hard Edge: linear ramp")
+                .changed()
+            {
+                if let Some(s) = app
+                    .stages
+                    .stages_mut()
+                    .iter_mut()
+                    .find(|s| s.id == stage_id)
+                {
+                    s.soft_edge = soft;
+                }
+                configure = true;
+            }
+        });
+        if edge != stage.edge {
+            if let Some(s) = app
+                .stages
+                .stages_mut()
+                .iter_mut()
+                .find(|s| s.id == stage_id)
+            {
+                s.edge = edge;
+            }
             configure = true;
         }
         ui.end_row();

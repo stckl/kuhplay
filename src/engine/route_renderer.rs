@@ -42,6 +42,12 @@ use crate::engine::frame::VideoFrame;
 /// nicht. `blend` sind die wirksamen Blendbreiten (Stage-Pixel, siehe
 /// [`auto_blends`]); der Faktorverlauf folgt `(x/breite)^(1/gamma)`, damit
 /// die Summe beider Projektoren im Überlapp konstant hell bleibt.
+///
+/// `stage_crop`: Sichtfenster der Stage (Stage-Pixel, `(x0, y0, x1, y1)`);
+/// die Region wird auf das Fenster beschritten (leer = nichts), kein Crop
+/// = die ganze Stage. `stage_edge`/`stage_soft_edge`: Randabblendung der
+/// Stage am Route-Ausgang (Soft Edge = Gamma-Kurve, Hard Edge = linear).
+#[allow(clippy::too_many_arguments)]
 pub fn render_region_into(
     target: &mut VideoFrame,
     route_w: u32,
@@ -50,6 +56,9 @@ pub fn render_region_into(
     region: &Region,
     blend: &EdgeBlend,
     blend_gamma: f32,
+    stage_crop: Option<(f32, f32, f32, f32)>,
+    stage_edge: &EdgeBlend,
+    stage_soft_edge: bool,
 ) {
     debug_assert_eq!((target.width, target.height), (route_w, route_h));
     let (tw, th) = (route_w.max(1), route_h.max(1));
@@ -60,13 +69,58 @@ pub fn render_region_into(
     let stride = stage_frame.width.max(1) as usize;
     // Regions-Rechteck auf die Stage-Frame-Grenzen clamen (Region liegt
     // laut Validierung in der Stage; der Frame kann minimal kleiner sein).
-    let rx = region.x.max(0.0).min(sw - 1.0);
-    let ry = region.y.max(0.0).min(sh - 1.0);
-    let rw = (region.x + region.width).clamp(rx + 1.0, sw) - rx;
-    let rh = (region.y + region.height).clamp(ry + 1.0, sh) - ry;
+    let mut rx = region.x.max(0.0).min(sw - 1.0);
+    let mut ry = region.y.max(0.0).min(sh - 1.0);
+    let mut rw = (region.x + region.width).clamp(rx + 1.0, sw) - rx;
+    let mut rh = (region.y + region.height).clamp(ry + 1.0, sh) - ry;
+    // Stage-Crop: Region auf das Sichtfenster beschneiden (das Fenster
+    // bleibt in absoluten Stage-Koordinaten; was draussen liegt, ist weg).
+    if let Some((cx0, cy0, cx1, cy1)) = stage_crop {
+        let nx0 = rx.max(cx0.max(0.0));
+        let ny0 = ry.max(cy0.max(0.0));
+        let nx1 = (rx + rw).min(cx1.min(sw));
+        let ny1 = (ry + rh).min(cy1.min(sh));
+        if nx1 <= nx0 || ny1 <= ny0 {
+            return;
+        }
+        rx = nx0;
+        ry = ny0;
+        rw = nx1 - nx0;
+        rh = ny1 - ny0;
+    }
     if rw <= 0.0 || rh <= 0.0 {
         return;
     }
+
+    // Stage-Randabblendung: Faktor am Punkt (u, v) im Stage-Raum
+    // (Soft Edge = Gamma-Kurve wie bei Regionen, Hard Edge = linear).
+    let stage_edge_factor = |u: f32, v: f32| -> f32 {
+        let ramp = |t: f32| {
+            if stage_soft_edge {
+                edge_factor(t, blend_gamma)
+            } else {
+                t.clamp(0.0, 1.0)
+            }
+        };
+        let mut factor = 1.0f32;
+        if stage_edge.left > 0.0 {
+            factor *= ramp(u / stage_edge.left);
+        }
+        if stage_edge.right > 0.0 {
+            factor *= ramp((sw - u) / stage_edge.right);
+        }
+        if stage_edge.top > 0.0 {
+            factor *= ramp(v / stage_edge.top);
+        }
+        if stage_edge.bottom > 0.0 {
+            factor *= ramp((sh - v) / stage_edge.bottom);
+        }
+        factor
+    };
+    let stage_edge_active = stage_edge.left > 0.0
+        || stage_edge.right > 0.0
+        || stage_edge.top > 0.0
+        || stage_edge.bottom > 0.0;
 
     for py in 0..th {
         // Quell-Koordinate in Stage-Pixeln (Pixelmitten).
@@ -88,6 +142,9 @@ pub fn render_region_into(
             }
             if blend.bottom > 0.0 {
                 factor *= edge_factor((ry + rh - v) / blend.bottom, blend_gamma);
+            }
+            if stage_edge_active {
+                factor *= stage_edge_factor(u, v);
             }
             let src = &stage_frame.rgba[(sy * stride + sx) * 4..][..4];
             let dst = &mut target.rgba[(py as usize * tw as usize + px as usize) * 4..][..4];
@@ -150,6 +207,16 @@ pub fn render_route(
             } else {
                 region.blend
             };
+            // Stage-Crop als Pixel-Fenster (normalisiert -> Stage-Pixel).
+            let stage_crop = stage.crop.map(|crop| {
+                let (fw, fh) = (frame.width.max(1) as f32, frame.height.max(1) as f32);
+                (
+                    crop.left * fw,
+                    crop.top * fh,
+                    crop.right * fw,
+                    crop.bottom * fh,
+                )
+            });
             render_region_into(
                 &mut out,
                 rw,
@@ -158,6 +225,9 @@ pub fn render_route(
                 region,
                 &effective,
                 stage.blend_gamma,
+                stage_crop,
+                &stage.edge,
+                stage.soft_edge,
             );
             if region.grid {
                 let label = format!(
@@ -754,7 +824,151 @@ mod tests {
         let frame = solid(100, 50, [1, 2, 3]);
         let region = Region::new(0.0, 0.0, 100.0, 50.0);
         let mut target = VideoFrame::black(100, 50);
-        render_region_into(&mut target, 100, 50, &frame, &region, &EdgeBlend::ZERO, 2.2);
+        render_region_into(
+            &mut target,
+            100,
+            50,
+            &frame,
+            &region,
+            &EdgeBlend::ZERO,
+            2.2,
+            None,
+            &EdgeBlend::ZERO,
+            true,
+        );
         assert_eq!(target.rgba, frame.rgba);
+    }
+}
+
+#[cfg(test)]
+mod stage_crop_edge_tests {
+    use super::*;
+    use crate::core::video_routing::{EdgeBlend, OutputRoute, Region};
+    use crate::core::{Crop, Stage, StageGeometry};
+
+    fn solid(w: u32, h: u32, color: [u8; 3]) -> Arc<VideoFrame> {
+        let [r, g, b] = color;
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..w * h {
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+        Arc::new(VideoFrame::new(w, h, rgba))
+    }
+
+    fn pixel(frame: &VideoFrame, x: u32, y: u32) -> u8 {
+        let i = (y as usize * frame.width as usize + x as usize) * 4;
+        frame.rgba[i]
+    }
+
+    #[test]
+    fn stage_crop_limits_the_visible_window() {
+        // Stage: linke Haelfte rot, rechte blau. Crop auf die linke Haelfte:
+        // Die Region (ueber die ganze Stage) zeigt nur noch den Crop-Inhalt.
+        let mut stage = Stage::new("S", StageGeometry::new(200.0, 100.0));
+        let route = OutputRoute::new("R", 100, 100);
+        let mut region = Region::full_stage(200.0, 100.0);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+        stage.crop = Some(Crop {
+            left: 0.0,
+            top: 0.0,
+            right: 0.5,
+            bottom: 1.0,
+        });
+        let frame = solid(200, 100, [255, 0, 0]);
+        let mut target = VideoFrame::black(100, 100);
+        render_region_into(
+            &mut target,
+            100,
+            100,
+            &frame,
+            &stage.regions[0],
+            &EdgeBlend::ZERO,
+            2.2,
+            Some((0.0, 0.0, 100.0, 100.0)),
+            &EdgeBlend::ZERO,
+            true,
+        );
+        assert!(pixel(&target, 50, 50) > 200, "Crop zeigt die rote Haelfte");
+    }
+
+    #[test]
+    fn stage_crop_outside_region_renders_nothing() {
+        // Crop-Deckel liegt vollstaendig neben der Region: Route bleibt schwarz.
+        let mut stage = Stage::new("S", StageGeometry::new(400.0, 100.0));
+        let route = OutputRoute::new("R", 100, 100);
+        let mut region = Region::new(0.0, 0.0, 100.0, 100.0);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+        let frame = solid(400, 100, [255, 0, 0]);
+        let mut target = VideoFrame::black(100, 100);
+        render_region_into(
+            &mut target,
+            100,
+            100,
+            &frame,
+            &stage.regions[0],
+            &EdgeBlend::ZERO,
+            2.2,
+            Some((300.0, 0.0, 400.0, 100.0)),
+            &EdgeBlend::ZERO,
+            true,
+        );
+        assert_eq!(pixel(&target, 50, 50), 0, "Crop daneben = schwarz");
+    }
+
+    #[test]
+    fn stage_edge_fades_borders_on_route() {
+        // Weisse Stage, Stage-Edge rechts 100 px (Hard Edge = linear):
+        // Am rechten Rand Faktor ~0, 100 px davor ~1.
+        let mut stage = Stage::new("S", StageGeometry::new(200.0, 100.0));
+        stage.edge = EdgeBlend {
+            right: 100.0,
+            ..EdgeBlend::ZERO
+        };
+        stage.soft_edge = false;
+        let route = OutputRoute::new("R", 200, 100);
+        let mut region = Region::full_stage(200.0, 100.0);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+        let frame = solid(200, 100, [255, 255, 255]);
+        let mut target = VideoFrame::black(200, 100);
+        render_region_into(
+            &mut target,
+            200,
+            100,
+            &frame,
+            &stage.regions[0],
+            &EdgeBlend::ZERO,
+            2.2,
+            None,
+            &stage.edge,
+            false,
+        );
+        // x=0: volle Helligkeit; x=190 (10 px vor dem Rand): Faktor ~0.1.
+        assert!(pixel(&target, 5, 50) > 240, "links unveraendert");
+        assert!(
+            pixel(&target, 190, 50) < 40,
+            "rechter Rand abgeblendet, got {}",
+            pixel(&target, 190, 50)
+        );
+        // Soft Edge (Gamma-Kurve): Mitte der Blende ist heller als linear.
+        let mut soft_target = VideoFrame::black(200, 100);
+        render_region_into(
+            &mut soft_target,
+            200,
+            100,
+            &frame,
+            &stage.regions[0],
+            &EdgeBlend::ZERO,
+            2.2,
+            None,
+            &stage.edge,
+            true,
+        );
+        assert!(
+            pixel(&soft_target, 150, 50) > pixel(&target, 150, 50),
+            "Soft Edge liegt ueber Hard Edge"
+        );
     }
 }

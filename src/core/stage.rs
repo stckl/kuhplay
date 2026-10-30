@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::core::error::{ShowError, ShowResult};
-use crate::core::video_routing::Region;
+use crate::core::video_routing::{EdgeBlend, Region};
 
 fn default_scale() -> f32 {
     1.0
@@ -510,6 +510,19 @@ pub struct Stage {
     /// Stage zwischen Cues schwarz halten (QLab „Keep Rendering“).
     #[serde(default)]
     pub keep_rendering: bool,
+    /// Stage-Crop (Sichtfenster, normalisiert wie [`Crop`]): Nur dieser
+    /// Ausschnitt des Stage-Canvas geht auf die Regionen. Regionen
+    /// bleiben in absoluten Stage-Koordinaten, der Crop beschneidet sie.
+    #[serde(default)]
+    pub crop: Option<Crop>,
+    /// Stage-Randabblendung: Die Kanten der Stage werden am Route-Ausgang
+    /// abgeblendet (Breiten in Stage-Pixeln, wie Region-Edge-Blends).
+    #[serde(default)]
+    pub edge: EdgeBlend,
+    /// `true` = Soft Edge (Gamma-Kurve wie bei Regionen), `false` = Hard
+    /// Edge (linearer Rampe).
+    #[serde(default = "default_true")]
+    pub soft_edge: bool,
 }
 
 impl Stage {
@@ -526,6 +539,9 @@ impl Stage {
             layer: 0,
             blend_gamma: default_gamma(),
             keep_rendering: false,
+            crop: None,
+            edge: EdgeBlend::ZERO,
+            soft_edge: true,
         }
     }
 
@@ -540,6 +556,10 @@ impl Stage {
         for region in &self.regions {
             region.validate(self.geometry.width, self.geometry.height)?;
         }
+        if let Some(crop) = &self.crop {
+            crop.validate()?;
+        }
+        self.edge.validate()?;
         if !self.blend_gamma.is_finite() || !(0.1..=10.0).contains(&self.blend_gamma) {
             return Err(ShowError::InvalidParameter(format!(
                 "stage blend_gamma must be within 0.1-10.0, got {}",
