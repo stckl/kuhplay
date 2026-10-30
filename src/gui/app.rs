@@ -626,6 +626,12 @@ impl ShowApp {
             stage.regions = vec![region];
             self.stages.add(stage);
         }
+        // Stages mit den neuen Regionen erneut an die Engine melden: Die
+        // Startupschleife in new() laeuft VOR dieser Methode, die Engine
+        // kennt die Regionen sonst nicht (Route-Bild bliebe schwarz).
+        for stage in self.stages.stages().to_vec() {
+            self.configure_stage(stage);
+        }
         self.configure_routes();
     }
 
