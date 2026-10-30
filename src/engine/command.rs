@@ -56,6 +56,8 @@ pub enum EngineCommand {
     /// `target` über `duration` – linear oder dB-interpoliert (`curve`).
     Fade {
         cue_id: Uuid,
+        /// Ziel-Cue, dessen Parameter gefadet wird (`None` = der Fade-Cue selbst).
+        target_cue: Option<Uuid>,
         param: FadeParam,
         from: f32,
         target: f32,

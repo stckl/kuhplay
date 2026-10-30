@@ -236,6 +236,7 @@ mod tests {
             opacity: 1.0,
             visible: true,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         };
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(red), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
@@ -279,6 +280,7 @@ mod tests {
             opacity: 1.0,
             visible: true,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         };
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(frame), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
@@ -307,6 +309,7 @@ mod tests {
             opacity: 1.0,
             visible: true,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         };
         let right = SurfaceGeometry {
             x: 4.0,
@@ -318,6 +321,7 @@ mod tests {
             opacity: 1.0,
             visible: true,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         };
         let surfaces = vec![
             (Uuid::new_v4(), 0, left, Some(blue), 1.0),

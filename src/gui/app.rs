@@ -925,7 +925,64 @@ impl ShowApp {
     /// Auto-Continue-Ketten (QLab „Cue Sequences").
     pub fn go_now(&mut self) {
         match self.carts.go_chained() {
-            Some(outcome) => self.dispatch(outcome.commands),
+            Some(outcome) => {
+                let mut commands = outcome.commands;
+                // Kill-Switch: alle anderen laufenden Media-Cues (Video/Diashow/
+                // HTML) sofort stoppen, wenn der getriggerte Cue das verlangt.
+                let kill = self
+                    .carts
+                    .active()
+                    .cues()
+                    .get(outcome.index)
+                    .is_some_and(|c| c.kill_others);
+                if kill {
+                    let others: Vec<Uuid> = self
+                        .carts
+                        .active()
+                        .cues()
+                        .iter()
+                        .filter(|c| {
+                            c.id != self.carts.active().cues()[outcome.index].id
+                                && c.status.is_active()
+                                && matches!(
+                                    c.cue_type,
+                                    CueType::Video | CueType::SlideShow | CueType::Html
+                                )
+                        })
+                        .map(|c| c.id)
+                        .collect();
+                    for id in others {
+                        commands.push(EngineCommand::Stop { cue_id: id });
+                    }
+                }
+                // „Vorherige Cues beenden" (QLab 5): alle laufenden Cues stoppen,
+                // die in der Liste vor dem getriggerten Cue stehen.
+                let stop_prev = self
+                    .carts
+                    .active()
+                    .cues()
+                    .get(outcome.index)
+                    .is_some_and(|c| c.stop_previous);
+                if stop_prev {
+                    let prev: Vec<Uuid> = self
+                        .carts
+                        .active()
+                        .cues()
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, c)| *i < outcome.index && c.status.is_active())
+                        .map(|(_, c)| c.id)
+                        .collect();
+                    for id in prev {
+                        if !commands.iter().any(
+                            |cmd| matches!(cmd, EngineCommand::Stop { cue_id } if *cue_id == id),
+                        ) {
+                            commands.push(EngineCommand::Stop { cue_id: id });
+                        }
+                    }
+                }
+                self.dispatch(commands);
+            }
             None => tracing::warn!("GO: no armed cue in standby"),
         }
         self.remote_dirty = true;
@@ -1308,6 +1365,7 @@ impl ShowApp {
                     problems: self.problems_of(cue),
                     elapsed: self.phase_elapsed_of(cue),
                     pre_wait_remaining: self.pre_wait_remaining(cue),
+                    media_duration: self.media_durations.get(&cue.id).copied(),
                 },
             );
             for child in &cue.children {
@@ -1317,6 +1375,7 @@ impl ShowApp {
                         problems: self.problems_of(child),
                         elapsed: self.phase_elapsed_of(child),
                         pre_wait_remaining: self.pre_wait_remaining(child),
+                        media_duration: self.media_durations.get(&child.id).copied(),
                     },
                 );
             }

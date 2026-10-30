@@ -68,7 +68,36 @@ impl Slide {
 }
 
 /// Definition eines Diashow-Cues ([`crate::core::CueType::SlideShow`]).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// Übergangsart zwischen zwei Dias (QLab-ähnlich: Crossfade / harter Schnitt /
+/// Auf-/Abblende über Schwarz).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SlideTransition {
+    /// Weiche Überblendung (Default).
+    #[default]
+    Crossfade,
+    /// Harter Schnitt (sofortiges Umschalten).
+    Cut,
+    /// Erst auf Schwarz abblenden, dann das neue Bild einblenden.
+    DipToBlack,
+}
+
+impl SlideTransition {
+    pub const ALL: [SlideTransition; 3] = [
+        SlideTransition::Crossfade,
+        SlideTransition::Cut,
+        SlideTransition::DipToBlack,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Crossfade => "Crossfade",
+            Self::Cut => "Cut",
+            Self::DipToBlack => "Dip to black",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlideShow {
     /// Die Dias in Abspielreihenfolge.
     #[serde(default)]
@@ -82,6 +111,29 @@ pub struct SlideShow {
     /// `true`: nach der letzten Slide zurück zur ersten (Loop).
     #[serde(default)]
     pub loop_slides: bool,
+    /// Übergang zwischen den Dias.
+    #[serde(default)]
+    pub transition: SlideTransition,
+    /// Standard-Hold-Zeit für neue Dias und Dias mit hold=0 (global einstellbar).
+    #[serde(default = "default_hold", with = "crate::core::duration_ms")]
+    pub default_hold: Duration,
+}
+
+fn default_hold() -> Duration {
+    Duration::from_secs(3)
+}
+
+impl Default for SlideShow {
+    fn default() -> Self {
+        Self {
+            slides: Vec::new(),
+            crossfade: Duration::ZERO,
+            auto_advance: true,
+            loop_slides: false,
+            transition: SlideTransition::default(),
+            default_hold: default_hold(),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -96,6 +148,8 @@ impl SlideShow {
             crossfade,
             auto_advance,
             loop_slides: false,
+            transition: SlideTransition::default(),
+            default_hold: default_hold(),
         };
         show.validate()?;
         Ok(show)
@@ -143,7 +197,12 @@ impl SlideShow {
 
     /// Hold-Zeit eines Slides (Index außerhalb des Bereichs → `Duration::ZERO`).
     pub fn hold_at(&self, index: usize) -> Duration {
-        self.slides.get(index).map(|s| s.hold).unwrap_or_default()
+        // Pro-Dia-Hold, Fallback auf die globale Standard-Hold-Zeit.
+        self.slides
+            .get(index)
+            .map(|s| s.hold)
+            .filter(|h| !h.is_zero())
+            .unwrap_or(self.default_hold)
     }
 }
 
@@ -245,5 +304,45 @@ mod tests {
         assert!(back.auto_advance);
         assert!(back.loop_slides);
         assert_eq!(back.crossfade, Duration::from_millis(250));
+    }
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn hold_falls_back_to_global_default() {
+        let mut show = SlideShow {
+            default_hold: Duration::from_secs(7),
+            ..SlideShow::default()
+        };
+        show.slides.push(Slide {
+            path: "a.jpg".into(),
+            hold: Duration::ZERO, // 0 = global verwenden
+        });
+        show.slides.push(Slide {
+            path: "b.jpg".into(),
+            hold: Duration::from_secs(2),
+        });
+        assert_eq!(show.hold_at(0), Duration::from_secs(7));
+        assert_eq!(show.hold_at(1), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn transition_default_is_crossfade_and_serde_roundtrip() {
+        assert_eq!(SlideTransition::default(), SlideTransition::Crossfade);
+        let show = SlideShow::default();
+        let json = serde_json::to_string(&show).unwrap();
+        let back: SlideShow = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.transition, SlideTransition::Crossfade);
+        assert_eq!(back.default_hold, Duration::from_secs(3));
+        let cut = SlideShow {
+            transition: SlideTransition::DipToBlack,
+            ..SlideShow::default()
+        };
+        let json = serde_json::to_string(&cut).unwrap();
+        assert!(json.contains("DipToBlack"));
     }
 }

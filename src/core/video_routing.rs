@@ -56,10 +56,11 @@ impl DeviceRef {
 pub enum RouteScaling {
     /// Unskaliert zentriert; Überstand wird abgeschnitten.
     Center,
-    /// Vollständig sichtbar, Seitenverhältnis bleibt; Ränder bleiben frei.
-    Fit,
-    /// Füllt das Device, Breite und Höhe werden getrennt skaliert (Default).
+    /// Vollständig sichtbar, Seitenverhältnis bleibt; Ränder bleiben frei
+    /// (Default: Content wird nie verzerrt auf das Device gezogen).
     #[default]
+    Fit,
+    /// Füllt das Device, Breite und Höhe werden getrennt skaliert.
     Stretch,
     /// Füllt das Device, Seitenverhältnis bleibt; Überstand wird abgeschnitten.
     Fill,
@@ -177,7 +178,7 @@ impl OutputRoute {
             device_area: DeviceArea::Full,
             rotation: ScreenRotation::Deg0,
             rear_projection: false,
-            scaling: RouteScaling::Stretch,
+            scaling: RouteScaling::Fit,
             color: default_route_color(),
             test_pattern: false,
             test_pattern_kind: TestPatternKind::Grid,
@@ -781,7 +782,7 @@ mod tests {
 
     #[test]
     fn route_scaling_and_device_area_basics() {
-        assert_eq!(RouteScaling::default(), RouteScaling::Stretch);
+        assert_eq!(RouteScaling::default(), RouteScaling::Fit);
         assert_eq!(RouteScaling::ALL.len(), 4);
         assert_eq!(RouteScaling::Fill.label(), "Fill");
         assert_eq!(
@@ -825,7 +826,8 @@ mod tests {
         let old: OutputRoute = serde_json::from_str(&legacy).unwrap();
         assert_eq!(old.device, None);
         assert_eq!(old.device_area, DeviceArea::Full);
-        assert_eq!(old.scaling, RouteScaling::Stretch);
+        // Default ist Fit (Verhältnis bleibt); explizit gespeichertes Stretch bleibt.
+        assert_eq!(old.scaling, RouteScaling::Fit);
         assert!(!old.rear_projection);
         assert_eq!(old.color, [255, 255, 255]);
 

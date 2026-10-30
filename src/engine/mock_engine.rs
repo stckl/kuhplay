@@ -690,6 +690,7 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
             }
             EngineCommand::Fade {
                 cue_id,
+                target_cue: _,
                 param,
                 from,
                 target,

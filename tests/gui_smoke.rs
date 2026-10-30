@@ -961,6 +961,7 @@ fn duration_cell_shows_remaining_time_for_playing_cue() {
             problems: vec![],
             elapsed: Some(Duration::from_secs(1)),
             pre_wait_remaining: None,
+            media_duration: None,
         },
     );
     render_table_with_meta(&ctx, &mut app, &meta);
@@ -1007,6 +1008,7 @@ fn post_wait_cell_shows_countdown() {
             problems: vec![],
             elapsed: Some(Duration::from_millis(50)),
             pre_wait_remaining: None,
+            media_duration: None,
         },
     );
     render_table_with_meta(&ctx, &mut app, &meta);
@@ -1930,7 +1932,14 @@ fn active_cue_row_not_clipped_and_seek_dispatches() {
             .unwrap();
     }
     app.poll_engine_events();
-    assert!(app.media_duration_of(&app.carts.active().cues()[0]).is_some() || true);
+    assert!(
+        running
+            .iter()
+            .all(|id| app.carts.find_cue_any(*id).is_some_and(
+                |c| app.media_duration_of(c) == Some(std::time::Duration::from_secs(10))
+            )),
+        "media_durations muss aus dem Started-Event übernommen werden"
+    );
     app.ui.sidebar_visible = true;
     app.ui.sidebar_tab = SidebarTab::ActiveCues;
     let raw = egui::RawInput {
@@ -1940,8 +1949,8 @@ fn active_cue_row_not_clipped_and_seek_dispatches() {
         )),
         ..Default::default()
     };
-    let mut out = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
-    out = ctx.run(raw, |ctx| app.draw_workspace(ctx));
+    let _ = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
+    let out = ctx.run(raw, |ctx| app.draw_workspace(ctx));
     // Zeilen-Rechtecke (Fill #2D2D34) und Text-Shapes im Sidebar-Bereich (x > 1200).
     let mut row_rects: Vec<egui::Rect> = Vec::new();
     for s in &out.shapes {
@@ -1981,4 +1990,61 @@ fn active_cue_row_not_clipped_and_seek_dispatches() {
         }
     }
     assert!(saw_seek, "kein EngineCommand::Seek nach seek_running");
+}
+
+/// Kill-Switch: Cue mit kill_others stoppt beim GO alle anderen laufenden
+/// Media-Cues (Video/Diashow/HTML) per EngineCommand::Stop.
+#[test]
+fn kill_others_stops_other_running_media_cues() {
+    let (mut app, cmd_rx, _evt_tx) = manual_app();
+    // Drei Video-Cues anlegen (ID jeweils per Diff, add_cue liefert keine ID).
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let before: std::collections::HashSet<_> =
+            app.carts.active().cues().iter().map(|c| c.id).collect();
+        app.add_cue(CueType::Video);
+        let after: std::collections::HashSet<_> =
+            app.carts.active().cues().iter().map(|c| c.id).collect();
+        ids.push(*after.difference(&before).next().unwrap());
+    }
+    let (c1, c2, c3) = (ids[0], ids[1], ids[2]);
+    app.go_now();
+    app.go_now();
+    if let Some(cue) = app
+        .carts
+        .active_mut()
+        .cues_mut()
+        .iter_mut()
+        .find(|c| c.id == c3)
+    {
+        cue.kill_others = true;
+    }
+    // Status beider alter Cues auf Playing setzen (simuliert laufend).
+    for id in [c1, c2] {
+        let _ = app.carts.set_status(id, CueStatus::Playing);
+    }
+    while cmd_rx.try_recv().is_ok() {}
+    let idx3 = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .position(|c| c.id == c3)
+        .unwrap();
+    app.carts.set_cursor(idx3); // Playhead auf den Kill-Cue
+    app.go_now();
+    let mut stopped = Vec::new();
+    while let Ok(cmd) = cmd_rx.try_recv() {
+        if let EngineCommand::Stop { cue_id } = cmd {
+            stopped.push(cue_id);
+        }
+    }
+    assert!(
+        stopped.contains(&c1) && stopped.contains(&c2),
+        "beide laufenden Cues müssen gestoppt werden: {stopped:?}"
+    );
+    assert!(
+        !stopped.contains(&c3),
+        "der neue Cue selbst darf nicht gestoppt werden"
+    );
 }

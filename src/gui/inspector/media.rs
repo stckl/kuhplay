@@ -178,7 +178,7 @@ pub fn draw_slides(ui: &mut egui::Ui, app: &mut ShowApp) {
                 if ui.button("+ Add Slide").clicked() {
                     show.slides.push(Slide {
                         path: PathBuf::new(),
-                        hold: std::time::Duration::from_secs(3),
+                        hold: show.default_hold,
                     });
                 }
                 if ui
@@ -189,14 +189,63 @@ pub fn draw_slides(ui: &mut egui::Ui, app: &mut ShowApp) {
                     for path in pick_image_files() {
                         show.slides.push(Slide {
                             path,
-                            hold: std::time::Duration::from_secs(3),
+                            hold: show.default_hold,
                         });
                     }
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Shuffle")
+                    .on_hover_text("Zufällige Reihenfolge der Dias")
+                    .clicked()
+                {
+                    shuffle(&mut show.slides);
+                }
+                if ui
+                    .button("Sort A–Z")
+                    .on_hover_text("Dias nach Dateiname sortieren")
+                    .clicked()
+                {
+                    show.slides.sort_by_key(|s| s.path.display().to_string());
                 }
             });
         });
 
         theme::form_grid("inspector_slides_grid").show(right, |ui| {
+            theme::field_label(ui, "Transition");
+            egui::ComboBox::from_id_salt("slideshow_transition")
+                .selected_text(show.transition.label())
+                .show_ui(ui, |ui| {
+                    for t in crate::core::SlideTransition::ALL {
+                        ui.selectable_value(&mut show.transition, t, t.label());
+                    }
+                });
+            ui.end_row();
+
+            theme::field_label(ui, "Hold default (s)");
+            let mut secs = show.default_hold.as_secs_f64();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut secs)
+                        .speed(0.1)
+                        .range(0.1..=3600.0),
+                )
+                .changed()
+            {
+                show.default_hold = std::time::Duration::from_secs_f64(secs.max(0.1));
+            }
+            if ui
+                .small_button("Apply to all")
+                .on_hover_text("Diese Hold-Zeit auf alle Dias übernehmen")
+                .clicked()
+            {
+                for slide in &mut show.slides {
+                    slide.hold = show.default_hold;
+                }
+            }
+            ui.end_row();
+
             theme::field_label(ui, "Crossfade (s)");
             let mut secs = show.crossfade.as_secs_f64();
             if ui
@@ -299,4 +348,22 @@ pub fn draw_data(ui: &mut egui::Ui, app: &mut ShowApp) {
         }
         ui.end_row();
     });
+}
+
+/// Fisher-Yates-Shuffle mit Time-Seed (kein externes rand nötig).
+fn shuffle<T>(items: &mut [T]) {
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E3779B97F4A7C15);
+    let mut rand = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for i in (1..items.len()).rev() {
+        let j = (rand() % (i as u64 + 1)) as usize;
+        items.swap(i, j);
+    }
 }

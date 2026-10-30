@@ -161,7 +161,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
                 placement_preview(right, surface, canvas, content_size);
             }
             let surface = cue.surface.get_or_insert_with(SurfaceGeometry::fit);
-            surface_editor(right, surface);
+            surface_editor(right, surface, content_size);
         }
     });
     if let Some(name) = edit_stage {
@@ -174,7 +174,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
 /// Editor für eine Cue-Surface (QLab: Surface-Geometrie auf der Stage):
 /// Position/Größe, Crop (Quellen-Zuschnitt), Hard-Edge-Blending,
 /// Deckkraft und Sichtbarkeit.
-fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
+fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry, content: Option<(u32, u32)>) {
     use crate::core::{BlendCurve, Crop, EdgeSide, HardEdge};
     theme::form_grid("surface_grid").show(ui, |ui| {
         theme::field_label(ui, "Mode");
@@ -199,6 +199,14 @@ fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
             });
             ui.end_row();
             theme::field_label(ui, "Size");
+            // Seitenverhältnis-Sperre: Basis ist das Medienformat (falls das
+            // erste Frame schon da ist), sonst das aktuelle Rechteck.
+            let ratio = content
+                .filter(|(w, h)| *w > 0 && *h > 0)
+                .map(|(w, h)| h as f32 / w as f32)
+                .or_else(|| (surface.width > 0.0).then_some(surface.height / surface.width));
+            let old_w = surface.width;
+            let old_h = surface.height;
             ui.horizontal(|ui| {
                 ui.add(
                     egui::DragValue::new(&mut surface.width)
@@ -212,7 +220,32 @@ fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
                         .range(1.0..=16384.0)
                         .prefix("H "),
                 );
+                if ui
+                    .checkbox(&mut surface.lock_aspect, "Lock")
+                    .on_hover_text("Lock aspect ratio (media format)")
+                    .changed()
+                    && surface.lock_aspect
+                {
+                    // Beim Einschalten: Verhältnis auf das aktuelle Rechteck festziehen.
+                    if surface.width > 0.0 {
+                        surface.height = surface.width
+                            * content
+                                .filter(|(w, h)| *w > 0 && *h > 0)
+                                .map(|(w, h)| h as f32 / w as f32)
+                                .unwrap_or(surface.height / surface.width);
+                    }
+                }
             });
+            // Lock aktiv: geänderte Achse zieht die andere proportional mit.
+            if surface.lock_aspect {
+                if let Some(r) = ratio {
+                    if surface.width != old_w && surface.height == old_h {
+                        surface.height = (surface.width * r).clamp(1.0, 16384.0);
+                    } else if surface.height != old_h && surface.width == old_w {
+                        surface.width = (surface.height / r).clamp(1.0, 16384.0);
+                    }
+                }
+            }
             ui.end_row();
         }
         theme::field_label(ui, "Opacity");

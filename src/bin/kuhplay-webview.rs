@@ -57,14 +57,17 @@ fn main() {
     });
 
     let event_loop = EventLoop::new();
-    // Unsichtbares Fenster: Die WebView rendert offscreen, der Snapshot geht
-    // per WKWebView takeSnapshot in die Stage — es soll kein eigenes Fenster
-    // auf dem Desktop erscheinen.
+    // Offscreen-Fenster: sichtbar (sonst throttled macOS rAF/JS-Timer der
+    // WebView → Standbild), aber außerhalb jedes Screens — es erscheint nicht
+    // auf dem Desktop. Der Snapshot geht per WKWebView takeSnapshot in die Stage.
     let window = WindowBuilder::new()
         .with_title("KuhPlay WebView")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 720.0))
-        .with_visible(false)
+        .with_position(tao::dpi::Position::new(tao::dpi::PhysicalPosition::new(
+            -10000, -10000,
+        )))
         .with_decorations(false)
+        .with_resizable(false)
         .build(&event_loop)
         .expect("webview window must build");
     let webview = WebViewBuilder::new()
@@ -77,7 +80,7 @@ fn main() {
         // Alle pending stdin-Nachrichten verarbeiten.
         let mut close_requested = false;
         while let Ok(line) = rx.try_recv() {
-            if handle_message(&line, &webview) {
+            if handle_message(&line, &webview, &window) {
                 close_requested = true;
             }
         }
@@ -96,7 +99,7 @@ fn main() {
 }
 
 /// Verarbeitet eine IPC-Zeile. Rückgabe: `true` = Close gewünscht.
-fn handle_message(line: &str, webview: &WebView) -> bool {
+fn handle_message(line: &str, webview: &WebView, window: &tao::window::Window) -> bool {
     let message: serde_json::Value = match serde_json::from_str(line) {
         Ok(message) => message,
         Err(_) => {
@@ -150,7 +153,7 @@ fn handle_message(line: &str, webview: &WebView) -> bool {
     if let Some(snap) = message.get("snapshot") {
         let width = snap.get("width").and_then(|v| v.as_u64()).unwrap_or(1280) as u32;
         let height = snap.get("height").and_then(|v| v.as_u64()).unwrap_or(720) as u32;
-        handle_snapshot(webview, width, height);
+        handle_snapshot(webview, window, width, height);
         return false;
     }
     emit(&serde_json::json!({ "error": format!("unknown message: {line}") }));
@@ -160,11 +163,17 @@ fn handle_message(line: &str, webview: &WebView) -> bool {
 /// Verarbeitet einen Snapshot-Request. macOS: nativ über WKWebView
 /// `takeSnapshot` (sichtbarer Bereich in WebView-Größe); andere Plattformen:
 /// kooperativ über ein Page-Canvas in der Wunschgröße.
-fn handle_snapshot(webview: &WebView, width: u32, height: u32) {
+fn handle_snapshot(webview: &WebView, window: &tao::window::Window, width: u32, height: u32) {
     #[cfg(target_os = "macos")]
     {
-        // takeSnapshot bildet die tatsächliche WebView-Größe ab (nicht W×H).
-        let _ = (width, height);
+        // takeSnapshot bildet die tatsächliche WebView-Größe ab. Deshalb das
+        // Fenster vor dem Snapshot auf die Zielgröße (Stage-Auflösung) setzen:
+        // HTML rendert dann exakt in der Auflösung der Stage, nicht in der
+        // Fenstergröße.
+        let target = tao::dpi::LogicalSize::new(f64::from(width), f64::from(height));
+        if window.inner_size().to_logical::<f64>(window.scale_factor()) != target {
+            window.set_inner_size(target);
+        }
         native_snapshot(webview);
     }
     #[cfg(not(target_os = "macos"))]

@@ -1511,6 +1511,8 @@ fn audition_mode_strips_stage_from_video_commands() {
             crossfade: Duration::ZERO,
             auto_advance: true,
             loop_slides: false,
+            transition: Default::default(),
+            default_hold: std::time::Duration::from_secs(3),
         },
         stage: Some("Stage 1".to_string()),
         layer: 3,

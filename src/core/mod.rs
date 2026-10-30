@@ -72,7 +72,7 @@ pub use screen::{
     TestPatternKind, TestPatternSpec, SCREEN_COLOR_PALETTE,
 };
 pub use show::ShowDocument;
-pub use slideshow::{Slide, SlideNav, SlideShow};
+pub use slideshow::{Slide, SlideNav, SlideShow, SlideTransition};
 pub use stage::{
     BlendCurve, Crop, EdgeSide, GeometryMode, HardEdge, Stage, StageGeometry, StageManager,
     SurfaceGeometry,

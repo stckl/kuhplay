@@ -210,6 +210,15 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.add_space(theme::size::SPACE_MEDIUM);
                 ui.checkbox(&mut cue.is_armed, "Armed")
                     .on_hover_text("Armed: GO includes this cue (disarmed cues are skipped)");
+                if matches!(
+                    cue.cue_type,
+                    CueType::Video | CueType::SlideShow | CueType::Html
+                ) {
+                    ui.checkbox(&mut cue.kill_others, "Kill others")
+                        .on_hover_text(
+                            "On start: stop all other running video/slideshow/HTML cues",
+                        );
+                }
             });
 
             // QLab „Cue Color": Paletten-Swatches + Entfernen.

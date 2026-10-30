@@ -702,6 +702,7 @@ fn stage_canvas_reflects_opacity_fade() {
     engine
         .commands
         .send(EngineCommand::Fade {
+            target_cue: None,
             cue_id,
             param: FadeParam::Opacity,
             from: 1.0,
@@ -961,5 +962,44 @@ fn seek_in_running_video_jumps_and_continues() {
             Duration::from_secs(5)
         ),
         "nach dem Seek kommen keine Frames mehr"
+    );
+}
+
+/// Fade mit Ziel-Cue (QLab-Verhalten): Der Parameter wird am TARGET gesetzt,
+/// nicht am Fade-Cue selbst (hier Opacity → opacities-Store des Ziels).
+#[test]
+fn fade_applies_to_target_cue_not_self() {
+    let engine = spawn_real_engine();
+    let fade_id = Uuid::new_v4();
+    let target_id = Uuid::new_v4();
+    engine
+        .send(EngineCommand::Fade {
+            cue_id: fade_id,
+            target_cue: Some(target_id),
+            param: FadeParam::Opacity,
+            from: 1.0,
+            target: 0.0,
+            duration: Duration::from_millis(400),
+            curve: FadeCurve::Linear,
+        })
+        .unwrap();
+    let mid = wait_until(
+        || {
+            engine
+                .opacities
+                .lock()
+                .unwrap()
+                .get(&target_id)
+                .is_some_and(|v| *v < 1.0)
+        },
+        Duration::from_secs(3),
+    );
+    assert!(
+        mid,
+        "Ziel-Cue muss während des Fades eine Opacity < 1 bekommen"
+    );
+    assert!(
+        engine.opacities.lock().unwrap().get(&fade_id).is_none(),
+        "Fade-Cue selbst darf keine Opacity bekommen"
     );
 }

@@ -46,6 +46,48 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.end_row();
 
         if matches!(cue.cue_type, CueType::Audio | CueType::Video) {
+            // --- Von/Bis (In/Out): spielt nur [From, To) des Mediums ---
+            // (ein Slice; für Segmentpläne siehe „Slices" darunter).
+            theme::field_label(ui, "Play from/to");
+            ui.horizontal(|ui| {
+                let mut from = cue.slices.first().map(|s| s.start).unwrap_or_default();
+                let mut to = cue.slices.first().map(|s| s.end).unwrap_or_default();
+                let single = cue.slices.len() <= 1;
+                ui.add_enabled_ui(single, |ui| {
+                    ui.label(RichText::new("from").color(theme::palette::TEXT_DIM));
+                    let r1 = time_field(ui, &mut from);
+                    ui.label(RichText::new("to").color(theme::palette::TEXT_DIM));
+                    let r2 = time_field(ui, &mut to);
+                    if r1.changed() || r2.changed() {
+                        if to <= from {
+                            to = from + Duration::from_millis(100);
+                        }
+                        if cue.slices.len() == 1 {
+                            cue.slices[0].start = from;
+                            cue.slices[0].end = to;
+                        } else {
+                            cue.slices = vec![MediaSlice {
+                                start: from,
+                                end: to,
+                                play_count: 1,
+                            }];
+                        }
+                    }
+                });
+                if !single {
+                    ui.label(
+                        RichText::new("multi-slice plan active – see Slices below")
+                            .small()
+                            .color(theme::palette::TEXT_DIM),
+                    );
+                }
+            })
+            .response
+            .on_hover_text(
+                "Play only from/to (In/Out). Click the waveform to set In, Shift-click to set Out.",
+            );
+            ui.end_row();
+
             // --- Media-Slices (QLab: Segment-Plan mit Play-Counts) ---
             theme::field_label(ui, "Slices");
             ui.vertical(|ui| {
@@ -83,7 +125,36 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
                 if !path.starts_with("http://") && !path.starts_with("https://") {
                     theme::field_label(ui, "Waveform");
                     let waveform = waveforms.get_or_compute(Path::new(path), WAVEFORM_BUCKETS);
-                    draw_waveform(ui, waveform, 96.0);
+                    if let Some((secs, shift)) = draw_waveform(ui, waveform, 96.0) {
+                        // Klick = In setzen, Shift-Klick = Out setzen.
+                        let d = Duration::from_secs_f64(secs);
+                        if cue.slices.len() == 1 {
+                            if shift {
+                                cue.slices[0].end =
+                                    d.max(cue.slices[0].start + Duration::from_millis(100));
+                            } else {
+                                cue.slices[0].start = d;
+                                if cue.slices[0].end <= d {
+                                    cue.slices[0].end = d + Duration::from_millis(100);
+                                }
+                            }
+                        } else {
+                            let (from, to) = if shift {
+                                (Duration::ZERO, d)
+                            } else {
+                                (d, Duration::ZERO)
+                            };
+                            let mut sl = MediaSlice {
+                                start: from,
+                                end: to.max(from + Duration::from_millis(100)),
+                                play_count: 1,
+                            };
+                            if shift {
+                                sl.start = Duration::ZERO;
+                            }
+                            cue.slices = vec![sl];
+                        }
+                    }
                     ui.end_row();
                 }
             }
@@ -93,15 +164,29 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
 
 /// Waveform-Vorschau: min/max-Balken pro Bucket (egui-Painter, ohne
 /// Plot-Dependency). `None` = Datei nicht dekodierbar.
-fn draw_waveform(ui: &mut egui::Ui, waveform: Option<Arc<Waveform>>, height: f32) {
+/// Waveform-Interaktion: Rückgabe `(Sekunde, mit_Shift)` bei Klick.
+fn draw_waveform(
+    ui: &mut egui::Ui,
+    waveform: Option<Arc<Waveform>>,
+    height: f32,
+) -> Option<(f64, bool)> {
     let Some(waveform) = waveform else {
         ui.label(RichText::new("no waveform").weak());
-        return;
+        return None;
     };
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
+    if response.clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let frac = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64;
+            return Some((
+                frac * waveform.duration.as_secs_f64(),
+                ui.input(|i| i.modifiers.shift),
+            ));
+        }
+    }
     response.on_hover_text(format!(
         "{} buckets · {:.1} s · {} Hz",
         waveform.bucket_count(),
@@ -126,4 +211,5 @@ fn draw_waveform(ui: &mut egui::Ui, waveform: Option<Arc<Waveform>>, height: f32
         let y_bottom = mid - min.clamp(-1.0, 0.0) * half;
         painter.vline(x, y_top..=y_bottom.max(y_top + 1.0), stroke);
     }
+    None
 }

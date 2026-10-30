@@ -225,6 +225,10 @@ pub struct SurfaceGeometry {
     /// Lage auf der Stage. `x`/`y`/`width`/`height` gelten nur bei `Custom`.
     #[serde(default)]
     pub mode: GeometryMode,
+    /// Seitenverhältnis-Sperre im Custom-Mode: Größenänderung skaliert die
+    /// andere Achse mit (Basis ist das Medienformat, sonst das aktuelle Rechteck).
+    #[serde(default)]
+    pub lock_aspect: bool,
 }
 
 impl SurfaceGeometry {
@@ -240,6 +244,7 @@ impl SurfaceGeometry {
             opacity: 1.0,
             visible: true,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         }
     }
 
@@ -825,6 +830,7 @@ mod tests {
             opacity: 1.0,
             visible: true,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         };
         // Rechte Kante bei x = 300: 20 px innen → Faktor 0.5.
         assert_eq!(s.hard_edge_factor(280.0, 100.0), 0.5);
@@ -940,6 +946,7 @@ mod tests {
             opacity: 0.75,
             visible: false,
             mode: GeometryMode::Custom,
+            lock_aspect: false,
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: SurfaceGeometry = serde_json::from_str(&json).unwrap();

@@ -157,10 +157,12 @@ impl ActivePlayback {
             return self.duration;
         }
         match &self.kind {
-            // Ohne Cue-Duration: bis EOF (Media) bzw. Default (Html).
+            // Ohne Cue-Duration: bis EOF (Media); HTML5 läuft bis zum Stoppen
+            // (wie Video/Bild als active cue), hat aber kein EOF.
             PlaybackKind::Audio | PlaybackKind::Video => {
                 self.media_duration.unwrap_or(Duration::MAX)
             }
+            PlaybackKind::Html(_) => Duration::MAX,
             _ => DEFAULT_PLAYBACK,
         }
     }
@@ -184,6 +186,8 @@ impl ActivePlayback {
 
 /// Ein laufender Fade.
 struct ActiveFade {
+    /// Ziel-Cue des Fades (`None` = Fade-Cue selbst).
+    target_cue: Option<Uuid>,
     param: FadeParam,
     from: f32,
     target: f32,
@@ -215,12 +219,15 @@ struct ActiveHtml {
 }
 
 /// Snapshot-Intervall für WebView-Compositing (HTML5-Cues auf Stages).
-const WEBVIEW_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
+// ~30 fps für HTML5-Cues: CSS/JS-Animationen sollen kontinuierlich laufen
+// (wie im Browser), nicht ruckeln.
+const WEBVIEW_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Nach dieser Anzahl fehlgeschlagener Snapshots in Folge stellt die Engine
 /// die Anfragen ein (z. B. Seite ohne Canvas auf Plattformen ohne nativen
 /// Snapshot) – Fehler werden nicht endlos wiederholt.
-const WEBVIEW_MAX_SNAPSHOT_FAILURES: u32 = 3;
+/// Backoff nach Snapshot-Fehlern (Retry statt Dauer-Stopp).
+const WEBVIEW_SNAPSHOT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Default-Snapshot-Größe, wenn der Cue keiner Stage zugeordnet ist.
 const WEBVIEW_SNAPSHOT_DEFAULT: (u32, u32) = (1280, 720);
@@ -247,7 +254,7 @@ pub struct RealMediaEngine {
     html: HashMap<Uuid, ActiveHtml>,
     compositor: Compositor,
     /// Fade-Zwischenwerte (im Tick nach der Iteration anwenden).
-    pending_fade_values: Vec<(Uuid, FadeParam, f32)>,
+    pending_fade_values: Vec<(Uuid, Uuid, FadeParam, f32)>,
     /// Audio-Device-Fehler nur einmal melden (kein Log-Spam pro Cue).
     audio_broken_reported: bool,
     /// Zusätzliche Audio-Streams (weitere Ausgabegeräte parallel); teilen den
@@ -688,6 +695,16 @@ impl RealMediaEngine {
                 .unwrap_or(1.0);
             surfaces.push((*cue_id, playback.layer, surface, frame, fade_opacity));
         }
+        // Layer-Regel: höheres Layer liegt oben; gleiches Layer: später
+        // gestarteter Cue liegt oben (neuester Content sichtbar).
+        surfaces.sort_by_key(|(cue_id, layer, _, _, _)| {
+            let started = self
+                .active
+                .get(cue_id)
+                .map(|p| p.started_at.unwrap_or(p.received_at))
+                .unwrap_or_default();
+            (*layer, started)
+        });
         surfaces
     }
 
@@ -798,7 +815,9 @@ impl RealMediaEngine {
                         } else {
                             None
                         };
-                        if !state.show.crossfade.is_zero() {
+                        if state.show.transition != crate::core::SlideTransition::Cut
+                            && !state.show.crossfade.is_zero()
+                        {
                             state.crossfade = Some((prev, now));
                         }
                         let _ = events.send(EngineEvent::SlideChanged {
@@ -826,7 +845,18 @@ impl RealMediaEngine {
                     state.crossfade = None;
                     current
                 } else if let Some(prev_frame) = state.frames.get(prev) {
-                    Arc::new(VideoFrame::blend(prev_frame, &current, t))
+                    match state.show.transition {
+                        crate::core::SlideTransition::DipToBlack => {
+                            // Erst auf Schwarz ab-, dann einblenden.
+                            let black = Arc::new(VideoFrame::black(current.width, current.height));
+                            if t < 0.5 {
+                                Arc::new(VideoFrame::blend(prev_frame, &black, t * 2.0))
+                            } else {
+                                Arc::new(VideoFrame::blend(&black, &current, (t - 0.5) * 2.0))
+                            }
+                        }
+                        _ => Arc::new(VideoFrame::blend(prev_frame, &current, t)),
+                    }
                 } else {
                     current
                 }
@@ -1062,15 +1092,18 @@ impl MediaEngine for RealMediaEngine {
             }
             EngineCommand::Fade {
                 cue_id,
+                target_cue,
                 param,
                 from,
                 target,
                 duration,
                 curve,
             } => {
+                let applied_to = target_cue.unwrap_or(cue_id);
                 self.fades.insert(
                     cue_id,
                     ActiveFade {
+                        target_cue,
                         param,
                         from,
                         target,
@@ -1080,9 +1113,9 @@ impl MediaEngine for RealMediaEngine {
                         last_value: from,
                     },
                 );
-                self.apply_fade_value(cue_id, param, from);
+                self.apply_fade_value(applied_to, param, from);
                 if duration.is_zero() {
-                    self.apply_fade_value(cue_id, param, target);
+                    self.apply_fade_value(applied_to, param, target);
                     self.fades.remove(&cue_id);
                     self.emit(EngineEvent::Finished { cue_id });
                 }
@@ -1531,7 +1564,12 @@ impl MediaEngine for RealMediaEngine {
             };
             if value != fade.last_value {
                 fade.last_value = value;
-                self.pending_fade_values.push((*cue_id, fade.param, value));
+                self.pending_fade_values.push((
+                    *cue_id,
+                    fade.target_cue.unwrap_or(*cue_id),
+                    fade.param,
+                    value,
+                ));
                 out.push(EngineEvent::FadeProgress {
                     cue_id: *cue_id,
                     param: fade.param,
@@ -1547,8 +1585,9 @@ impl MediaEngine for RealMediaEngine {
             out.push(EngineEvent::Finished { cue_id });
         }
         let pending_fades = std::mem::take(&mut self.pending_fade_values);
-        for (cue_id, param, value) in pending_fades {
-            self.apply_fade_value(cue_id, param, value);
+        for (cue_id, target_cue, param, value) in pending_fades {
+            let _ = cue_id;
+            self.apply_fade_value(target_cue, param, value);
         }
 
         // Playbacks: Pre-Wait → Laufend → Loops/Slices → Finished → Post-Wait.
@@ -1760,19 +1799,25 @@ impl MediaEngine for RealMediaEngine {
             let Some(webview) = &mut html.webview else {
                 continue;
             };
-            // Fälligen Snapshot anfordern (nach Load, mit Backoff bei Fehlern).
-            if html.snapshot_failures < WEBVIEW_MAX_SNAPSHOT_FAILURES {
-                if let Some(due) = html.next_snapshot_at {
-                    if now >= due {
-                        let (w, h) = match &html.stage {
-                            Some(stage) => canvas_size(&self.stages, stage),
-                            None => WEBVIEW_SNAPSHOT_DEFAULT,
-                        };
-                        if let Err(err) = webview.request_snapshot(w, h) {
-                            warn!(%cue_id, %err, "webview snapshot request fehlgeschlagen");
-                        }
-                        html.next_snapshot_at = Some(now + WEBVIEW_SNAPSHOT_INTERVAL);
+            // Fälligen Snapshot anfordern (nach Load). Bei Fehlern kein
+            // dauerhaftes Stoppen, sondern Backoff – sonst friert das HTML
+            // nach ein paar Snapshot-Fehlern ein (z. B. Offscreen-Fenster).
+            if let Some(due) = html.next_snapshot_at {
+                if now >= due {
+                    let (w, h) = match &html.stage {
+                        Some(stage) => canvas_size(&self.stages, stage),
+                        None => WEBVIEW_SNAPSHOT_DEFAULT,
+                    };
+                    if let Err(err) = webview.request_snapshot(w, h) {
+                        warn!(%cue_id, %err, "webview snapshot request fehlgeschlagen");
+                        html.snapshot_failures += 1;
                     }
+                    let interval = if html.snapshot_failures > 0 {
+                        WEBVIEW_SNAPSHOT_RETRY_INTERVAL
+                    } else {
+                        WEBVIEW_SNAPSHOT_INTERVAL
+                    };
+                    html.next_snapshot_at = Some(now + interval);
                 }
             }
             while let Some(event) = webview.poll_event() {
@@ -1794,7 +1839,7 @@ impl MediaEngine for RealMediaEngine {
                     }
                     super::webview_backend::WebviewEvent::Error(message) => {
                         if message.starts_with("snapshot:") {
-                            // Snapshot-Fehler: einmal melden, dann Backoff.
+                            // Snapshot-Fehler: einmal melden, dann Backoff (Retry).
                             html.snapshot_failures += 1;
                             if html.snapshot_failures == 1 {
                                 out.push(EngineEvent::Error {

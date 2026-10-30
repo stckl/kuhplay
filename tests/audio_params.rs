@@ -60,6 +60,7 @@ fn db_fade_hits_exact_decibel_midpoint() {
     // 0 dB → -6.02 dB (Halbierung). Hälfte der Zeit = -3.01 dB = √0.5 ≈ 0.7071.
     engine
         .handle(EngineCommand::Fade {
+            target_cue: None,
             cue_id: id,
             param: FadeParam::Volume,
             from: 1.0,
@@ -99,6 +100,7 @@ fn linear_fade_midpoint_is_the_arithmetic_mean() {
     let id = Uuid::new_v4();
     engine
         .handle(EngineCommand::Fade {
+            target_cue: None,
             cue_id: id,
             param: FadeParam::Volume,
             from: 1.0,
@@ -122,6 +124,7 @@ fn rate_fade_emits_rate_param_events() {
     let id = Uuid::new_v4();
     engine
         .handle(EngineCommand::Fade {
+            target_cue: None,
             cue_id: id,
             param: FadeParam::Rate,
             from: 1.0,

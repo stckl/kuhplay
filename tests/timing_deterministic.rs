@@ -232,6 +232,7 @@ fn fade_hits_exact_intermediate_values() {
     let id = Uuid::new_v4();
     engine
         .handle(EngineCommand::Fade {
+            target_cue: None,
             cue_id: id,
             param: FadeParam::Volume,
             from: 0.0,
@@ -268,6 +269,7 @@ fn zero_duration_fade_finishes_immediately() {
     let id = Uuid::new_v4();
     engine
         .handle(EngineCommand::Fade {
+            target_cue: None,
             cue_id: id,
             param: FadeParam::Volume,
             from: 0.2,

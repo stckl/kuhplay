@@ -466,6 +466,10 @@ pub struct Cue {
     /// nachgeführt, falls ≠ 1.0 (siehe [`CueList`](crate::core::CueList)).
     #[serde(default = "default_volume")]
     pub volume: f32,
+    /// Ziel-Cue des Fades (QLab: Fade fadet einen Parameter eines ANDEREN Cues);
+    /// `None` = der Fade-Cue selbst (altes Verhalten).
+    #[serde(default)]
+    pub fade_target: Option<Uuid>,
     /// Welcher Parameter gefadet wird (Volume/Rate/Opacity).
     #[serde(default)]
     pub fade_param: FadeParam,
@@ -478,6 +482,15 @@ pub struct Cue {
     /// Continue-Mode (Auto-Continue/Auto-Follow, QLab Cue Sequences).
     #[serde(default)]
     pub continue_mode: ContinueMode,
+    /// Kill-Switch: Beim Start dieses Cues alle anderen laufenden Media-Cues
+    /// (Video/Diashow/HTML) stoppen (QLab-äquivalent: „alle bisherigen Contents
+    /// abschießen").
+    #[serde(default)]
+    pub kill_others: bool,
+    /// QLab-5-analog „vorherige Cues beenden": Beim Start dieses Cues alle
+    /// laufenden Cues stoppen, die in der Liste VOR diesem Cue stehen.
+    #[serde(default)]
+    pub stop_previous: bool,
     /// Media-Slices: Segment-Plan mit individuellen Wiederholungszählern
     /// (überschreibt `loop_mode`/`duration` bei der Wiedergabe).
     #[serde(default)]
@@ -566,9 +579,12 @@ impl Cue {
             target_volume: None,
             from_volume: None,
             volume: 1.0,
+            fade_target: None,
             fade_param: FadeParam::Volume,
             fade_curve: FadeCurve::Linear,
             loop_mode: LoopMode::Once,
+            kill_others: false,
+            stop_previous: false,
             continue_mode: ContinueMode::Off,
             slices: Vec::new(),
             route: None,
@@ -974,6 +990,7 @@ impl Cue {
             }),
             CueType::Fade => self.target_volume.map(|target| EngineCommand::Fade {
                 cue_id: self.id,
+                target_cue: self.fade_target,
                 param: self.fade_param,
                 from: self.from_volume.unwrap_or(1.0),
                 target,
@@ -1234,6 +1251,7 @@ mod tests {
         match cue.build_trigger_command() {
             Some(EngineCommand::Fade {
                 cue_id,
+                target_cue: _,
                 param,
                 from,
                 target,

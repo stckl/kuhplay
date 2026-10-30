@@ -265,7 +265,8 @@ Post-wait · Continue**.
     (Display oder Blackmagic), Testbild, Farbe, Edit, Delete. Fehlende Geräte
     erscheinen kursiv mit „(missing)“. Route-Editor (eigenes Fenster): Name,
     Größe, „Set from Device“, Drehung, Rear Projection, Skalierung
-    (Center/Fit/Stretch/Fill), Device, Teilbereich (Full/Part).
+    (Center/Fit [Default, Verhältnis bleibt]/Stretch/Fill), Device,
+    Teilbereich (Full/Part).
   - **Output Devices:** erkannte Displays mit Auflösung (Pixel und Punkte)
     und Wiederholrate; Hinweis, dass Anordnung/Auflösung in den
     Systemeinstellungen geändert werden.

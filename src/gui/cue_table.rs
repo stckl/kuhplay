@@ -130,6 +130,9 @@ pub struct CueRowMeta {
     /// Verbleibende Pre-Wait-Zeit (nur während Pre-Wait) – die Pre-wait-
     /// Zelle zählt sichtbar herunter.
     pub pre_wait_remaining: Option<Duration>,
+    /// Medien-Dauer aus dem Engine-Started-Event (für Duration/Restzeit bei
+    /// Cues mit duration=0).
+    pub media_duration: Option<Duration>,
 }
 
 /// Vom Nutzer ausgelöste Tabellen-Aktionen (Kontextmenü, Drag & Drop).
@@ -771,18 +774,26 @@ pub fn draw(
                     ) {
                         return;
                     }
-                    // QLab: laufende Cues zeigen die verbleibende Zeit.
+                    // QLab: laufende Cues zeigen die verbleibende Zeit. Basis ist
+                    // die Cue-Duration, sonst die erkannte Medien-Dauer (duration=0).
+                    let row_meta = meta.get(&cue_id);
+                    let media_dur = row_meta.and_then(|m| m.media_duration);
+                    let total = if cue.duration.is_zero() {
+                        media_dur.unwrap_or(cue.duration)
+                    } else {
+                        cue.duration
+                    };
                     let (text, color) = match elapsed {
                         Some(el)
                             if matches!(cue.status, CueStatus::Playing | CueStatus::Paused)
-                                && !cue.duration.is_zero() =>
+                                && !total.is_zero() =>
                         {
                             (
-                                format_timecode(cue.duration.saturating_sub(el)),
+                                format_timecode(total.saturating_sub(el)),
                                 theme::status_color(cue.status),
                             )
                         }
-                        _ => (format_timecode(cue.duration), time_color(cue.duration)),
+                        _ => (format_timecode(total), time_color(total)),
                     };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(6.0);
@@ -932,6 +943,14 @@ pub fn draw(
                     }
                 }
 
+                // Playhead per Drag in der Status-Spalte verschieben (QLab).
+                if response.drag_started() || response.dragged() {
+                    if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+                        if status_rect.is_some_and(|r| r.contains(pos)) && editable {
+                            cue_list.set_cursor(list_index);
+                        }
+                    }
+                }
                 if clicked || double_clicked {
                     // In welcher Spalte wurde geklickt? (QLab: Status-Spalte
                     // setzt den Playhead, der Rest selektiert/editiert.)
@@ -991,6 +1010,16 @@ pub fn draw(
                             } else {
                                 // Einfachklick: selektieren (auch Group-Kinder, Item 7).
                                 cue_list.select_id(Some(cue_id));
+                                // QLab: Klick auf die Q#-Spalte bewegt zusätzlich
+                                // den Playhead (GO triggert dann ab dieser Zeile).
+                                if editable
+                                    && pointer_pos.is_some_and(|pos| {
+                                        cell_rects[EditField::Number as usize]
+                                            .is_some_and(|r| r.contains(pos))
+                                    })
+                                {
+                                    cue_list.set_cursor(list_index);
+                                }
                             }
                         }
                     }
