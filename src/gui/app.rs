@@ -46,8 +46,8 @@ use uuid::Uuid;
 
 use crate::core::{
     cue_type_for_file, default_routes_for_displays, CartManager, Cue, CueStatus, CueType,
-    DisplayRefInfo, Region, RouteManager, ScreenManager, ShowDocument, ShowResult, Stage,
-    StageGeometry, StageManager,
+    DeviceRef, DisplayRefInfo, OutputRoute, Region, RouteManager, ScreenManager, ShowDocument,
+    ShowResult, Stage, StageGeometry, StageManager,
 };
 use crate::engine::waveform::{Waveform, WaveformCache, WAVEFORM_BUCKETS};
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle};
@@ -176,8 +176,12 @@ pub struct ShowApp {
         std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
     /// Erkannte Displays (für Screen-Mapping in der UI).
     pub displays: Vec<display_info::DisplayInfo>,
-    /// Im Screen-Editor ausgewählter Screen (für Eigenschaften-Panel).
-    pub screen_editor_selected: Option<Uuid>,
+    /// Stage-Editor (eigenes Fenster): Stage-ID, oder `None` = zu.
+    pub stage_editor_open: Option<Uuid>,
+    /// Route-Editor (eigenes Fenster): Route-ID, oder `None` = zu.
+    pub route_editor_open: Option<Uuid>,
+    /// Multi-Output-Assistent („New Stage → Multi-Output Stage…“).
+    pub multi_output_wizard: Option<MultiOutputWizard>,
     /// Optionaler Auto-Demo-Modus (automatische GO-Abfolge für Screen-Tests).
     autodemo: Option<AutodemoState>,
     /// Remote-Server (Web-Remote + Companion), falls aktiviert.
@@ -214,6 +218,31 @@ pub struct ShowApp {
     problems_at: Option<Instant>,
     /// Waveform-Peaks pro Datei (Cache für die Inspector-Vorschau).
     pub waveforms: WaveformCache,
+}
+
+/// Assistent für eine Multi-Output-Stage: Anzahl, Auflösung und
+/// Überlappung der Projektoren (horizontale Anordnung).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiOutputWizard {
+    /// Anzahl der Projektoren (nebeneinander).
+    pub count: u32,
+    /// Auflösung je Projektor (Pixel).
+    pub width: u32,
+    /// Höhe je Projektor (Pixel).
+    pub height: u32,
+    /// Überlappung benachbarter Projektoren (Pixel).
+    pub overlap: u32,
+}
+
+impl Default for MultiOutputWizard {
+    fn default() -> Self {
+        Self {
+            count: 2,
+            width: 1920,
+            height: 1080,
+            overlap: 200,
+        }
+    }
 }
 
 /// Zustand des optionalen Auto-Demo-Modus (für automatische Screen-Tests).
@@ -484,7 +513,9 @@ impl ShowApp {
             stage_windows: HashSet::new(),
             closed_device_outputs: Default::default(),
             displays,
-            screen_editor_selected: None,
+            stage_editor_open: None,
+            route_editor_open: None,
+            multi_output_wizard: None,
             autodemo,
             remote: None,
             ctrl_click_active: false,
@@ -610,6 +641,152 @@ impl ShowApp {
             }
         }
         created
+    }
+
+    /// Legt eine neue leere Stage an (1920×1080, ohne Regionen).
+    pub fn add_empty_stage(&mut self) {
+        let mut number = self.stages.len() + 1;
+        while self.stages.find(&format!("Stage {number}")).is_some() {
+            number += 1;
+        }
+        self.configure_stage(Stage::new(
+            format!("Stage {number}"),
+            StageGeometry::new(1920.0, 1080.0),
+        ));
+    }
+
+    /// Legt eine Stage mit Ausgabe an: neue Route (ohne Device) und eine
+    /// Region über die ganze Fläche (QLab „New Stage with Output“).
+    pub fn add_stage_with_output(&mut self) {
+        let mut number = self.stages.len() + 1;
+        while self.stages.find(&format!("Stage {number}")).is_some() {
+            number += 1;
+        }
+        let mut route_number = self.routes.len() + 1;
+        while self
+            .routes
+            .find_by_name(&format!("Route {route_number}"))
+            .is_some()
+        {
+            route_number += 1;
+        }
+        let route = OutputRoute::new(format!("Route {route_number}"), 1920, 1080);
+        let route_id = route.id;
+        if self.routes.add(route).is_err() {
+            return;
+        }
+        let mut stage = Stage::new(
+            format!("Stage {number}"),
+            StageGeometry::new(1920.0, 1080.0),
+        );
+        let mut region = Region::full_stage(1920.0, 1080.0);
+        region.route = Some(route_id);
+        stage.regions = vec![region];
+        self.configure_stage(stage);
+        self.configure_routes();
+    }
+
+    /// Multi-Output-Stage: `count` Routen (Projektoren) mit `width`×`height`,
+    /// horizontal mit `overlap` Pixeln Überlappung; eine Stage, deren
+    /// Regionen die Stage in Projektionsbreite aufteilen (Auto-Blend an).
+    pub fn add_multi_output_stage(&mut self, wizard: &MultiOutputWizard) {
+        let count = wizard.count.clamp(1, 12);
+        let (w, h) = (wizard.width.clamp(1, 30000), wizard.height.clamp(1, 30000));
+        let overlap = wizard.overlap.min(w.saturating_sub(1));
+        let mut number = self.stages.len() + 1;
+        while self.stages.find(&format!("Stage {number}")).is_some() {
+            number += 1;
+        }
+        // Routen: „Route n“ (je Projektor).
+        let mut route_ids = Vec::new();
+        for _ in 0..count {
+            let mut route_number = self.routes.len() + 1;
+            while self
+                .routes
+                .find_by_name(&format!("Route {route_number}"))
+                .is_some()
+            {
+                route_number += 1;
+            }
+            let route = OutputRoute::new(format!("Route {route_number}"), w, h);
+            let id = route.id;
+            if self.routes.add(route).is_ok() {
+                route_ids.push(id);
+            }
+        }
+        // Stage: Gesamtbreite = count·w − (count−1)·overlap.
+        let stage_w = (count as f32 * w as f32 - (count as f32 - 1.0) * overlap as f32).max(1.0);
+        let mut stage = Stage::new(
+            format!("Stage {number}"),
+            StageGeometry::new(stage_w, h as f32),
+        );
+        let mut x = 0.0f32;
+        for id in &route_ids {
+            let mut region = Region::new(x, 0.0, w as f32, h as f32);
+            region.route = Some(*id);
+            region.auto_blend = true;
+            stage.regions.push(region);
+            x += w as f32 - overlap as f32;
+        }
+        self.configure_stage(stage);
+        self.configure_routes();
+    }
+
+    /// Legt eine neue Route an (ohne Device). Rückgabe: ID.
+    pub fn add_route(&mut self) -> Uuid {
+        let mut route_number = self.routes.len() + 1;
+        while self
+            .routes
+            .find_by_name(&format!("Route {route_number}"))
+            .is_some()
+        {
+            route_number += 1;
+        }
+        let route = OutputRoute::new(format!("Route {route_number}"), 1920, 1080);
+        let id = route.id;
+        let _ = self.routes.add(route);
+        self.configure_routes();
+        id
+    }
+
+    /// Legt eine neue Route für ein Display an (Auflösung in echten
+    /// Pixeln, Name „Display n“). Rückgabe: ID.
+    pub fn add_route_for_display(&mut self, display: &DisplayRefInfo) -> Uuid {
+        let (w, h) = display.pixel_size();
+        let mut route = OutputRoute::new(display.name.clone(), w, h);
+        route.device = Some(DeviceRef::Display {
+            id: display.id,
+            name: display.name.clone(),
+            width: display.width,
+            height: display.height,
+        });
+        let id = route.id;
+        let _ = self.routes.add(route);
+        self.configure_routes();
+        id
+    }
+
+    /// Entfernt eine Route; Regionen, die sie nutzen, verlieren ihre
+    /// Zuweisung ( betroffene Stages werden neu gemeldet).
+    pub fn remove_route(&mut self, id: Uuid) {
+        self.routes.remove(id);
+        let mut affected: Vec<Stage> = Vec::new();
+        for stage in self.stages.stages_mut() {
+            let mut changed = false;
+            for region in &mut stage.regions {
+                if region.route == Some(id) {
+                    region.route = None;
+                    changed = true;
+                }
+            }
+            if changed {
+                affected.push(stage.clone());
+            }
+        }
+        for stage in affected {
+            self.configure_stage(stage);
+        }
+        self.configure_routes();
     }
 
     /// Meldet die Output Routes an die Engine (nach jeder Änderung an
@@ -1827,7 +2004,6 @@ impl ShowApp {
         };
         self.set_audio_output(doc.audio_output);
         self.set_audio_patch(doc.audio_patch);
-        self.screen_editor_selected = None;
         self.stage_windows.clear();
         // Alle Stages an die Engine melden.
         for stage in self.stages.stages().to_vec() {
@@ -1848,7 +2024,6 @@ impl ShowApp {
         self.stages = StageManager::new();
         self.screens = ScreenManager::from_displays(&self.displays);
         self.setup_default_routes();
-        self.screen_editor_selected = None;
         self.stage_windows.clear();
         // Default-Stages an die Engine melden.
         for stage in self.stages.stages().to_vec() {
@@ -2579,6 +2754,10 @@ impl ShowApp {
         // Workspace-Settings-Fenster (QLab: Workspace → Workspace Settings;
         // Screens/Stages auf der Seite „Video").
         super::workspace_settings::draw(ctx, self);
+        // Stage-Editor, Route-Editor und Multi-Output-Assistent (Video).
+        super::stage_editor::draw(ctx, self);
+        super::workspace_settings::draw_route_editor(ctx, self);
+        super::workspace_settings::draw_multi_output_wizard(ctx, self);
     }
 
     /// Aktualisiert den gecachten Hotkey-Gate-Wert „Textfeld fokussiert"

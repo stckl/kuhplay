@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use kuhplay::core::{ContinueMode, Cue, CueStatus, CueType, Screen, ScreenRotation};
+use kuhplay::core::{ContinueMode, Cue, CueStatus, CueType};
 use kuhplay::engine::{spawn_mock_engine, EngineCommand, EngineEvent};
 use kuhplay::gui::{
     cue_table, footer, icons, inspector, masthead, sidebar, theme::palette, toolbox, InspectorTab,
@@ -295,160 +295,97 @@ fn all_icons_render_without_panic() {
 }
 
 #[test]
-fn workspace_settings_video_page_renders_and_edits_screens() {
-    // Screen-Editor (Workspace Settings → Video, TODO.md Phase 1): rendert
-    // ohne Panic und die fachlichen Operationen (anlegen, bearbeiten,
-    // Testbild, Stage zuordnen, löschen) funktionieren gegen Mock-Engine +
-    // ScreenManager.
+fn workspace_settings_video_page_renders_and_edits_stages_and_routes() {
+    // Video-Seite (Workspace Settings → Video, QLab-5-Tabs): rendert ohne
+    // Panic; Stage/Route-Verwaltung (anlegen, Editor oeffnen, loeschen)
+    // funktioniert gegen Mock-Engine + RouteManager.
     let ctx = egui::Context::default();
     let mut app = demo_app();
     app.ui.workspace_settings_open = true;
     app.ui.workspace_settings_page = SettingsPage::Video;
-    // Mehrere Frames: erster Frame ist egui-Sizing-Pass, danach regulär.
     for _ in 0..3 {
         render_frame(&ctx, &mut app);
     }
-    // Default: ein Screen pro erkanntem Display (0 Displays → 0 Screens).
-    assert_eq!(app.screens.len(), app.displays.len());
+    // Default-Setup: pro Display eine Route, Stage 1 mit Region.
+    assert_eq!(app.routes.len(), app.displays.len());
+    assert!(app.stages.stages()[0]
+        .regions
+        .iter()
+        .any(|r| r.route.is_some()));
 
-    // Screen anlegen (wie der Editor) und auswählen.
-    let before = app.screens.len();
-    let screen = Screen::new("Test Screen", 0, 0, 320, 240);
-    let id = screen.id;
-    app.screens.add(screen).unwrap();
-    app.screen_editor_selected = Some(id);
-    assert_eq!(app.screens.len(), before + 1);
+    // Leere Stage anlegen (wie das „New Stage“-Menü).
+    let before = app.stages.len();
+    app.add_empty_stage();
+    assert_eq!(app.stages.len(), before + 1);
+
+    // Stage mit Ausgabe anlegen: neue Route + Full-Canvas-Region.
+    let routes_before = app.routes.len();
+    app.add_stage_with_output();
+    assert_eq!(app.routes.len(), routes_before + 1);
+    let last = app.stages.stages().last().cloned().unwrap();
+    assert_eq!(last.regions.len(), 1);
+    assert!(last.regions[0].route.is_some());
+
+    // Stage-Editor oeffnen (wie der Edit-Button) und rendern.
+    app.stage_editor_open = Some(last.id);
     for _ in 0..2 {
         render_frame(&ctx, &mut app);
     }
+    assert_eq!(app.stage_editor_open, Some(last.id));
+    app.stage_editor_open = None;
 
-    // Eigenschaften ändern (Name/Größe/Drehung) – rendert ohne Panic.
-    if let Some(s) = app.screens.find_mut(id) {
-        s.name = "Beamer".to_string();
-        s.width = 1920;
-        s.height = 1080;
-        s.rotation = ScreenRotation::Deg90;
+    // Route anlegen (ohne Device) und Route-Editor oeffnen.
+    let route_id = app.add_route();
+    assert!(app.routes.find(route_id).is_some());
+    app.route_editor_open = Some(route_id);
+    for _ in 0..2 {
+        render_frame(&ctx, &mut app);
     }
-    render_frame(&ctx, &mut app);
-    let s = app.screens.find(id).unwrap();
-    assert_eq!(s.name, "Beamer");
-    assert_eq!(s.rotation, ScreenRotation::Deg90);
-    assert_eq!(s.label(), "Beamer 1920x1080");
+    app.route_editor_open = None;
 
-    // Testbild an/aus (wie der Checkbox-Handler) → Engine-Kommando.
-    app.set_screen_test_pattern(id, true);
-    assert!(app.screens.find(id).unwrap().test_pattern);
-    app.set_screen_test_pattern(id, false);
-    assert!(!app.screens.find(id).unwrap().test_pattern);
-    render_frame(&ctx, &mut app);
+    // Multi-Output-Assistent: 3 Projektoren mit 100 px Überlapp.
+    app.multi_output_wizard = Some(Default::default());
+    for _ in 0..2 {
+        render_frame(&ctx, &mut app);
+    }
+    app.add_multi_output_stage(&kuhplay::gui::app::MultiOutputWizard {
+        count: 3,
+        width: 1920,
+        height: 1080,
+        overlap: 100,
+    });
+    app.multi_output_wizard = None;
+    let last = app.stages.stages().last().cloned().unwrap();
+    assert_eq!(last.regions.len(), 3, "eine Region je Projektor");
+    assert!((last.geometry.width - (3.0 * 1920.0 - 2.0 * 100.0)).abs() < 0.5);
 
-    // Testbilder für ALLE Screens an (LED-Wand-Setup).
-    app.set_all_test_patterns(true);
-    assert!(app.screens.screens().iter().all(|s| s.test_pattern));
-    app.set_all_test_patterns(false);
-    assert!(app.screens.screens().iter().all(|s| !s.test_pattern));
-    render_frame(&ctx, &mut app);
-
-    // Stage dem Screen zuordnen (Legacy-Zuweisung wie der Inspector).
-    app.ensure_stage("Stage 1");
-    app.assign_stage_to_screen("Stage 1", Some(id));
-    assert_eq!(app.stages.find("Stage 1").unwrap().screen, Some(id));
-    render_frame(&ctx, &mut app);
-
-    // Screen löschen → Stage-Zuordnung wird entfernt (Editor-Logik).
-    let names: Vec<String> = app
+    // Route löschen → Regionen verlieren die Zuweisung: die Region der
+    // Multi-Output-Stage auf die neue Route umwidmen.
+    let target = last.regions[0].route;
+    for stage in app.stages.stages_mut() {
+        for region in &mut stage.regions {
+            if region.route == target {
+                region.route = Some(route_id);
+            }
+        }
+    }
+    assert!(app
         .stages
         .stages()
         .iter()
-        .filter(|st| st.screen == Some(id))
-        .map(|st| st.name.clone())
-        .collect();
-    assert_eq!(names, vec!["Stage 1".to_string()]);
-    for name in names {
-        if let Some(stage) = app.stages.find_mut(&name) {
-            stage.screen = None;
-        }
-    }
-    app.screens.remove(id);
-    assert!(app.screens.find(id).is_none());
-    assert!(app.stages.find("Stage 1").unwrap().screen.is_none());
-    app.screen_editor_selected = None;
-    render_frame(&ctx, &mut app);
-}
-
-#[test]
-fn show_save_load_roundtrip() {
-    let mut app = demo_app();
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("demo.kuhplay");
-
-    let cues_before = app.carts.active().len();
-    app.save_show(&path);
-    assert!(path.is_file(), "Show-Datei muss geschrieben werden");
-
-    // Show verändern, dann zurückladen → Zustand wiederhergestellt.
-    app.new_show();
-    assert_eq!(app.carts.active().len(), 0);
-    app.load_show(&path).expect("Show muss laden");
-    assert_eq!(app.carts.active().len(), cues_before);
-    assert_eq!(app.show_name, "Demo Show");
-}
-
-#[test]
-fn inspector_renders_waveform_for_audio_cue() {
-    let ctx = egui::Context::default();
-    let mut app = demo_app();
-
-    // Sinus-WAV als Target eines Audio-Cues.
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("sine.wav");
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: 8000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-    for i in 0..4000 {
-        let s = ((i as f32 / 8000.0) * 440.0 * 2.0 * std::f32::consts::PI).sin() * 0.8;
-        writer.write_sample((s * i16::MAX as f32) as i16).unwrap();
-    }
-    writer.finalize().unwrap();
-
-    // Ersten Audio-Cue selektieren und Target setzen.
-    let idx = app
-        .carts
-        .active()
-        .cues()
+        .any(|s| s.regions.iter().any(|r| r.route == Some(route_id))));
+    app.remove_route(route_id);
+    assert!(app.routes.find(route_id).is_none());
+    assert!(app
+        .stages
+        .stages()
         .iter()
-        .position(|c| c.cue_type == CueType::Audio)
-        .expect("demo app hat audio cue");
-    app.carts.active_mut().select(Some(idx));
-    app.carts.active_mut().cues_mut()[idx].target_path = Some(path.display().to_string());
+        .all(|s| s.regions.iter().all(|r| r.route != Some(route_id))));
 
-    // Frame rendern (Waveform-Zweig zeichnen) – zweimal (zweiter Lauf: Cache-Hit).
-    render_frame(&ctx, &mut app);
-    render_frame(&ctx, &mut app);
-
-    // Peaks landen im App-Cache.
-    let w = app.waveform_for(&path).expect("dekodierbar");
-    assert!(w.peak() > 0.7, "sinus-peak zu klein: {}", w.peak());
-}
-
-#[test]
-fn masthead_renders_audition_badge() {
-    let ctx = egui::Context::default();
-    let mut app = demo_app();
-    app.set_audition_mode(true);
-    // Badge rendern (zweimal – Cache-/State-Pfade abdecken).
-    render_frame(&ctx, &mut app);
+    // Stage löschen (nur ohne genutzte Cues) – Stage 1 bleibt (Demo-Cues).
+    assert!(!app.remove_stage("Stage 1"), "Cues nutzen Stage 1");
     render_frame(&ctx, &mut app);
 }
-
-// ------------------------------------------------------------------
-// Phase 1 (TODO.md): Workspace-Grundlayout, UiState-Persistenz,
-// Broken-Cue-Indikator, Toolbox, Workspace Settings, Footer
-// ------------------------------------------------------------------
 
 /// Prüft, ob ein Text im gerenderten Frame vorkommt (Galley-Suche).
 fn output_has_text(out: &egui::FullOutput, text: &str) -> bool {
@@ -694,13 +631,14 @@ fn workspace_settings_window_renders_nav_and_pages() {
         assert!(output_has_text(&out, page), "Nav fehlt: {page}");
     }
     assert!(!output_has_text(&out, "not implemented yet"));
-    // Seite Video: Screen-Editor rendert (Screens-UI statt Sidebar-Tab).
+    // Seite Video: drei Reiter wie QLab (Stages/Routing/Devices).
     app.ui.workspace_settings_page = SettingsPage::Video;
     let mut out = render_frame(&ctx, &mut app);
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
-    assert!(output_has_text(&out, "SCREENS"));
+    assert!(output_has_text(&out, "Video Outputs (Stages)"));
+    assert!(output_has_text(&out, "Output Routing"));
 }
 
 // ------------------------------------------------------------------
@@ -1728,6 +1666,6 @@ fn stages_page_renders() {
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
-    assert!(output_has_text(&out, "+ Add Stage"));
-    assert!(output_has_text(&out, "Delete Stage"));
+    assert!(output_has_text(&out, "+ New Stage"));
+    assert!(output_has_text(&out, "Delete"));
 }

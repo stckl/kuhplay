@@ -60,12 +60,16 @@ impl SettingsPage {
     }
 }
 
-/// Unterseite von „Video".
+/// Unterseite von "Video" (QLab 5: Stages, Output Routing, Devices).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VideoTab {
+    /// Video Outputs (Stages): Stages mit Regionen.
     #[default]
-    Screens,
     Stages,
+    /// Output Routing: Routen auf Devices.
+    Routing,
+    /// Output Devices: erkannte Displays/Blackmagic.
+    Devices,
 }
 
 /// Mindestbreite des Seiteninhalts rechts der Navigation.
@@ -113,13 +117,15 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
                                 ui,
                                 &mut app.ui.video_tab,
                                 &[
-                                    (VideoTab::Screens, "Screens".to_string()),
-                                    (VideoTab::Stages, "Stages".to_string()),
+                                    (VideoTab::Stages, "Video Outputs (Stages)".to_string()),
+                                    (VideoTab::Routing, "Output Routing".to_string()),
+                                    (VideoTab::Devices, "Output Devices".to_string()),
                                 ],
                             );
                             match app.ui.video_tab {
-                                VideoTab::Screens => super::screen_editor::draw(ui, app),
-                                VideoTab::Stages => draw_stages(ui, app),
+                                VideoTab::Stages => draw_stages_table(ui, app),
+                                VideoTab::Routing => draw_routes_table(ui, app),
+                                VideoTab::Devices => draw_devices_page(ui, app),
                             }
                         }
                         SettingsPage::General => draw_general(ui, app),
@@ -485,133 +491,529 @@ fn draw_web_pin(ui: &mut egui::Ui, app: &mut ShowApp) {
     );
 }
 
-/// Unterseite „Stages": anlegen, bearbeiten, löschen. Eine Stage ist die Bildfläche,
-/// auf der Cues spielen; ein Screen zeigt sie auf einem Ausgang.
-fn draw_stages(ui: &mut egui::Ui, app: &mut ShowApp) {
+// ---------------------------------------------------------------------
+// Video: Video Outputs (Stages) / Output Routing / Output Devices
+// ---------------------------------------------------------------------
+
+/// Reiter „Video Outputs (Stages)“: Tabelle Name, Auflösung, Devices,
+/// Edit, Monitor, Löschen + „New Stage“-Menü.
+fn draw_stages_table(ui: &mut egui::Ui, app: &mut ShowApp) {
     let stages: Vec<crate::core::Stage> = app.stages.stages().to_vec();
-    let screens: Vec<(uuid::Uuid, String, u32, u32)> = app
-        .screens
-        .screens()
-        .iter()
-        .map(|s| {
-            let (w, h) = s.rotation.rotated_size(s.width, s.height);
-            (s.id, s.name.clone(), w, h)
-        })
-        .collect();
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(
-                    "A stage is the picture cues play on. Assign it to a screen to show it on an output.",
+                    "A stage is the picture cues play on. Its regions show on output routes.",
                 )
                 .color(theme::palette::TEXT_DIM),
             );
             ui.add_space(theme::size::SPACE_MEDIUM);
             for stage in stages {
-                let mut updated = stage.clone();
-                let screen = stage
-                    .screen
-                    .and_then(|id| screens.iter().find(|s| s.0 == id));
-                let name_id = ui.id().with(("stage_name", stage.id));
-                let mut name = ui
-                    .ctx()
-                    .data_mut(|d| d.get_temp::<String>(name_id))
-                    .unwrap_or_else(|| stage.name.clone());
-                let mut rename = false;
-                let mut delete = false;
+                let devices: Vec<String> = stage
+                    .regions
+                    .iter()
+                    .filter_map(|r| r.route)
+                    .filter_map(|id| app.routes.find(id))
+                    .map(|route| route.name.clone())
+                    .collect();
                 let in_use = app.carts.stage_in_use(&stage.name);
+                let mut edit = false;
+                let mut monitor = app.stage_windows.contains(&stage.name);
+                let mut delete = false;
                 egui::Frame::none()
                     .fill(theme::palette::RAISED)
                     .rounding(egui::Rounding::same(5.0))
                     .inner_margin(egui::Margin::same(theme::size::SPACE_MEDIUM))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        theme::form_grid(&format!("stage_form_{}", stage.id)).show(ui, |ui| {
+                        theme::form_grid(&format!("stage_row_{}", stage.id)).show(ui, |ui| {
                             theme::field_label(ui, "Name");
-                            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(220.0));
-                            app.text_field_ids.insert(r.id);
-                            rename = r.lost_focus() && name != stage.name;
+                            ui.label(&stage.name);
                             ui.end_row();
-
-                            theme::field_label(ui, "Canvas");
+                            theme::field_label(ui, "Resolution");
+                            ui.label(format!(
+                                "{}x{}",
+                                stage.geometry.width as u32, stage.geometry.height as u32
+                            ));
+                            ui.end_row();
+                            theme::field_label(ui, "Devices");
+                            ui.label(if devices.is_empty() {
+                                "-".to_string()
+                            } else {
+                                devices.join(", ")
+                            })
+                            .on_hover_text("Output routes fed by this stage");
+                            ui.end_row();
+                            theme::field_label(ui, "Actions");
                             ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::DragValue::new(&mut updated.geometry.width)
-                                        .range(16.0..=16384.0)
-                                        .prefix("W "),
+                                if ui.button("Edit").clicked() {
+                                    edit = true;
+                                }
+                                if ui
+                                    .selectable_label(monitor, "Monitor")
+                                    .on_hover_text("Open the stage monitor window")
+                                    .clicked()
+                                {
+                                    monitor = !monitor;
+                                }
+                                let delete_button =
+                                    ui.add_enabled(!in_use, egui::Button::new("Delete"));
+                                let clicked = delete_button.clicked();
+                                delete_button.on_disabled_hover_text("Cues still use this stage");
+                                delete = clicked;
+                            });
+                            ui.end_row();
+                        });
+                    });
+                if edit {
+                    app.stage_editor_open = Some(stage.id);
+                }
+                if monitor {
+                    app.stage_windows.insert(stage.name.clone());
+                } else {
+                    app.stage_windows.remove(&stage.name);
+                }
+                if delete {
+                    app.remove_stage(&stage.name);
+                }
+                ui.add_space(theme::size::SPACE_SMALL);
+            }
+            // „New Stage“ mit Menü (QLab: leer / mit Output / Multi-Output).
+            egui::ComboBox::from_id_salt("new_stage_menu")
+                .selected_text("+ New Stage")
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(false, "Empty Stage (1920x1080)")
+                        .clicked()
+                    {
+                        app.add_empty_stage();
+                    }
+                    if ui.selectable_label(false, "Stage with Output").clicked() {
+                        app.add_stage_with_output();
+                    }
+                    if ui.selectable_label(false, "Multi-Output Stage…").clicked() {
+                        app.multi_output_wizard = Some(Default::default());
+                    }
+                });
+        });
+}
+
+/// Reiter „Output Routing“: Tabelle Name, Auflösung, Device-Auswahl,
+/// Teilbereich, Testbild, Farbe, Edit, Löschen + „New Output Route“.
+fn draw_routes_table(ui: &mut egui::Ui, app: &mut ShowApp) {
+    let routes: Vec<crate::core::OutputRoute> = app.routes.routes().to_vec();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "An output route is a logical video output. Assign it to a display or a \
+                     Blackmagic device; regions of stages show on it.",
+                )
+                .color(theme::palette::TEXT_DIM),
+            );
+            ui.add_space(theme::size::SPACE_MEDIUM);
+            for route in routes {
+                let mut edit = false;
+                let mut delete = false;
+                let mut updated = route.clone();
+                egui::Frame::none()
+                    .fill(theme::palette::RAISED)
+                    .rounding(egui::Rounding::same(5.0))
+                    .inner_margin(egui::Margin::same(theme::size::SPACE_MEDIUM))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        theme::form_grid(&format!("route_row_{}", route.id)).show(ui, |ui| {
+                            theme::field_label(ui, "Name");
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(12.0, 12.0),
+                                    egui::Sense::hover(),
                                 );
-                                ui.add(
-                                    egui::DragValue::new(&mut updated.geometry.height)
-                                        .range(16.0..=16384.0)
-                                        .prefix("H "),
+                                ui.painter().rect_filled(
+                                    rect,
+                                    2.0,
+                                    egui::Color32::from_rgb(
+                                        route.color[0],
+                                        route.color[1],
+                                        route.color[2],
+                                    ),
                                 );
-                                if let Some((_, _, w, h)) = screen {
-                                    let (w, h) = (*w as f32, *h as f32);
-                                    let differs = (updated.geometry.width - w).abs() > 0.5
-                                        || (updated.geometry.height - h).abs() > 0.5;
-                                    if differs
-                                        && ui
-                                            .button("Match Screen")
-                                            .on_hover_text("Use the resolution of the screen")
-                                            .clicked()
-                                    {
-                                        updated.geometry.width = w;
-                                        updated.geometry.height = h;
-                                    }
+                                ui.label(&route.name);
+                            });
+                            ui.end_row();
+                            theme::field_label(ui, "Resolution");
+                            ui.label(format!("{}x{}", route.width, route.height));
+                            ui.end_row();
+                            theme::field_label(ui, "Device");
+                            device_label(ui, &route, app);
+                            ui.end_row();
+                            theme::field_label(ui, "Test Pattern");
+                            let mut pattern = updated.test_pattern;
+                            if ui.checkbox(&mut pattern, "").changed() {
+                                updated.test_pattern = pattern;
+                            }
+                            ui.end_row();
+                            theme::field_label(ui, "Actions");
+                            ui.horizontal(|ui| {
+                                if ui.button("Edit").clicked() {
+                                    edit = true;
+                                }
+                                if ui.button("Delete").clicked() {
+                                    delete = true;
                                 }
                             });
                             ui.end_row();
-
-                            theme::field_label(ui, "Screen");
-                            let current = screen.map_or("None", |s| s.1.as_str());
-                            egui::ComboBox::from_id_salt(("stage_screen", stage.id))
-                                .selected_text(current)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut updated.screen, None, "None");
-                                    for (id, name, _, _) in &screens {
-                                        ui.selectable_value(&mut updated.screen, Some(*id), name);
-                                    }
-                                });
-                            ui.end_row();
-
-                            theme::field_label(ui, "Visible");
-                            ui.checkbox(&mut updated.visible, "");
-                            ui.end_row();
                         });
-                        if let Some((_, _, w, h)) = screen {
-                            let stage_ratio = updated.geometry.width / updated.geometry.height;
-                            if (stage_ratio - *w as f32 / *h as f32).abs() > 0.01 {
-                                ui.label(
-                                    egui::RichText::new(
-                                        "The shape differs from the screen: the picture will be stretched.",
-                                    )
-                                    .color(theme::palette::ACCENT),
-                                );
-                            }
-                        }
-                        let delete_button = ui
-                            .add_enabled(!in_use, egui::Button::new("Delete Stage"))
-                            .on_disabled_hover_text("Cues still use this stage");
-                        delete = delete_button.clicked();
                     });
-                ui.ctx().data_mut(|d| d.insert_temp(name_id, name.clone()));
-                ui.add_space(theme::size::SPACE_SMALL);
+                if updated != route {
+                    if let Some(r) = app.routes.find_mut(route.id) {
+                        *r = updated;
+                    }
+                    app.configure_routes();
+                }
+                if edit {
+                    app.route_editor_open = Some(route.id);
+                }
                 if delete {
-                    app.remove_stage(&stage.name);
-                } else if rename {
-                    app.rename_stage(&stage.name, &name);
-                    ui.ctx().data_mut(|d| d.remove_temp::<String>(name_id));
-                } else if updated != stage {
-                    app.configure_stage(updated);
+                    app.remove_route(route.id);
                 }
+                ui.add_space(theme::size::SPACE_SMALL);
             }
-            if ui.button("+ Add Stage").clicked() {
-                let mut number = app.stages.len() + 1;
-                while app.stages.find(&format!("Stage {number}")).is_some() {
-                    number += 1;
-                }
-                app.ensure_stage(&format!("Stage {number}"));
-            }
+            // „New Output Route“ mit Menü je Device.
+            egui::ComboBox::from_id_salt("new_route_menu")
+                .selected_text("+ New Output Route")
+                .show_ui(ui, |ui| {
+                    let displays: Vec<crate::core::DisplayRefInfo> = app
+                        .displays
+                        .iter()
+                        .map(crate::core::DisplayRefInfo::from)
+                        .collect();
+                    for display in &displays {
+                        let label = format!(
+                            "Display: {} ({}x{})",
+                            display.name,
+                            display.pixel_size().0,
+                            display.pixel_size().1
+                        );
+                        if ui.selectable_label(false, label).clicked() {
+                            app.add_route_for_display(display);
+                        }
+                    }
+                    if ui.selectable_label(false, "Without device").clicked() {
+                        app.add_route();
+                    }
+                });
         });
+}
+
+/// Device-Spalte: Name oder kursives „(missing)“, wenn das Gerät fehlt.
+fn device_label(ui: &mut egui::Ui, route: &crate::core::OutputRoute, app: &ShowApp) {
+    match &route.device {
+        None => {
+            ui.label(egui::RichText::new("(no device)").weak());
+        }
+        Some(crate::core::DeviceRef::Display { id, name, .. }) => {
+            let present = app.displays.iter().any(|d| d.id == *id);
+            if present {
+                ui.label(name);
+            } else {
+                ui.label(
+                    egui::RichText::new(format!("{name} (missing)"))
+                        .italics()
+                        .color(theme::palette::ACCENT),
+                );
+            }
+        }
+        Some(crate::core::DeviceRef::Blackmagic { name }) => {
+            // Ohne Hardware-Anbindung immer „(missing)“ (Phase 7: Schnittstelle).
+            ui.label(
+                egui::RichText::new(format!("{name} (missing)"))
+                    .italics()
+                    .color(theme::palette::ACCENT),
+            );
+        }
+    }
+}
+
+/// Reiter „Output Devices“: Name, Auflösung, Info (Hz) + Refresh +
+/// Hinweis auf die Systemeinstellungen.
+fn draw_devices_page(ui: &mut egui::Ui, app: &mut ShowApp) {
+    let mut refresh = false;
+    ui.horizontal(|ui| {
+        theme::section_label(ui, "Output Devices");
+        if ui.button("Refresh").clicked() {
+            refresh = true;
+        }
+    });
+    ui.add_space(theme::size::SPACE_SMALL);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            theme::form_grid("devices_grid").show(ui, |ui| {
+                for display in app.displays.iter().map(crate::core::DisplayRefInfo::from) {
+                    let (w, h) = display.pixel_size();
+                    theme::field_label(ui, &display.name);
+                    ui.label(format!(
+                        "{}x{} px ({}x{} pt)",
+                        w, h, display.width, display.height
+                    ));
+                    ui.end_row();
+                    theme::field_label(ui, "");
+                    ui.label(format!(
+                        "{}{}",
+                        if display.frequency > 0.0 {
+                            format!("{:.0} Hz", display.frequency)
+                        } else {
+                            "Hz unknown".to_string()
+                        },
+                        if display.scale_factor > 1.0 {
+                            format!(", Retina x{}", display.scale_factor)
+                        } else {
+                            String::new()
+                        }
+                    ));
+                    ui.end_row();
+                }
+            });
+        });
+    if refresh {
+        app.refresh_displays();
+    }
+    config_hint(
+        ui,
+        "Arrange displays and change resolutions in the macOS System Settings (Displays).",
+    );
+}
+
+/// Route-Editor (eigenes Fenster): Name, Größe, „Set from Device“,
+/// Drehung, Rear projection, Skalierung, Device, Teilbereich.
+pub fn draw_route_editor(ctx: &egui::Context, app: &mut ShowApp) {
+    let Some(route_id) = app.route_editor_open else {
+        return;
+    };
+    let Some(route) = app.routes.find(route_id).cloned() else {
+        app.route_editor_open = None;
+        return;
+    };
+    let mut open = true;
+    let mut updated = route.clone();
+    let mut set_from_device = false;
+    egui::Window::new(format!("Route Editor: {}", route.name))
+        .id(egui::Id::new(("route-editor", route_id)))
+        .default_size([420.0, 320.0])
+        .open(&mut open)
+        .show(ctx, |ui| {
+            theme::form_grid("route_editor").show(ui, |ui| {
+                theme::field_label(ui, "Name");
+                let r = ui.add(egui::TextEdit::singleline(&mut updated.name).desired_width(200.0));
+                app.text_field_ids.insert(r.id);
+                ui.end_row();
+                theme::field_label(ui, "Size");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut updated.width)
+                            .range(1..=30000)
+                            .prefix("W "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut updated.height)
+                            .range(1..=30000)
+                            .prefix("H "),
+                    );
+                    if ui.button("Set from Device").clicked() {
+                        set_from_device = true;
+                    }
+                });
+                ui.end_row();
+                theme::field_label(ui, "Rotation");
+                let mut rot = updated.rotation;
+                egui::ComboBox::from_id_salt("route_rotation")
+                    .selected_text(rot.label())
+                    .show_ui(ui, |ui| {
+                        for r in crate::core::ScreenRotation::ALL {
+                            ui.selectable_value(&mut rot, r, r.label());
+                        }
+                    });
+                updated.rotation = rot;
+                ui.end_row();
+                theme::field_label(ui, "Rear Projection");
+                ui.checkbox(&mut updated.rear_projection, "mirror horizontally");
+                ui.end_row();
+                theme::field_label(ui, "Scaling");
+                let mut scaling = updated.scaling;
+                egui::ComboBox::from_id_salt("route_scaling")
+                    .selected_text(scaling.label())
+                    .show_ui(ui, |ui| {
+                        for s in crate::core::RouteScaling::ALL {
+                            ui.selectable_value(&mut scaling, s, s.label());
+                        }
+                    });
+                updated.scaling = scaling;
+                ui.end_row();
+                theme::field_label(ui, "Device");
+                ui.horizontal(|ui| {
+                    let selected = updated
+                        .device
+                        .as_ref()
+                        .map(|d| d.label().to_string())
+                        .unwrap_or_else(|| "None".to_string());
+                    egui::ComboBox::from_id_salt("route_device")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(updated.device.is_none(), "None")
+                                .clicked()
+                            {
+                                updated.device = None;
+                            }
+                            for display in
+                                app.displays.iter().map(crate::core::DisplayRefInfo::from)
+                            {
+                                if ui.selectable_label(false, &display.name).clicked() {
+                                    updated.device = Some(crate::core::DeviceRef::Display {
+                                        id: display.id,
+                                        name: display.name.clone(),
+                                        width: display.width,
+                                        height: display.height,
+                                    });
+                                }
+                            }
+                            if ui.selectable_label(false, "Blackmagic…").clicked() {
+                                updated.device = Some(crate::core::DeviceRef::Blackmagic {
+                                    name: "DeckLink SDI".to_string(),
+                                });
+                            }
+                        });
+                });
+                ui.end_row();
+                theme::field_label(ui, "Device Area");
+                if let crate::core::DeviceArea::Part {
+                    x,
+                    y,
+                    width,
+                    height,
+                } = &mut updated.device_area
+                {
+                    let mut part = (*x, *y, *width, *height);
+                    let mut make_full = false;
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut part.0).prefix("X "));
+                        ui.add(egui::DragValue::new(&mut part.1).prefix("Y "));
+                        ui.add(egui::DragValue::new(&mut part.2).prefix("W "));
+                        ui.add(egui::DragValue::new(&mut part.3).prefix("H "));
+                        if ui.button("Full").clicked() {
+                            make_full = true;
+                        }
+                    });
+                    if make_full {
+                        updated.device_area = crate::core::DeviceArea::Full;
+                    } else {
+                        updated.device_area = crate::core::DeviceArea::Part {
+                            x: part.0,
+                            y: part.1,
+                            width: part.2,
+                            height: part.3,
+                        };
+                    }
+                } else if ui.button("Full device").clicked() {
+                    updated.device_area = crate::core::DeviceArea::Part {
+                        x: 0,
+                        y: 0,
+                        width: updated.width,
+                        height: updated.height,
+                    };
+                }
+                ui.end_row();
+            });
+        });
+    if !open {
+        app.route_editor_open = None;
+    }
+    if set_from_device {
+        // Größe von assigned Display uebernehmen (Pixel), Part auf Full.
+        if let Some(crate::core::DeviceRef::Display { id, .. }) = updated.device {
+            if let Some(display) = app
+                .displays
+                .iter()
+                .map(crate::core::DisplayRefInfo::from)
+                .find(|d| d.id == id)
+            {
+                let (w, h) = display.pixel_size();
+                updated.width = w;
+                updated.height = h;
+                updated.device_area = crate::core::DeviceArea::Full;
+            }
+        }
+    }
+    if updated != route {
+        if let Some(r) = app.routes.find_mut(route_id) {
+            *r = updated;
+        }
+        app.configure_routes();
+    }
+}
+
+/// Multi-Output-Assistent: Anzahl, Auflösung und Anordnung der Projektoren,
+/// Overlap in Pixeln.
+pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
+    let Some(wizard) = app.multi_output_wizard.clone() else {
+        return;
+    };
+    let mut create = false;
+    let mut w = wizard.clone();
+    egui::Window::new("New Multi-Output Stage")
+        .id(egui::Id::new("multi_output_wizard"))
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "Creates one output route per projector (left to right) and a stage \
+                     whose regions share the picture with a soft edge overlap.",
+                )
+                .color(theme::palette::TEXT_DIM),
+            );
+            theme::form_grid("multi_output_wizard").show(ui, |ui| {
+                theme::field_label(ui, "Projectors");
+                ui.add(egui::DragValue::new(&mut w.count).range(1..=12));
+                ui.end_row();
+                theme::field_label(ui, "Resolution");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut w.width)
+                            .range(16..=30000)
+                            .prefix("W "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut w.height)
+                            .range(16..=30000)
+                            .prefix("H "),
+                    );
+                });
+                ui.end_row();
+                theme::field_label(ui, "Overlap");
+                ui.add(
+                    egui::DragValue::new(&mut w.overlap)
+                        .range(0..=2048)
+                        .suffix(" px"),
+                );
+                ui.end_row();
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Create Stage").clicked() {
+                    create = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    app.multi_output_wizard = None;
+                }
+            });
+        });
+    if create {
+        app.add_multi_output_stage(&w);
+        app.multi_output_wizard = None;
+    } else {
+        app.multi_output_wizard = Some(w);
+    }
 }

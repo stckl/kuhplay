@@ -13,9 +13,10 @@ use crate::gui::theme;
 pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     // Engine-Referenz VOR dem Cue-Borrow extrahieren (disjunkte Felder).
     let engine = &app.engine;
+    // Nach dem Zeichnen geöffneter Stage-Editor (borrow-frei setzen).
+    let mut edit_stage: Option<String> = None;
     // Stage-/Display-/Fenster-Felder ebenfalls disjunkt borgen.
     let stages = &mut app.stages;
-    let screens = &mut app.screens;
     let stage_windows = &mut app.stage_windows;
     let Some(cue) = app.carts.selected_mut() else {
         ui.label(RichText::new("No cue selected").weak());
@@ -110,88 +111,22 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
             ui.add(egui::DragValue::new(&mut cue.layer).range(0..=99));
             ui.end_row();
 
-            // --- Stage-Einstellungen (QLab: Stage → Screen) ---
+            // --- Stage-Editor (QLab: "Edit Stage…") ---
             if let Some(stage_name) = cue.stage.clone() {
-                theme::field_label(ui, "Stage Settings");
+                theme::field_label(ui, "Stage");
                 let known = stages.find(&stage_name).is_some();
-                egui::CollapsingHeader::new(if known {
-                    format!("Canvas / Screen: {stage_name}")
-                } else {
-                    format!("Canvas / Screen: {stage_name} (missing)")
-                })
-                .id_salt("stage_settings")
-                .default_open(false)
-                .show(ui, |ui| {
-                    if let Some(stage) = stages.find_mut(&stage_name) {
-                        let mut changed = false;
-                        theme::form_grid("stage_settings_grid").show(ui, |ui| {
-                            theme::field_label(ui, "Canvas W");
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut stage.geometry.width)
-                                        .speed(1.0)
-                                        .range(16.0..=16384.0),
-                                )
-                                .changed();
-                            ui.end_row();
-                            theme::field_label(ui, "Canvas H");
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut stage.geometry.height)
-                                        .speed(1.0)
-                                        .range(16.0..=16384.0),
-                                )
-                                .changed();
-                            ui.end_row();
-                            theme::field_label(ui, "Screen");
-                            let mut screen = stage.screen;
-                            let selected = screen
-                                .and_then(|id| screens.find(id))
-                                .map(|s| s.label())
-                                .unwrap_or_else(|| "— none —".to_string());
-                            ui.horizontal(|ui| {
-                                egui::ComboBox::from_id_salt("stage_screen_combo")
-                                    .selected_text(selected)
-                                    .show_ui(ui, |ui| {
-                                        if ui
-                                            .selectable_label(screen.is_none(), "— none —")
-                                            .clicked()
-                                        {
-                                            screen = None;
-                                        }
-                                        for s in screens.screens() {
-                                            if ui
-                                                .selectable_label(screen == Some(s.id), s.label())
-                                                .clicked()
-                                            {
-                                                screen = Some(s.id);
-                                            }
-                                        }
-                                    });
-                                if ui
-                                    .small_button("…")
-                                    .on_hover_text("Edit screens (Workspace Settings, Video)")
-                                    .clicked()
-                                {
-                                    app.ui.workspace_settings_page =
-                                        crate::gui::workspace_settings::SettingsPage::Video;
-                                    app.ui.workspace_settings_open = true;
-                                }
-                            });
-                            if screen != stage.screen {
-                                stage.screen = screen;
-                                changed = true;
-                            }
-                            ui.end_row();
-                            theme::field_label(ui, "Visible");
-                            changed |= ui.checkbox(&mut stage.visible, "").changed();
-                            ui.end_row();
-                        });
-                        if changed {
-                            push_stage(engine, stages, &stage_name);
-                        }
+                ui.horizontal(|ui| {
+                    ui.label(if known {
+                        stage_name.clone()
                     } else {
-                        ui.label(RichText::new("Stage does not exist (not created yet).").weak());
+                        format!("{stage_name} (missing)")
+                    });
+                    if ui
+                        .small_button("Edit Stage…")
+                        .on_hover_text("Open the stage editor (regions, layers, edge blends)")
+                        .clicked()
+                    {
+                        edit_stage = Some(stage_name.clone());
                     }
                 });
                 ui.end_row();
@@ -205,6 +140,11 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
             surface_editor(right, surface);
         }
     });
+    if let Some(name) = edit_stage {
+        if let Some(stage) = app.stages.find(&name) {
+            app.stage_editor_open = Some(stage.id);
+        }
+    }
 }
 
 /// Editor für eine Cue-Surface (QLab: Surface-Geometrie auf der Stage):

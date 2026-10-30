@@ -13,7 +13,7 @@
 //! * [`footer`] – unterster Panel-Bereich (Edit/Show, ⚠ kaputte Cues,
 //!   „N cues in M lists", Icon-Toggles, Zahnrad Workspace Settings)
 //! * [`cue_table`] – zentrale Cue-Liste (QLab-Spaltenlayout)
-//! * [`screen_editor`] – Screen-Editor (in den Workspace Settings → Video)
+//! * [`stage_editor`] – Stage-Editor (Regionen, Edge Blends, Layer)
 //! * [`workspace_settings`] – Fenster „Workspace Settings" (Nav + Seiten)
 //! * [`stage_view`] – Stage-Fenster & Hardware-Screen-Ausgabe (Vollbild)
 //! * [`app`] – `ShowApp` (eframe::App) mit Panel-Orchestrierung
@@ -36,9 +36,9 @@ pub mod menu_bar;
 #[cfg(target_os = "macos")]
 pub mod native_menu;
 pub mod problems;
-pub mod screen_editor;
 pub mod shortcuts;
 pub mod sidebar;
+pub mod stage_editor;
 pub mod stage_view;
 pub mod state;
 pub mod theme;
