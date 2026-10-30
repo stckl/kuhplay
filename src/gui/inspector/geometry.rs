@@ -1,5 +1,5 @@
 //! Tab „Geometry" (QLab 5, Video/HTML5/Diashow): Stage, Layer, Surface
-//! (Position/Größe, Area of Interest, Hard Edge, Deckkraft) und
+//! (Position/Größe, Crop, Hard Edge, Deckkraft) und
 //! Stage-Einstellungen (Canvas/Screen/Visible).
 
 use egui::RichText;
@@ -13,6 +13,14 @@ use crate::gui::theme;
 pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     // Engine-Referenz VOR dem Cue-Borrow extrahieren (disjunkte Felder).
     let engine = &app.engine;
+    // Content-Groesse des selektierten Cues (dekodiertes Frame, sonst 1920×1080)
+    // fuer die Geometrie-Vorschau – vor den Borrows ermitteln.
+    let content_size: Option<(u32, u32)> = app
+        .carts
+        .selected()
+        .map(|cue| cue.id)
+        .and_then(|id| engine.latest_frame(id))
+        .map(|frame| (frame.width, frame.height));
     // Nach dem Zeichnen geöffneter Stage-Editor (borrow-frei setzen).
     let mut edit_stage: Option<String> = None;
     // Stage-/Display-/Fenster-Felder ebenfalls disjunkt borgen.
@@ -136,6 +144,22 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
         // --- Surface (QLab: Surface auf der Stage) – nur Video/Diashow ---
         if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
             theme::section_label(right, "Geometry");
+            // Vorschau: abstrahiert, wie der Inhalt auf der Stage liegt
+            // (Fit/Fill/Stretch/Custom sichtbar, inkl. Verzerrung).
+            let canvas = cue
+                .stage
+                .as_deref()
+                .and_then(|name| stages.find(name))
+                .map(|s| {
+                    (
+                        s.geometry.width.max(1.0) as u32,
+                        s.geometry.height.max(1.0) as u32,
+                    )
+                })
+                .unwrap_or((1920, 1080));
+            if let Some(surface) = cue.surface.as_ref() {
+                placement_preview(right, surface, canvas, content_size);
+            }
             let surface = cue.surface.get_or_insert_with(SurfaceGeometry::fit);
             surface_editor(right, surface);
         }
@@ -148,7 +172,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
 }
 
 /// Editor für eine Cue-Surface (QLab: Surface-Geometrie auf der Stage):
-/// Position/Größe, Area of Interest (Quellen-Crop), Hard-Edge-Blending,
+/// Position/Größe, Crop (Quellen-Zuschnitt), Hard-Edge-Blending,
 /// Deckkraft und Sichtbarkeit.
 fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
     use crate::core::{BlendCurve, Crop, EdgeSide, HardEdge};
@@ -198,10 +222,10 @@ fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
         });
         ui.end_row();
 
-        // --- Area of Interest (Quellen-Zuschnitt, normalisiert 0..1) ---
-        theme::field_label(ui, "Area of Interest");
+        // --- Crop (Quellen-Zuschnitt, normalisiert 0..1) ---
+        theme::field_label(ui, "Crop");
         let mut aoi = surface.area_of_interest.is_some();
-        if ui.checkbox(&mut aoi, "Crop source").changed() {
+        if ui.checkbox(&mut aoi, "Crop").changed() {
             surface.area_of_interest = aoi.then_some(Crop {
                 left: 0.0,
                 top: 0.0,
@@ -281,4 +305,126 @@ fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
             ui.end_row();
         }
     });
+}
+
+/// Abstrahierte Geometrie-Vorschau: das Stage-Rechteck im echten
+/// Seitenverhältnis, darin das Ziel-Rechteck des Inhalts aus
+/// [`SurfaceGeometry::placement`] – so sieht man, was die Einstellungen
+/// tun (Fit = Balken, Fill = beschnitten, Stretch = verzerrt, Custom =
+/// eigene Lage). Die Content-Größe kommt aus dem dekodierten Frame,
+/// solange unbekannt wird 1920×1080 angenommen (beschriftet). Der
+/// Hard-Edge-Bereich erscheint als abgestufte Fläche an der Kante.
+fn placement_preview(
+    ui: &mut egui::Ui,
+    surface: &SurfaceGeometry,
+    canvas: (u32, u32),
+    content: Option<(u32, u32)>,
+) {
+    let (cw, ch) = (canvas.0.max(1) as f32, canvas.1.max(1) as f32);
+    let (sw, sh) = content.unwrap_or((1920, 1080));
+    let assumed = content.is_none();
+    let avail_width = ui.available_width().min(360.0);
+    let height = (avail_width * ch / cw).clamp(80.0, 200.0);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    let scale = (rect.width() / cw).min(rect.height() / ch);
+    let stage = egui::Rect::from_center_size(rect.center(), egui::vec2(cw * scale, ch * scale));
+    let stage_color = egui::Color32::from_rgb(40, 44, 52);
+    ui.painter().rect_filled(stage, 2.0, stage_color);
+    ui.painter().rect_stroke(
+        stage,
+        2.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
+    );
+    // Ziel-Rechteck des Inhalts auf der Stage.
+    let ((x, y, w, h), _) = surface.placement((sw, sh), (cw as u32, ch as u32));
+    let content_rect = egui::Rect::from_min_size(
+        stage.min + egui::vec2(x * scale, y * scale),
+        egui::vec2(w * scale, h * scale),
+    );
+    let accent = egui::Color32::from_rgb(255, 176, 0);
+    ui.painter()
+        .rect_filled(content_rect, 1.0, accent.gamma_multiply(0.18));
+    ui.painter()
+        .rect_stroke(content_rect, 1.0, egui::Stroke::new(1.5, accent));
+    // Hard-Edge-Bereich: abgestufte Flaeche an der blendenden Kante.
+    if let Some(edge) = &surface.hard_edge {
+        let band = (edge.width * scale).min(content_rect.width() / 2.0);
+        let edge_rect = match edge.side {
+            crate::core::EdgeSide::Left => {
+                egui::Rect::from_min_size(content_rect.min, egui::vec2(band, content_rect.height()))
+            }
+            crate::core::EdgeSide::Right => egui::Rect::from_min_size(
+                egui::pos2(content_rect.right() - band, content_rect.top()),
+                egui::vec2(band, content_rect.height()),
+            ),
+            crate::core::EdgeSide::Top => {
+                egui::Rect::from_min_size(content_rect.min, egui::vec2(content_rect.width(), band))
+            }
+            crate::core::EdgeSide::Bottom => egui::Rect::from_min_size(
+                egui::pos2(content_rect.left(), content_rect.bottom() - band),
+                egui::vec2(content_rect.width(), band),
+            ),
+        };
+        for (i, rect) in split_band(edge_rect, 6).into_iter().enumerate() {
+            let alpha = 0.30 * (1.0 - i as f32 / 6.0);
+            ui.painter()
+                .rect_filled(rect, 0.0, accent.gamma_multiply(alpha));
+        }
+    }
+    // Beschriftung: Stage unten links, Content in/unter dem Rechteck.
+    ui.painter().text(
+        stage.left_bottom() + egui::vec2(3.0, -3.0),
+        egui::Align2::LEFT_BOTTOM,
+        format!("Stage {}x{}", cw as u32, ch as u32),
+        egui::FontId::proportional(10.0),
+        egui::Color32::from_rgb(150, 150, 160),
+    );
+    let label = if assumed {
+        "Content 1920x1080 (assumed)".to_string()
+    } else {
+        format!("Content {sw}x{sh}")
+    };
+    ui.painter().text(
+        content_rect.left_top() + egui::vec2(3.0, 3.0),
+        egui::Align2::LEFT_TOP,
+        label,
+        egui::FontId::proportional(10.0),
+        accent,
+    );
+    ui.add_space(theme::size::SPACE_SMALL);
+}
+
+/// Teilt ein Rechteck in `n` Streifen entlang der laengeren Seite.
+fn split_band(rect: egui::Rect, n: usize) -> Vec<egui::Rect> {
+    let n = n.max(1) as f32;
+    if rect.width() >= rect.height() {
+        let step = rect.width() / n;
+        (0..n as usize)
+            .map(|i| {
+                let x0 = rect.left() + step * i as f32;
+                let x1 = if i as f32 == n - 1.0 {
+                    rect.right()
+                } else {
+                    x0 + step
+                };
+                egui::Rect::from_min_max(egui::pos2(x0, rect.top()), egui::pos2(x1, rect.bottom()))
+            })
+            .collect()
+    } else {
+        let step = rect.height() / n;
+        (0..n as usize)
+            .map(|i| {
+                let y0 = rect.top() + step * i as f32;
+                let y1 = if i as f32 == n - 1.0 {
+                    rect.bottom()
+                } else {
+                    y0 + step
+                };
+                egui::Rect::from_min_max(egui::pos2(rect.left(), y0), egui::pos2(rect.right(), y1))
+            })
+            .collect()
+    }
 }
