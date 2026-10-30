@@ -713,12 +713,15 @@ function pageAudio() {
     field('Format', h('span', {}, info ? info.channels + ' channels, ' + info.sample_rate + ' Hz' : 'Unknown')));
   if (running) form.append(h('div', { class: 'wide dim' }, 'Stop all cues to change the device.'));
   const patch = W.audio_patch, change = (i, values) => send('set_audio_patch', { patch: { channels: patch.channels.map((c, j) => j === i ? { ...c, ...values } : c) } });
-  const outputs = [{ value: 0, label: 'Off' }]; for (let o = 1; o <= Math.max(maxOutput, 1); o++) outputs.push({ value: o, label: 'Output ' + o });
-  const rows = h('div', { class: 'form' }, patch.channels.flatMap((c, i) => {
-    const opts = c.output > maxOutput ? [...outputs, { value: c.output, label: 'Output ' + c.output + ' (not on device)' }] : outputs;
-    return field('Ch ' + (i + 1), h('div', { class: 'inline' }, text(c.name, v => change(i, { name: v }), { class: 'grow' }), select(opts, c.output, v => change(i, { output: v }))));
-  }));
-  return [form, h('div', { class: 'label section' }, 'Channels'), rows, h('p', { class: 'note' }, 'Device, channel names and outputs are saved with the show.')];
+  // Patch-Matrix (mehrere Ausgänge/Geräte pro Kanal) nur in der App editierbar
+  // (Workspace Settings -> Audio); hier read-only, damit nichts überschrieben wird.
+  const summary = c => {
+    const targets = (c.outputs || []).filter(o => o.output > 0).map(o => (o.device ? o.device + ' ' : '') + 'Out ' + o.output);
+    return targets.length ? targets.join(', ') : 'off';
+  };
+  const rows = h('div', { class: 'form' }, patch.channels.map((c, i) =>
+    field('Ch ' + (i + 1), h('div', { class: 'inline' }, text(c.name, v => change(i, { name: v }), { class: 'grow' }), h('span', { class: 'dim' }, summary(c))))));
+  return [form, h('div', { class: 'label section' }, 'Channels'), rows, h('p', { class: 'note' }, 'Device, channel names and outputs are saved with the show. Patching a channel to multiple outputs/devices: Workspace Settings -> Audio in the app.')];
 }
 // Karte wie in der App: Stage als Umriss, Regionen in Routenfarbe. Ziehen
 // verschiebt, der Griff unten rechts aendert die Groesse, Kanten rasten an

@@ -16,6 +16,7 @@ use super::app::ShowApp;
 use super::app::{AudioDeviceList, OutputMode};
 use super::icons::{self, Icon};
 use super::theme;
+use crate::core::ChannelOutput;
 use crate::engine::audio_backend::{default_output_name, output_devices};
 
 /// Seite der Workspace Settings (linke Navigation, QLab-5-Reihenfolge).
@@ -266,55 +267,123 @@ fn draw_audio(ui: &mut egui::Ui, app: &mut ShowApp) {
     );
 }
 
-/// Tabelle: Audio-Kanal (Name) → Geräte-Ausgang. Wirkt sofort, auch live.
+/// Patch-Matrix: Zeilen = die 16 KuhPlay-Kanäle (Name editierbar), Spalten =
+/// (Ausgabegerät, Ausgang). Checkbox = Kanal ist auf dieses Ziel gepatcht; ein
+/// Kanal kann auf mehrere Ausgänge und mehrere Geräte gleichzeitig gehen.
+/// Wirkt sofort (wird live an die Engine gemeldet).
 fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Option<u16>) {
-    let mut patch = app.audio_patch.clone();
-    let max_output = device_channels.unwrap_or(16).clamp(1, 64);
-    let output_label = |output: u8| {
-        if output == 0 {
-            "Off".to_string()
-        } else {
-            format!("Output {output}")
+    // Geräteliste wie auf der Audio-Seite (einmalig laden).
+    let list = app.audio_devices.get_or_insert_with(|| AudioDeviceList {
+        devices: output_devices(),
+        default_name: default_output_name(),
+    });
+    // Spalten: (Gerät, Ausgang 1-basiert). Pro Gerät max. 16 (u16-Bitmaske).
+    let default_channels = list
+        .default_name
+        .as_deref()
+        .and_then(|name| list.devices.iter().find(|d| d.name == name))
+        .map(|d| d.channels)
+        .or(device_channels)
+        .unwrap_or(16)
+        .clamp(1, 16);
+    let mut columns: Vec<(Option<String>, u8)> =
+        (1..=default_channels as u8).map(|o| (None, o)).collect();
+    for device in &list.devices {
+        let count = device.channels.clamp(1, 16);
+        for output in 1..=count as u8 {
+            columns.push((Some(device.name.clone()), output));
         }
-    };
+    }
+    let known: Vec<Option<String>> = std::iter::once(None)
+        .chain(list.devices.iter().map(|d| Some(d.name.clone())))
+        .collect();
+
+    let mut patch = app.audio_patch.clone();
+    let mut changed = false;
     ui.add_enabled_ui(!app.show_mode, |ui| {
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .max_height(ui.available_height() - 40.0)
             .show(ui, |ui| {
-                theme::form_grid("settings_audio_patch").show(ui, |ui| {
-                    for (i, channel) in patch.channels.iter_mut().enumerate() {
-                        theme::field_label(ui, &format!("Ch {}", i + 1));
-                        ui.horizontal(|ui| {
-                            let r = ui.add(
-                                egui::TextEdit::singleline(&mut channel.name).desired_width(160.0),
-                            );
-                            app.text_field_ids.insert(r.id);
-                            egui::ComboBox::from_id_salt(("audio_channel_output", i))
-                                .selected_text(output_label(channel.output))
-                                .width(110.0)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut channel.output, 0, "Off");
-                                    for output in 1..=max_output.min(255) as u8 {
-                                        ui.selectable_value(
-                                            &mut channel.output,
-                                            output,
-                                            output_label(output),
-                                        );
-                                    }
-                                });
-                            if u16::from(channel.output) > max_output {
-                                ui.label(
-                                    egui::RichText::new("Not on this device")
-                                        .color(theme::palette::TEXT_DIM),
-                                );
+                egui::Grid::new("settings_audio_patch_matrix")
+                    .num_columns(columns.len() + 1)
+                    .spacing(egui::vec2(6.0, 3.0))
+                    .striped(true)
+                    .show(ui, |ui| {
+                        // Kopfzeile 1: Gerätename (je Gruppe nur in erster Spalte).
+                        ui.label(egui::RichText::new("Channel").strong());
+                        let mut prev: Option<Option<&str>> = None;
+                        for (device, _) in &columns {
+                            let name = device.as_deref();
+                            if prev == Some(name) {
+                                ui.label("");
+                            } else {
+                                let label = match name {
+                                    None => "System Default".to_string(),
+                                    Some(name) => name.to_string(),
+                                };
+                                ui.label(egui::RichText::new(label).strong());
                             }
-                        });
+                            prev = Some(name);
+                        }
                         ui.end_row();
-                    }
-                });
+                        // Kopfzeile 2: Ausgangsnummern.
+                        ui.label(egui::RichText::new("Out").small());
+                        for (_, output) in &columns {
+                            ui.label(
+                                egui::RichText::new(output.to_string())
+                                    .size(theme::size::LABEL_TEXT)
+                                    .color(theme::palette::TEXT_DIM),
+                            );
+                        }
+                        ui.end_row();
+                        // Eine Zeile pro KuhPlay-Kanal.
+                        for (i, channel) in patch.channels.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(format!("Ch {}", i + 1)).strong());
+                                let r = ui.add(
+                                    egui::TextEdit::singleline(&mut channel.name)
+                                        .desired_width(140.0),
+                                );
+                                app.text_field_ids.insert(r.id);
+                            });
+                            for (device, output) in &columns {
+                                let mut checked = channel
+                                    .outputs
+                                    .iter()
+                                    .any(|o| o.device == *device && o.output == *output);
+                                if ui.checkbox(&mut checked, "").changed() {
+                                    if checked {
+                                        channel.outputs.push(ChannelOutput {
+                                            device: device.clone(),
+                                            output: *output,
+                                        });
+                                    } else {
+                                        channel.outputs.retain(|o| {
+                                            !(o.device == *device && o.output == *output)
+                                        });
+                                    }
+                                    changed = true;
+                                }
+                            }
+                            ui.end_row();
+                        }
+                    });
             });
     });
-    if patch != app.audio_patch {
+    // Zuordnungen auf nicht verbundene Geräte bleiben erhalten (Show-Datei).
+    let missing = patch
+        .channels
+        .iter()
+        .flat_map(|c| c.outputs.iter())
+        .filter(|o| o.output > 0 && !known.contains(&o.device))
+        .count();
+    if missing > 0 {
+        config_hint(
+            ui,
+            &format!("{missing} assignment(s) target a device that is not connected."),
+        );
+    }
+    if changed {
         app.set_audio_patch(patch);
     }
 }

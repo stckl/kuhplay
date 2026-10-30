@@ -66,83 +66,32 @@ der Live-Bug `50f6d1b`: Engine hatte Stage ohne Regionen).
 
 ---
 
-## Aufgabe 1 (angefangen, nur Analyse): Audio-Routing-Matrix
+## Aufgabe 1: Audio-Routing-Matrix — ERLEDIGT (Commit 65c101d)
 
-**Wunsch des Nutzers:** In den Audio-Einstellungen eine Matrix, in der die 16
-KuhPlay-Kanäle auf die Ausgänge des Computers gepatcht werden können —
-(a) ein Kanal auf **mehrere** Ausgänge, (b) **mehrere Ausgabegeräte parallel**.
-
-**Aktueller Stand (nur gelesen, noch nichts geändert):**
-- `AudioChannel { name, output: u8 }` — genau EIN Ausgang, kein Gerät im Modell.
-- `EngineCommand::SetAudioPatch { outputs: [u8; AUDIO_CHANNEL_COUNT] }` — eine
-  Zuordnung für das eine Gerät.
-- `AudioBackend::with_device` baut EINEN Stream; `set_channel_outputs([u8;16])`
-  setzt atomare Channel→Geräteausgang-Maske; `mix()` (audio_backend.rs ~Z. 218)
-  rendert den gemeinsamen Mixer in den einen Stream. Voices liegen pro Backend
-  (`self.voices` + `self.mixer`), `mix_voice` nutzt `masks` (Cue-Route-Matrix)
-  und `outputs` (Patch-Maske).
-- Real-Engine: Feld `audio: Option<AudioBackend>`, `SetAudioOutput` wechselt das
-  Gerät (nur wenn kein Audio läuft), `SetAudioPatch` → `set_channel_outputs`.
-- UI: `workspace_settings.rs::draw_channel_patch` — pro Kanal EIN Dropdown.
-- Web-Remote: `pageAudio` in `web_ui.html` — Patch-Formular mit je einem Select
-  pro Kanal; Inspector „Audio Levels“ hat bereits eine Cue→Kanal-Matrix (`masks`).
-
-**Geplanter Entwurf (abarbeiten):**
-1. **Modell** `src/core/audio.rs`:
-   - Neu: `ChannelOutput { device: Option<String>, output: u8 }` (`None`-Gerät =
-     System-Standard/primäres Gerät, damit Default-Shows ohne Gerätenamen laufen).
-   - `AudioChannel` ergänzen: `outputs: Vec<ChannelOutput>` mit
-     `#[serde(default)]`; altes Feld `output: u8` zu `#[serde(default, skip_serializing)]`
-     machen (Legacy-Dateien laden weiter: `#[serde(default)] fn migrate` oder
-     nachträgliche Migration — wenn `outputs` leer und `output > 0`, ergibt
-     `outputs = vec![ChannelOutput { device: None, output }]`).
-   - `AudioPatch::default`: Kanal n → `outputs = [{device: None, output: n+1}]`.
-   - Helper: `pub fn device_outputs(&self, device: &str) -> [u8; 16]` — Kanal→
-     Ausgang **an diesem Gerät** (0 = aus), d. h. Zuordnungen mit anderem Gerät
-     werden ignoriert; `pub fn devices(&self) -> Vec<Option<String>>` — alle im
-     Patch referenzierten Geräte (eindeutig, Reihenfolge stabil).
-2. **Engine-Befehl** `src/engine/command.rs`: `SetAudioPatch { outputs: [u8; 16] }`
-   → ersetzen durch `SetAudioPatch { patch: Box<AudioPatch> }` (oder
-   `assignments: Vec<(Option<String>, [u8; 16])>` — entscheiden; `Box<AudioPatch>`
-   ist serde-freundlicher, da `AudioPatch` schon Serialize/Deserialize ist).
-   Alle Aufrufer anpassen: `app.set_audio_patch`, Mock-Engine, Tests
-   (`tests/audio_params.rs`, `tests/remote.rs`, evtl. `osc.rs`).
-3. **Backend** `src/engine/audio_backend.rs`:
-   - `with_device` um einen Parameter ergänzen, der einen **bestehenden Mixer-Arc**
-     teilt (z. B. `with_shared_mixer(name, mixer)`), damit alle Geräte-Streams
-     dieselben Voices mischen. `voices`-Verwaltung zieht in ein übergeordnetes
-     Objekt (siehe 4) — Backend wird reiner „Stream + Maske“.
-4. **Real-Engine** `src/engine/real_engine.rs`:
-   - `audio: Option<AudioBackend>` → `audios: Vec<AudioBackend>` (je Gerät einer)
-     + EIN gemeinsamer Mixer. `SetAudioPatch`: für jedes im Patch referenzierte
-     Gerät fehlenden Stream öffnen, nicht mehr referenzierte Streams schließen
-     (Fehler nur melden, nicht alles abschalten). `add_voice`/`stop_voice` auf den
-     gemeinsamen Mixer. `SetAudioOutput` bleibt als „primäres Gerät“ (Kompat,
-     Companion/Remote), wirkt auf `device: None`-Zuordnungen.
-   - „Stop running audio cues before changing the device“-Logik überdenken: Bei
-     Mehrgeräte-Patch darf live umgepatcht werden (Masken sind atomar).
-5. **UI** `workspace_settings.rs::draw_channel_patch` → echte Matrix:
-   - Zeilen = 16 Kanäle (Name editierbar), Spalten = **(Gerät, Ausgang)** über
-     ALLE Geräte aus `output_devices()` (Spaltenkopf: Kurzname + Ausgang N);
-   - Zelle = Checkbox (an/aus), horizontal scrollbar; ein Kanal kann mehrere
-     Zellen (auch geräteübergreifend) aktivieren;
-   - „Off“-Spalte zum Deaktivieren; Hinweis, dass Umlegen live wirkt.
-   - Geräteliste einmalig cachen wie `audio_devices`.
-6. **Web-Remote**: `pageAudio` Patch-Editor auf Read-only-Zusammenfassung
-   (`device:out, …` je Kanal, Namen editierbar) umbauen + Hinweis „Full matrix in
-   the app“ — NICHT per Einzelselect speichern, sonst werden Mehrfach-Zuordnungen
-   beim Speichern aus der Remote gelöscht (Datenverlust!). `RemoteWorkspace`
-   `audio_patch` serialisiert das neue Modell automatisch mit.
-7. **Tests**: Serde-Rundlauf alt→neu (Datei mit `output: 3` lädt und ergibt
-   `outputs=[{None,3}]`), `device_outputs()` je Gerät, Mock nimmt `SetAudioPatch`
-   an, UI rendert headless (gui_smoke: Matrix-Text vorhanden), Remote-Test
-   (`set_audio_patch` mit neuem Modell), Engine-Test: zwei Geräte-Patches →
-   zwei Streams (ohne Hardware nur Fehlerpfad/Mock prüfbar).
-8. **Doku**: README-Zeile Audio, `docs/UI.md` §5.7 Audio-Abschnitt, ggf.
-   `docs/qlab5-parity.md` Audio-Patch-Zeile.
-
-**Abgrenzung:** Cue-seitiges Routing (Route/Maske im Inspector „Audio Levels“)
-bleibt, wie es ist — nur der Patch Kanal→Gerät wird zur Matrix.
+**Umgesetzt:** 16 KuhPlay-Kanäle patchbar auf mehrere Ausgänge UND mehrere
+Ausgabegeräte parallel.
+- Modell `src/core/audio.rs`: `ChannelOutput { device: Option<String>, output }`,
+  `AudioChannel.outputs: Vec<ChannelOutput>`, Legacy-`output` wird nicht mehr
+  serialisiert und per `migrate_legacy()` beim Laden migriert;
+  `AudioPatch::devices()` + `device_output_mask()` (u16-Bitmaske pro Gerät,
+  mehrere Ausgänge pro Kanal); `AudioChannel::output_summary()` für Anzeigen.
+- Engine: `SetAudioPatch { patch: Box<AudioPatch> }`; `apply_audio_patch()` in
+  real_engine.rs verwaltet pro referenziertem Gerät einen Extra-Stream
+  (`AudioBackend::with_shared_mixer`, gemeinsamer Mixer — dieselben Voices auf
+  allen Geräten), schließt nicht mehr referenzierte Streams, meldet fehlende
+  Geräte als Error (Show läuft weiter). `SetAudioOutput` baut das Primärgerät
+  neu und nimmt Mixer + Patch mit (live nur ohne laufende Audio-Cues).
+- `mix_voice` routet jedes gesetzte Bit der Ausgangsmaske auf den jeweiligen
+  Geräteausgang (über Bit 16 hinaus abgeschnitten).
+- UI: `workspace_settings.rs::draw_channel_patch` ist jetzt eine echte Matrix
+  (Zeilen 16 Kanäle mit Namensfeld, Spalten = System Default + jedes Gerät ×
+  Ausgang, Checkbox pro Zelle, horizontal scrollbar, live via set_audio_patch;
+  Zuordnungen auf nicht verbundene Geräte bleiben erhalten + Hinweis).
+  Inspector „Audio Levels“ zeigt pro Kanal die Ziel-Zusammenfassung.
+- Web-Remote `pageAudio`: Matrix read-only (Namen editierbar), kein
+  Überschreiben von Mehrfach-Zuordnungen mehr.
+- Tests: 548 gruen (Serde alt→neu, Bitmaske, GUI-Smoke Matrix, Remote).
+  clippy 0 Warnungen, Windows-Check (x86_64-pc-windows-msvc --features webview) ok.
 
 ---
 

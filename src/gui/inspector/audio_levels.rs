@@ -85,11 +85,7 @@ pub fn draw_audio_levels(ui: &mut egui::Ui, app: &mut ShowApp) {
             .show(ui, |ui| {
                 ui.label("");
                 for (channel, info) in patch.channels.iter().enumerate() {
-                    let output = if info.output == 0 {
-                        "off".to_string()
-                    } else {
-                        format!("output {}", info.output)
-                    };
+                    let output = info.output_summary();
                     ui.vertical_centered(|ui| {
                         ui.label(
                             RichText::new((channel + 1).to_string())

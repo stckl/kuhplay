@@ -85,7 +85,7 @@ jedem Feature-Schritt aktualisiert.
 | Object Audio | ⬜ | — |
 | Audio Cues | ✅ | **Echtes Playout** (symphonia-Dekodierung + cpal-Ausgabe, `src/engine/audio_backend.rs`): Mehrkanal-Routing (bis 16 Kanäle + Pan), Volume-Fades (dB-Interpolation), Playrate/Pitch-Fading, Slices mit Play-Counts. Getestet in `tests/real_engine.rs` (echte WAV-Wiedergabe, Pause/Resume/Stop, EOF) |
 | Mic Cues | ⬜ | — |
-| Audio Output Patch Editor | 🟡 | Routing-Parameter vorbereitet (Kanäle/Pan); kein grafischer Patch-Editor |
+| Audio Output Patch Editor | ✅ | Patch-Matrix in Workspace Settings → Audio: 16 Kanäle × (Gerät, Ausgang) mit Checkboxen; ein Kanal auf mehrere Ausgänge/Geräte parallel (Engine: Extra-Streams mit gemeinsamem Mixer); Umlegen wirkt live; Webremote zeigt die Matrix read-only |
 | Audio Map Editor | ⬜ | — |
 | Fading Audio and Audio Effects | ✅ | Fades für Volume/Rate/Opacity, lineare + dB-Kurve; Effekte-Architektur vorbereitet (Trait) |
 

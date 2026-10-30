@@ -17,7 +17,7 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 | **Cues** | Audio, Video, HTML5, Diashow, Fade, Group, Stop, Control, HTML-Data; Pre-Wait, Duration, Post-Wait, Auto-Continue und Auto-Follow |
 | **Ablauf** | Playhead und GO, mehrere Cue-Listen (Carts), Gruppen (Simultaneous, Sequential, Timeline, Loop, Shuffle), Timecode-Chasing (LTC/MTC) |
 | **Audio** | Dekodierung mit symphonia, Ausgabe mit cpal, Geräteauswahl, Fades (Volume, Rate, Opacity; linear oder dB), Slices mit Play-Count |
-| **Audio-Routing** | Matrix pro Cue: Datei-Kanal → 16 benannte Kanäle → Geräte-Ausgänge; Umlegen wirkt live |
+| **Audio-Routing** | Pro Cue: Datei-Kanal → 16 benannte Kanäle; Patch-Matrix in den Workspace Settings: Kanal → mehrere Ausgänge UND mehrere Ausgabegeräte parallel; Umlegen wirkt live |
 | **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing wie QLab 5: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand) |
 | **Ausgabe** | Ein randloses Fenster pro belegtem Display (alle Routen des Displays, auch Teilbereiche) oder Vorschau-Fenster pro Route, ideal für die Arbeit am Laptop; Stage-Monitor pro Stage |
 | **HTML5** | Eigene WebView (Feature `webview`), JavaScript-Trigger und JSON-Push für Lower-Thirds, Spielstände, Countdowns |

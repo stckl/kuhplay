@@ -239,9 +239,13 @@ Post-wait · Continue**.
   ist gesperrt, solange Cues laufen oder Show Mode aktiv ist.
 * Vollbild-Ausgabe: Esc im Ausgabefenster schließt es. Es liegt über allem, auch
   über der App und der Menüleiste.
-* Audio-Kanäle: 16 benannte Kanäle, je einer auf einem Geräte-Ausgang oder
-  „Off". Der Signalweg ist Cue (Tab „Audio Levels", Matrix) → Kanal → Ausgang.
-  Umlegen wirkt sofort, auch live; nur Show Mode sperrt es.
+* Audio-Kanäle: Patch-Matrix mit 16 benannten Kanälen (Zeilen) × (Gerät,
+  Ausgang) (Spalten: System Default + jedes verbundene Ausgabegerät, max. 16
+  Ausgänge pro Gerät). Checkbox = Kanal auf dieses Ziel gepatcht; ein Kanal
+  kann auf mehrere Ausgänge und mehrere Geräte gleichzeitig gehen. Der
+  Signalweg ist Cue (Tab „Audio Levels", Matrix) → Kanal → Ausgänge/Geräte.
+  Umlegen wirkt sofort, auch live; nur Show Mode sperrt es. Zuordnungen auf
+  nicht verbundene Geräte bleiben in der Show erhalten (Hinweis darunter).
 * Network: PIN der Web-Remote anzeigen und ändern (4 bis 8 Ziffern).
 * Video (QLab 5 „Workspace → Video“) mit drei Reitern:
   - **Video Outputs (Stages):** Tabelle pro Stage (Name, Auflösung, Devices,

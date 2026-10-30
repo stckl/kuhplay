@@ -115,6 +115,26 @@ pub struct AudioChannel {
     pub outputs: Vec<ChannelOutput>,
 }
 
+impl AudioChannel {
+    /// Kurze Anzeige der Ziele, z. B. „Out 1+2, Interface Out 1" („off" wenn leer).
+    pub fn output_summary(&self) -> String {
+        let targets: Vec<String> = self
+            .outputs
+            .iter()
+            .filter(|o| o.output > 0)
+            .map(|o| match &o.device {
+                None => format!("Out {}", o.output),
+                Some(device) => format!("{device} Out {}", o.output),
+            })
+            .collect();
+        if targets.is_empty() {
+            "off".to_string()
+        } else {
+            targets.join(", ")
+        }
+    }
+}
+
 /// Zuordnung der logischen Kanäle zu Geräte-Ausgängen (Workspace-Einstellung).
 /// Default: Kanal n → Ausgang n am Standardgerät.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

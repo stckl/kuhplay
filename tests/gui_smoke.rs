@@ -1568,7 +1568,8 @@ fn audio_routing_ui_renders() {
         out = render_frame(&ctx, &mut app);
     }
     assert!(output_has_text(&out, "CHANNELS"));
-    assert!(output_has_text(&out, "Output 1"));
+    assert!(output_has_text(&out, "System Default"), "Matrix-Spalten fehlen");
+    assert!(output_has_text(&out, "Ch 1"), "Kanalzeilen fehlen");
 }
 
 /// Vorschau-Modus: ein Fenster pro Route; Displays öffnet die Device-Ausgabe.
