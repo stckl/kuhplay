@@ -596,6 +596,7 @@ impl ShowApp {
             stage.regions = vec![region];
             self.stages.add(stage);
         }
+        self.configure_routes();
     }
 
     /// Stellt sicher, dass eine Stage existiert (Default 1920×1080) und
@@ -612,36 +613,31 @@ impl ShowApp {
         created
     }
 
+    /// Meldet die Output Routes an die Engine (nach jeder Änderung an
+    /// `self.routes` oder den Regionen einer Stage).
+    pub fn configure_routes(&mut self) {
+        let _ = self.engine.send(EngineCommand::ConfigureRoutes {
+            routes: self.routes.clone(),
+        });
+    }
+
     /// Ordnet eine Stage einem Screen zu (`None` = nur In-App-Vorschau) und
-    /// meldet die Änderung an die Engine. Ist auf dem Screen ein Testbild
-    /// aktiv, wird es für diese Stage an die Engine gemeldet.
+    /// meldet die Änderung an die Engine (Legacy-Screen-Modell).
     pub fn assign_stage_to_screen(&mut self, stage_name: &str, screen: Option<Uuid>) {
         if let Some(stage) = self.stages.find_mut(stage_name) {
             stage.screen = screen;
             let stage = stage.clone();
             let _ = self.engine.send(EngineCommand::ConfigureStage { stage });
         }
-        // Testbild des Screens (falls aktiv) an die Engine melden.
-        if let Some(id) = screen {
-            let active = self.screens.find(id).is_some_and(|s| s.test_pattern);
-            if active {
-                self.set_screen_test_pattern(id, true);
-            }
-        }
     }
 
-    /// Aktiviert/deaktiviert das Testbild eines Screens (Rahmen/Kreis/Raster/
-    /// Schachbrett/Beschriftung) – QLab „Test Pattern".
+    /// Aktiviert/deaktiviert das Testbild eines Screens. Das Screen-Modell
+    /// ist Legacy (Migration in Routen); das Route-Testbild haengt an der
+    /// Route selbst (siehe `Self::configure_routes`).
     pub fn set_screen_test_pattern(&mut self, screen: Uuid, enabled: bool) {
         if let Some(s) = self.screens.find_mut(screen) {
             s.test_pattern = enabled;
         }
-        let pattern = enabled
-            .then(|| self.screens.pattern_spec_for(screen))
-            .flatten();
-        let _ = self
-            .engine
-            .send(EngineCommand::SetTestPattern { screen, pattern });
     }
 
     /// Schaltet das Testbild für **alle** Screens an/aus (LED-Wand-Setup).
@@ -1888,6 +1884,7 @@ impl ShowApp {
         for stage in self.stages.stages().to_vec() {
             self.configure_stage(stage);
         }
+        self.configure_routes();
         self.current_file = Some(path.to_path_buf());
         self.clear_timing();
         self.last_error = None;
@@ -1907,10 +1904,11 @@ impl ShowApp {
         if let Ok(mut open) = self.stage_screen_open.lock() {
             open.clear();
         }
-        // Default-Stage an die Engine melden.
-        if let Some(stage) = self.stages.stages().first().cloned() {
+        // Default-Stages an die Engine melden.
+        for stage in self.stages.stages().to_vec() {
             self.configure_stage(stage);
         }
+        self.configure_routes();
         self.show_name = "Untitled Show".to_string();
         self.current_file = None;
         self.show_mode = false;

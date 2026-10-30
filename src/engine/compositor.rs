@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::core::{Stage, SurfaceGeometry, TestPatternSpec};
+use crate::core::{Stage, SurfaceGeometry};
 
 use super::frame::{StageFrameStore, VideoFrame};
 
@@ -123,22 +123,15 @@ impl Compositor {
 
     /// Kompiliert das Canvas einer Stage und legt es im Store ab.
     ///
-    /// `pattern`: Testbild-Spec → wird **anstelle** der Inhalte gezeichnet
-    /// (QLab „Test Pattern"; `None` = normale Komposition).
+    /// (Das Route-Testbild gehoert zum Route-Renderer, nicht mehr zum
+    /// Stage-Compositor - siehe route_renderer::render_route.)
     pub fn composite(
         &self,
         stage_name: &str,
         canvas: (u32, u32),
         surfaces: &[SurfaceEntry],
-        pattern: Option<&TestPatternSpec>,
         stage_frames: &StageFrameStore,
     ) {
-        // Testbild in Screen-Auflösung statt Stage-Größe: Sonst würde es beim
-        // Ausspielen auf den Screen gezogen und der Kreis schon dort verzerrt.
-        let canvas = match pattern {
-            Some(spec) => (spec.width, spec.height),
-            None => canvas,
-        };
         let (cw, ch) = (canvas.0.max(1), canvas.1.max(1));
         let mut out = vec![0u8; (cw as usize) * (ch as usize) * 4];
         // Hintergrund: undurchsichtiges Schwarz.
@@ -147,9 +140,7 @@ impl Compositor {
         }
 
         // Layer aufsteigend (niedrigste zuerst).
-        // Mit Testbild ist nichts zu komponieren, es überdeckt alles.
-        let visible_surfaces = if pattern.is_some() { &[][..] } else { surfaces };
-        let mut ordered: Vec<&SurfaceEntry> = visible_surfaces.iter().collect();
+        let mut ordered: Vec<&SurfaceEntry> = surfaces.iter().collect();
         ordered.sort_by_key(|(_, layer, _, _, _)| *layer);
 
         for (_cue_id, _layer, surface, frame, fade_opacity) in ordered {
@@ -218,11 +209,6 @@ impl Compositor {
             }
         }
 
-        // Testbild: überdeckt die Inhalte vollständig (QLab-Verhalten).
-        if let Some(spec) = pattern {
-            super::pattern::draw_test_pattern(&mut out, cw, ch, spec);
-        }
-
         let canvas_frame = Arc::new(VideoFrame::new(cw, ch, out));
         stage_frames
             .lock()
@@ -254,7 +240,7 @@ mod tests {
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(red), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
         let comp = Compositor::new();
-        comp.composite("Stage 1", (8, 8), &surfaces, None, &store);
+        comp.composite("Stage 1", (8, 8), &surfaces, &store);
         let canvas = store.lock().unwrap().get("Stage 1").cloned().unwrap();
         assert_eq!(canvas.width, 8);
         assert_eq!(canvas.height, 8);
@@ -297,7 +283,7 @@ mod tests {
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(frame), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
         let comp = Compositor::new();
-        comp.composite("S", (4, 4), &surfaces, None, &store);
+        comp.composite("S", (4, 4), &surfaces, &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
         // Jedes Pixel muss grün sein (nur rechte Quellenhälfte landet).
         for px in canvas.rgba.chunks_exact(4) {
@@ -339,7 +325,7 @@ mod tests {
         ];
         let store = super::super::frame::new_stage_frame_store();
         let comp = Compositor::new();
-        comp.composite("S", (8, 4), &surfaces, None, &store);
+        comp.composite("S", (8, 4), &surfaces, &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
         let px_at = |x: u32| &canvas.rgba[((2 * 8) + x) as usize * 4..][..4];
         // x=0..3: blau (nur linke Surface).
@@ -378,7 +364,7 @@ mod tests {
         ];
         let store = super::super::frame::new_stage_frame_store();
         let comp = Compositor::new();
-        comp.composite("S", (4, 4), &surfaces, None, &store);
+        comp.composite("S", (4, 4), &surfaces, &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
         assert_eq!(
             &canvas.rgba[..4],
@@ -389,99 +375,13 @@ mod tests {
         // Unsichtbare Surface wird nicht komponiert.
         let surfaces = vec![(Uuid::new_v4(), 0, hidden, Some(red.clone()), 1.0)];
         let store2 = super::super::frame::new_stage_frame_store();
-        comp.composite("S2", (4, 4), &surfaces, None, &store2);
+        comp.composite("S2", (4, 4), &surfaces, &store2);
         let canvas2 = store2.lock().unwrap().get("S2").cloned().unwrap();
         assert_eq!(
             &canvas2.rgba[..4],
             &[0, 0, 0, 255],
             "unsichtbar = schwarzer Canvas"
         );
-    }
-
-    #[test]
-    fn composite_test_pattern_replaces_content() {
-        use crate::core::TestPatternSpec;
-        // Rote Surface – ohne Testbild sichtbar.
-        let red = Arc::new(VideoFrame::new(64, 64, [255, 0, 0, 255].repeat(64 * 64)));
-        let surface = SurfaceGeometry::full_canvas();
-        let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(red), 1.0)];
-        let store = super::super::frame::new_stage_frame_store();
-        let comp = Compositor::new();
-        comp.composite("S", (64, 64), &surfaces, None, &store);
-        let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        assert_eq!(
-            &canvas.rgba[..4],
-            &[255, 0, 0, 255],
-            "ohne Testbild: Inhalt"
-        );
-
-        // Mit Testbild: Inhalt wird überdeckt (Rand weiß, Rest schwarzes Raster).
-        let spec = TestPatternSpec {
-            label: "MAIN 64X64".to_string(),
-            width: 64,
-            height: 64,
-            kind: Default::default(),
-            color: [255, 255, 255],
-            index: 0,
-            checker_size: 64,
-        };
-        comp.composite("S", (64, 64), &surfaces, Some(&spec), &store);
-        let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        assert_eq!(&canvas.rgba[..3], &[255, 255, 255], "Rand am Bildrand");
-        let i = (10 * 64 + 10) * 4;
-        assert_eq!(canvas.rgba[i], canvas.rgba[i + 1], "kein Rot mehr sichtbar");
-        assert_eq!(
-            canvas.rgba[i + 1],
-            canvas.rgba[i + 2],
-            "kein Rot mehr sichtbar"
-        );
-        // Testbild aus → wieder Inhalt.
-        comp.composite("S", (64, 64), &surfaces, None, &store);
-        let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        assert_eq!(
-            &canvas.rgba[..4],
-            &[255, 0, 0, 255],
-            "Testbild aus → Inhalt zurück"
-        );
-    }
-
-    #[test]
-    fn composite_test_pattern_over_empty_stage() {
-        use crate::core::TestPatternSpec;
-        let store = super::super::frame::new_stage_frame_store();
-        let comp = Compositor::new();
-        let spec = TestPatternSpec {
-            label: "LED 128X96".to_string(),
-            width: 128,
-            height: 96,
-            kind: Default::default(),
-            color: [255, 255, 255],
-            index: 0,
-            checker_size: 64,
-        };
-        comp.composite("S", (128, 96), &[], Some(&spec), &store);
-        let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        // Auch ohne Surfaces; voll deckend, Rand am Bildrand.
-        assert!(canvas.rgba.chunks_exact(4).all(|c| c[3] == 255));
-        assert_eq!(canvas.rgba[0], 255);
-    }
-
-    #[test]
-    fn test_pattern_uses_screen_resolution_not_stage_canvas() {
-        use crate::core::TestPatternSpec;
-        let store = super::super::frame::new_stage_frame_store();
-        let spec = TestPatternSpec {
-            label: "L".to_string(),
-            width: 1512,
-            height: 982,
-            kind: Default::default(),
-            color: [255, 255, 255],
-            index: 0,
-            checker_size: 64,
-        };
-        Compositor::new().composite("S", (1920, 1080), &[], Some(&spec), &store);
-        let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        assert_eq!((canvas.width, canvas.height), (1512, 982));
     }
 
     #[test]
@@ -496,7 +396,7 @@ mod tests {
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(white), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
         let comp = Compositor::new();
-        comp.composite("S", (2, 2), &surfaces, None, &store);
+        comp.composite("S", (2, 2), &surfaces, &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
         // 50 % Weiß über Schwarz = Grau.
         let px = &canvas.rgba[..4];

@@ -12,7 +12,10 @@
 
 use std::time::{Duration, Instant};
 
-use kuhplay::core::{DisplayGeometry, Screen, ScreenManager, ScreenRotation, Stage, StageGeometry};
+use kuhplay::core::{
+    DisplayGeometry, OutputRoute, Region, RouteManager, Screen, ScreenManager, ScreenRotation,
+    Stage, StageGeometry, TestPatternKind,
+};
 use kuhplay::engine::{spawn_mock_engine, spawn_real_engine, EngineCommand, EngineEvent};
 
 // ---------------------------------------------------------------------
@@ -222,29 +225,46 @@ fn deleting_screen_leaves_no_dangling_stage_reference_in_manager() {
 }
 
 // ---------------------------------------------------------------------
-// Engine-Bridge (Testbild-Kommando)
+// Engine-Bridge (Routen-Kommando)
 // ---------------------------------------------------------------------
 
+/// Route mit Region einer Stage (volle Fläche).
+fn route_with_stage(stage_w: f32, stage_h: f32) -> (OutputRoute, Stage) {
+    let route = OutputRoute::new(
+        "TestRoute",
+        stage_w.max(1.0) as u32,
+        stage_h.max(1.0) as u32,
+    );
+    let mut stage = Stage::new("RouteStage", StageGeometry::new(stage_w, stage_h));
+    let mut region = Region::full_stage(stage_w, stage_h);
+    region.route = Some(route.id);
+    stage.regions = vec![region];
+    (route, stage)
+}
+
+fn routes_manager(route: &OutputRoute) -> RouteManager {
+    let mut routes = RouteManager::new();
+    routes.add(route.clone()).unwrap();
+    routes
+}
+
 #[test]
-fn mock_engine_accepts_set_test_pattern_and_stays_alive() {
+fn mock_engine_accepts_configure_routes_and_stays_alive() {
     let engine = spawn_mock_engine();
-    let screen = Screen::new("Main", 0, 0, 1920, 1080);
-    let mut with_pattern = screen.clone();
-    with_pattern.test_pattern = true;
-    // Testbild an …
+    let route = OutputRoute::new("Mock", 1920, 1080);
     engine
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: Some(with_pattern.pattern_spec()),
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&route),
         })
-        .expect("send pattern on");
-    // … und aus.
+        .expect("send routes");
+    // Ungültige Route wird abgelehnt, Engine bleibt produktiv.
+    let bad: RouteManager = serde_json::from_str(
+        r#"{"routes":[{"id":"00000000-0000-0000-0000-000000000000","name":"","width":0,"height":1080}]}"#,
+    )
+    .expect("invalid route via serde");
     engine
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: None,
-        })
-        .expect("send pattern off");
+        .send(EngineCommand::ConfigureRoutes { routes: bad })
+        .expect("send invalid routes");
     // Event-Loop antwortet weiterhin (kein Panic, kein Drop).
     engine.send(EngineCommand::Ping(7)).expect("send ping");
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -254,36 +274,61 @@ fn mock_engine_accepts_set_test_pattern_and_stays_alive() {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    panic!("engine must answer Ping with Pong after SetTestPattern");
+    panic!("engine must answer Ping with Pong after ConfigureRoutes");
 }
 
 #[test]
-fn real_engine_set_test_pattern_marks_stage_dirty() {
-    // Real-Engine ohne Media-Hardware: Compositor zeichnet das Testbild
-    // in das Stage-Canvas (1-px-Rand + Raster), sobald die Stage
-    // dem Screen zugeordnet ist.
+fn real_engine_renders_route_frame_from_stage() {
+    // Integration: Real-Engine liefert ein Route-Bild (schwarz, in der
+    // Auflösung der Route), sobald Stage (mit Region) und Route konfiguriert
+    // sind – ohne laufenden Cue.
     let engine = spawn_real_engine();
-    let screen = Screen::new("TestScreen", 0, 0, 64, 64);
-    let mut stage = Stage::new("PatternStage", StageGeometry::new(64.0, 64.0));
-    stage.screen = Some(screen.id);
+    let (route, stage) = route_with_stage(64.0, 64.0);
     engine
-        .commands
         .send(EngineCommand::ConfigureStage { stage })
-        .expect("send configure");
-
-    // Testbild an → Canvas hat den 1-px-Rand exakt am Bildrand.
-    let spec = screen.pattern_spec();
+        .expect("configure stage");
     engine
-        .commands
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: Some(spec),
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&route),
         })
-        .expect("send pattern on");
+        .expect("configure routes");
     let ok = wait_until(
         || {
-            let store = engine.stage_frames.lock().unwrap();
-            let Some(frame) = store.get("PatternStage") else {
+            let frame = engine.route_frames.lock().unwrap().get(&route.id).cloned();
+            let Some(frame) = frame else {
+                return false;
+            };
+            frame.width == 64
+                && frame.height == 64
+                && frame
+                    .rgba
+                    .chunks_exact(4)
+                    .all(|c| c[0] < 10 && c[1] < 10 && c[2] < 10 && c[3] == 255)
+        },
+        Duration::from_secs(3),
+    );
+    assert!(ok, "Route-Bild im Route-Frame-Store");
+}
+
+#[test]
+fn real_engine_route_test_pattern_replaces_content() {
+    // Route-Testbild: weißer 1-px-Rand exakt am Bildrand, Raster im Inneren.
+    let engine = spawn_real_engine();
+    let (route, stage) = route_with_stage(64.0, 64.0);
+    let mut route = route;
+    route.test_pattern = true;
+    engine
+        .send(EngineCommand::ConfigureStage { stage })
+        .expect("configure stage");
+    engine
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&route),
+        })
+        .expect("configure routes");
+    let ok = wait_until(
+        || {
+            let frame = engine.route_frames.lock().unwrap().get(&route.id).cloned();
+            let Some(frame) = frame else {
                 return false;
             };
             let inside = (2 * 64 + 20) * 4;
@@ -292,20 +337,20 @@ fn real_engine_set_test_pattern_marks_stage_dirty() {
         },
         Duration::from_secs(3),
     );
-    assert!(ok, "Testbild im Stage-Canvas");
+    assert!(ok, "Route-Testbild im Route-Bild");
 
-    // Testbild aus → Canvas schwarz (keine Surfaces auf der Stage).
+    // Testbild aus → Route-Bild schwarz.
+    let mut off = route.clone();
+    off.test_pattern = false;
     engine
-        .commands
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: None,
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&off),
         })
-        .expect("send pattern off");
+        .expect("routes off");
     let ok = wait_until(
         || {
-            let store = engine.stage_frames.lock().unwrap();
-            let Some(frame) = store.get("PatternStage") else {
+            let frame = engine.route_frames.lock().unwrap().get(&route.id).cloned();
+            let Some(frame) = frame else {
                 return false;
             };
             frame
@@ -315,22 +360,20 @@ fn real_engine_set_test_pattern_marks_stage_dirty() {
         },
         Duration::from_secs(3),
     );
-    assert!(ok, "Testbild aus → schwarzer Canvas");
+    assert!(ok, "Testbild aus -> schwarzes Route-Bild");
 }
 
 #[test]
-fn real_engine_ignores_pattern_for_unassigned_screen() {
-    // Screen ohne zugeordnete Stage: Kommando ist harmlos (kein Canvas,
-    // kein Fehler, Engine bleibt produktiv).
+fn real_engine_route_without_stage_stays_black_and_alive() {
+    // Route ohne Region (kein Stage zeigt auf sie): harmlos, Engine bleibt
+    // produktiv, Route-Bild bleibt schwarz.
     let engine = spawn_real_engine();
-    let screen = Screen::new("Lonely", 0, 0, 64, 64);
+    let route = OutputRoute::new("Lonely", 64, 64);
     engine
-        .commands
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: Some(screen.pattern_spec()),
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&route),
         })
-        .expect("send pattern");
+        .expect("send routes");
     engine.commands.send(EngineCommand::Ping(1)).expect("ping");
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
@@ -339,42 +382,35 @@ fn real_engine_ignores_pattern_for_unassigned_screen() {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    panic!("engine must stay alive for unassigned screen pattern");
+    panic!("engine must stay alive for route without stage");
 }
 
 // ---------------------------------------------------------------------
-// LED-Wand-Testbild (Integration)
+// LED-Wand-Testbild auf der Route (Integration)
 // ---------------------------------------------------------------------
 
 #[test]
-fn real_engine_led_wall_pattern_renders_checkerboard_and_scale() {
-    use kuhplay::core::TestPatternKind;
+fn real_engine_led_wall_route_pattern_renders_checkerboard_and_scale() {
     let engine = spawn_real_engine();
-    let mut screen = Screen::new("LEDWall", 0, 0, 128, 128);
-    screen.test_pattern = true;
-    screen.test_pattern_kind = TestPatternKind::LedWall;
-    screen.color = [255, 64, 64]; // Rot
-    screen.checker_size = 64; // 2×2 Kacheln
-    let mut stage = Stage::new("LedStage", StageGeometry::new(128.0, 128.0));
-    stage.screen = Some(screen.id);
+    let (route, stage) = route_with_stage(128.0, 128.0);
+    let mut route = route;
+    route.test_pattern = true;
+    route.test_pattern_kind = TestPatternKind::LedWall;
+    route.color = [255, 64, 64]; // Rot
+    route.checker_size = 64; // 2×2 Kacheln
     engine
-        .commands
         .send(EngineCommand::ConfigureStage { stage })
-        .expect("configure");
-
-    let spec = screen.pattern_spec();
+        .expect("configure stage");
     engine
-        .commands
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: Some(spec),
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&route),
         })
-        .expect("pattern on");
+        .expect("routes on");
 
     let ok = wait_until(
         || {
-            let store = engine.stage_frames.lock().unwrap();
-            let Some(frame) = store.get("LedStage") else {
+            let frame = engine.route_frames.lock().unwrap().get(&route.id).cloned();
+            let Some(frame) = frame else {
                 return false;
             };
             // 1px-Rahmen oben bei y=0, Mitte x=64: weiß
@@ -393,37 +429,34 @@ fn real_engine_led_wall_pattern_renders_checkerboard_and_scale() {
         },
         Duration::from_secs(3),
     );
-    assert!(ok, "LED-Wand-Testbild: Rahmen + Schachbrett + Pixelskala");
+    assert!(
+        ok,
+        "LED-Wand-Testbild auf der Route: Rahmen + Schachbrett + Pixelskala"
+    );
 }
 
 #[test]
-fn real_engine_led_wall_checker_size_adjustable() {
-    use kuhplay::core::TestPatternKind;
+fn real_engine_led_wall_route_checker_size_adjustable() {
     let engine = spawn_real_engine();
-    let mut screen = Screen::new("SmallTiles", 0, 0, 128, 128);
-    screen.test_pattern = true;
-    screen.test_pattern_kind = TestPatternKind::LedWall;
-    screen.color = [255, 255, 255]; // Weiß
-    screen.checker_size = 32; // 4×4 Kacheln
-    let mut stage = Stage::new("SmallStage", StageGeometry::new(128.0, 128.0));
-    stage.screen = Some(screen.id);
+    let (route, stage) = route_with_stage(128.0, 128.0);
+    let mut route = route;
+    route.test_pattern = true;
+    route.test_pattern_kind = TestPatternKind::LedWall;
+    route.color = [255, 255, 255]; // Weiß
+    route.checker_size = 32; // 4×4 Kacheln
     engine
-        .commands
         .send(EngineCommand::ConfigureStage { stage })
-        .expect("configure");
-    let spec = screen.pattern_spec();
+        .expect("configure stage");
     engine
-        .commands
-        .send(EngineCommand::SetTestPattern {
-            screen: screen.id,
-            pattern: Some(spec),
+        .send(EngineCommand::ConfigureRoutes {
+            routes: routes_manager(&route),
         })
-        .expect("pattern on");
+        .expect("routes on");
 
     let ok = wait_until(
         || {
-            let store = engine.stage_frames.lock().unwrap();
-            let Some(frame) = store.get("SmallStage") else {
+            let frame = engine.route_frames.lock().unwrap().get(&route.id).cloned();
+            let Some(frame) = frame else {
                 return false;
             };
             // Bei 32px Kacheln: Kachel (0,0) bei (28,28) heller (70% Weiß = 178)
@@ -436,5 +469,5 @@ fn real_engine_led_wall_checker_size_adjustable() {
         },
         Duration::from_secs(3),
     );
-    assert!(ok, "LED-Wand mit 32px Kacheln: heller/dunkler Wechsel");
+    assert!(ok, "Kachelgröße steuerbar");
 }

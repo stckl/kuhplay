@@ -16,8 +16,9 @@ use base64::Engine;
 use kuhplay::core::{HtmlSource, Stage, StageGeometry};
 use kuhplay::engine::webview_backend::{webview_binary, WebviewEvent, WebviewInstance};
 use kuhplay::engine::{
-    new_frame_store, new_opacity_store, new_stage_frame_store, EngineCommand, EngineEvent,
-    FrameStore, MediaEngine, RealMediaEngine, StageFrameStore, VideoFrame,
+    new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
+    EngineCommand, EngineEvent, FrameStore, MediaEngine, RealMediaEngine, StageFrameStore,
+    VideoFrame,
 };
 
 /// 2×2-RGBA-Testframe: rot, grün, blau, weiß (Row-Major).
@@ -169,6 +170,7 @@ fn engine_nutzt_echtes_webview_backend() {
         new_frame_store(),
         new_opacity_store(),
         new_stage_frame_store(),
+        new_route_frame_store(),
         evt_tx,
     )
     .with_webview_bin(script);
@@ -297,6 +299,7 @@ fn engine_webview_frame_landet_im_frame_store_and_composites() {
         frames.clone(),
         new_opacity_store(),
         stage_frames.clone(),
+        new_route_frame_store(),
         evt_tx,
     )
     .with_webview_bin(script);
@@ -352,6 +355,7 @@ fn engine_webview_snapshot_backoff_bei_fehlern() {
         new_frame_store(),
         new_opacity_store(),
         new_stage_frame_store(),
+        new_route_frame_store(),
         evt_tx,
     )
     .with_webview_bin(script);
@@ -404,6 +408,7 @@ fn engine_fallback_virtuell_wenn_binary_fehlt() {
         new_frame_store(),
         new_opacity_store(),
         new_stage_frame_store(),
+        new_route_frame_store(),
         evt_tx,
     )
     .with_webview_bin(PathBuf::from("/nonexistent/kuhplay-webview"));

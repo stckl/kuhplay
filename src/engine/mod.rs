@@ -80,8 +80,8 @@ pub mod webview_backend;
 pub use clock::{Clock, RealClock, VirtualClock};
 pub use command::EngineCommand;
 pub use frame::{
-    new_frame_store, new_opacity_store, new_stage_frame_store, FrameStore, OpacityStore,
-    StageFrameStore, VideoFrame,
+    new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, FrameStore,
+    OpacityStore, StageFrameStore, VideoFrame,
 };
 pub use media_engine::{EngineEvent, MediaEngine};
 pub use mock_engine::{

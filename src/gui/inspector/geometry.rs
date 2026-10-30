@@ -4,10 +4,8 @@
 
 use egui::RichText;
 
-use crate::core::{CueType, SurfaceGeometry};
-use crate::engine::EngineCommand;
-
 use super::push_stage;
+use crate::core::{CueType, SurfaceGeometry};
 use crate::gui::app::ShowApp;
 use crate::gui::theme;
 
@@ -193,18 +191,6 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
                             if screen != stage.screen {
                                 stage.screen = screen;
                                 changed = true;
-                                // Testbild des Ziel-Screens
-                                // übernehmen (falls aktiv).
-                                if let Some(id) = screen {
-                                    if let Some(spec) = screens.pattern_spec_for(id) {
-                                        if screens.find(id).is_some_and(|s| s.test_pattern) {
-                                            let _ = engine.send(EngineCommand::SetTestPattern {
-                                                screen: id,
-                                                pattern: Some(spec),
-                                            });
-                                        }
-                                    }
-                                }
                             }
                             ui.end_row();
                             theme::field_label(ui, "Visible");

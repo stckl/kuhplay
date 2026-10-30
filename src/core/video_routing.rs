@@ -399,7 +399,7 @@ pub fn regions_in_reading_order<'a>(
 }
 
 /// Verwaltet alle Output Routes der Show.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RouteManager {
     routes: Vec<OutputRoute>,
 }

@@ -10,8 +10,8 @@ use std::time::Duration;
 use kuhplay::core::{Stage, StageGeometry};
 use kuhplay::engine::decklink::{ffmpeg_decklink_args, DecklinkConfig, DecklinkOutput};
 use kuhplay::engine::{
-    new_frame_store, new_opacity_store, new_stage_frame_store, EngineCommand, MediaEngine,
-    RealMediaEngine, VideoFrame,
+    new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
+    EngineCommand, MediaEngine, RealMediaEngine, VideoFrame,
 };
 
 #[test]
@@ -141,6 +141,7 @@ fn engine_with_decklink(width: u32, height: u32) -> RealMediaEngine {
         new_frame_store(),
         new_opacity_store(),
         new_stage_frame_store(),
+        new_route_frame_store(),
         evt_tx,
     );
     engine.with_decklink(
@@ -194,6 +195,7 @@ fn engine_ohne_decklink_pusht_nichts() {
         new_frame_store(),
         new_opacity_store(),
         new_stage_frame_store(),
+        new_route_frame_store(),
         evt_tx,
     );
     for _ in 0..3 {

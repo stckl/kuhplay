@@ -44,19 +44,21 @@ use uuid::Uuid;
 
 use crate::core::{
     db_to_linear, linear_to_db_clamped, FadeCurve, FadeParam, HtmlSource, LoopMode, ShowResult,
-    SlideNav, SlideShow, Stage, SurfaceGeometry, TestPatternSpec, Timecode,
+    SlideNav, SlideShow, Stage, SurfaceGeometry, Timecode,
 };
 
 use super::audio_backend::AudioBackend;
 use super::compositor::{canvas_size, Compositor, SurfaceEntry};
 use super::decklink::{scale_nearest, DecklinkConfig, DecklinkOutput};
 use super::frame::{
-    new_frame_store, new_opacity_store, new_stage_frame_store, FrameStore, OpacityStore,
-    StageFrameStore, VideoFrame,
+    new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, FrameStore,
+    OpacityStore, RouteFrameStore, StageFrameStore, VideoFrame,
 };
+use super::route_renderer;
 use super::video_backend::VideoBackend;
 use super::webview_backend::{webview_binary, WebviewInstance};
 use super::{EngineCommand, EngineEvent, MediaEngine};
+use crate::core::RouteManager;
 
 /// Tick-Intervall der Engine (Real-Uhr).
 const TICK: Duration = Duration::from_millis(50);
@@ -235,7 +237,11 @@ pub struct RealMediaEngine {
     chasing: HashMap<Uuid, Timecode>,
     stages: HashMap<String, Stage>,
     /// Testbild pro Stage-Name (QLab „Test Pattern"; überdeckt die Inhalte).
-    stage_patterns: HashMap<String, TestPatternSpec>,
+    /// Output Routes (QLab 5) und ihre gerenderten Bilder.
+    routes: RouteManager,
+    route_frames: RouteFrameStore,
+    /// Routen, die neu gerendert werden muessen (Config oder Stage-Aenderung).
+    route_dirty: HashSet<Uuid>,
     html: HashMap<Uuid, ActiveHtml>,
     compositor: Compositor,
     /// Fade-Zwischenwerte (im Tick nach der Iteration anwenden).
@@ -264,6 +270,7 @@ impl RealMediaEngine {
         frames: FrameStore,
         opacities: OpacityStore,
         stage_frames: StageFrameStore,
+        route_frames: RouteFrameStore,
         events: Sender<EngineEvent>,
     ) -> Self {
         let audio = match AudioBackend::new() {
@@ -289,7 +296,9 @@ impl RealMediaEngine {
             fades: HashMap::new(),
             chasing: HashMap::new(),
             stages: HashMap::new(),
-            stage_patterns: HashMap::new(),
+            routes: RouteManager::new(),
+            route_frames,
+            route_dirty: HashSet::new(),
             html: HashMap::new(),
             compositor: Compositor::new(),
             pending_fade_values: Vec::new(),
@@ -625,14 +634,50 @@ impl RealMediaEngine {
         for stage_name in dirty {
             let canvas = canvas_size(&self.stages, &stage_name);
             let surfaces = self.surfaces_of_stage(&stage_name);
-            let pattern = self.stage_patterns.get(&stage_name);
             self.compositor
-                .composite(&stage_name, canvas, &surfaces, pattern, &self.stage_frames);
+                .composite(&stage_name, canvas, &surfaces, &self.stage_frames);
             // Dirty-Tracking aktualisieren.
             let frames = self.frames.lock().unwrap();
             let opacities = self.opacities.lock().unwrap();
             self.compositor
                 .note_composited(&stage_name, &surfaces, &frames, &opacities);
+            // Stage-Canvas hat sich geaendert -> alle Routen dieser Stage
+            // neu rendern (Regionen verweisen auf Routen).
+            if let Some(stage) = self.stages.get(&stage_name) {
+                for region in &stage.regions {
+                    if let Some(route) = region.route {
+                        self.route_dirty.insert(route);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rendert alle als dirty markierten Routen in den Route-Frame-Store
+    /// (nur bei Aenderung: keine Stage geaendert -> keine Arbeit). Routen
+    /// ohne Bild einmalig anlegen (schwarzer Raster).
+    fn render_dirty_routes(&mut self) {
+        let have: HashSet<Uuid> = self.route_frames.lock().unwrap().keys().copied().collect();
+        for route in self.routes.routes() {
+            if !have.contains(&route.id) {
+                self.route_dirty.insert(route.id);
+            }
+        }
+        let dirty = std::mem::take(&mut self.route_dirty);
+        if dirty.is_empty() {
+            return;
+        }
+        let mut route_frames = self.route_frames.lock().unwrap();
+        for route_id in dirty {
+            let Some(route) = self.routes.find(route_id).cloned() else {
+                route_frames.remove(&route_id);
+                continue;
+            };
+            // render_route sortiert die Stages selbst (Layer-Regel).
+            let stages: Vec<Stage> = self.stages.values().cloned().collect();
+            let stage_frames = self.stage_frames.lock().unwrap().clone();
+            let frame = route_renderer::render_route(&route, &stages, &stage_frames);
+            route_frames.insert(route_id, Arc::new(frame));
         }
     }
 
@@ -1078,8 +1123,14 @@ impl MediaEngine for RealMediaEngine {
                     return Ok(());
                 }
                 let name = stage.name.clone();
+                let regions = stage.regions.clone();
                 self.stages.insert(name.clone(), stage);
                 self.compositor.mark_dirty(&name);
+                for region in regions {
+                    if let Some(route) = region.route {
+                        self.route_dirty.insert(route);
+                    }
+                }
                 // Decklink: Stage-Auflösung != Karte → Frames werden per
                 // Nearest-Neighbor skaliert (siehe tick_decklink).
                 if self.decklink.is_some() && name == self.decklink_stage {
@@ -1097,25 +1148,21 @@ impl MediaEngine for RealMediaEngine {
                 }
                 self.emit(EngineEvent::StageConfigured { stage_name: name });
             }
-            EngineCommand::SetTestPattern { screen, pattern } => {
-                debug!(%screen, enabled = pattern.is_some(), "set test pattern");
-                // Alle Stages, die diesem Screen zugeordnet sind.
-                let affected: Vec<String> = self
-                    .stages
-                    .iter()
-                    .filter(|(_, stage)| stage.screen == Some(screen))
-                    .map(|(name, _)| name.clone())
-                    .collect();
-                for name in affected {
-                    match &pattern {
-                        Some(spec) => {
-                            self.stage_patterns.insert(name.clone(), spec.clone());
-                        }
-                        None => {
-                            self.stage_patterns.remove(&name);
-                        }
+            EngineCommand::ConfigureRoutes { routes } => {
+                debug!(count = routes.len(), "configure routes");
+                for route in routes.routes() {
+                    if let Err(err) = route.validate() {
+                        self.emit(EngineEvent::Error {
+                            cue_id: None,
+                            message: err.to_string(),
+                        });
+                        return Ok(());
                     }
-                    self.compositor.mark_dirty(&name);
+                }
+                self.routes = routes;
+                // Konfiguration geaendert -> alle Routen neu rendern.
+                for route in self.routes.routes() {
+                    self.route_dirty.insert(route.id);
                 }
             }
             EngineCommand::PlayHtml {
@@ -1658,6 +1705,8 @@ impl MediaEngine for RealMediaEngine {
 
         // Compositor: geänderte Stages neu aufbauen.
         self.composite_dirty_stages();
+        // Routen neu rendern, deren Stage-Canvas sich geaendert hat.
+        self.render_dirty_routes();
 
         // Decklink: aktuelles Stage-Frame im konfigurierten Takt pushen.
         self.tick_decklink(now);
@@ -1695,15 +1744,23 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
     let frames = new_frame_store();
     let opacities = new_opacity_store();
     let stage_frames = new_stage_frame_store();
+    let route_frames = new_route_frame_store();
 
     let frames_e = frames.clone();
     let opacities_e = opacities.clone();
     let stage_frames_e = stage_frames.clone();
+    let route_frames_e = route_frames.clone();
 
     let join = std::thread::Builder::new()
         .name("real-playback-engine".to_string())
         .spawn(move || {
-            let mut engine = RealMediaEngine::new(frames_e, opacities_e, stage_frames_e, evt_tx);
+            let mut engine = RealMediaEngine::new(
+                frames_e,
+                opacities_e,
+                stage_frames_e,
+                route_frames_e,
+                evt_tx,
+            );
             // Decklink-Hardware-Ausgabe starten, falls konfiguriert
             // (KUHPLAY_DECKLINK_* – siehe DecklinkConfig::from_env).
             engine.start_decklink_from_env();
@@ -1734,6 +1791,7 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
             frames,
             opacities,
             stage_frames,
+            route_frames,
         },
         join,
     )

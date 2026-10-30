@@ -92,7 +92,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             }
             if tog {
                 let new_val = !screens.find(sel_id).is_some_and(|s| s.test_pattern);
-                set_pattern(screens, engine, sel_id, new_val);
+                set_pattern(screens, sel_id, new_val);
             }
             if del {
                 // Zugeordnete Stages entziehen.
@@ -132,7 +132,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                         })
                         .clicked()
                     {
-                        set_all_patterns(screens, engine, !any_pattern);
+                        set_all_patterns(screens, !any_pattern);
                     }
                     if icons::button(
                         ui,
@@ -647,10 +647,10 @@ fn draw_properties(
         }
     }
     if let Some(enabled) = pattern_toggle {
-        set_pattern(screens, engine, sel_id, enabled);
+        set_pattern(screens, sel_id, enabled);
     } else if pattern_kind_changed {
         // Pattern-Typ geändert → Engine aktualisieren (Testbild neu zeichnen).
-        set_pattern(screens, engine, sel_id, true);
+        set_pattern(screens, sel_id, true);
     }
 
     // --- Löschen ---
@@ -732,22 +732,18 @@ fn draw_properties(
     }
 }
 
-/// Testbild eines Screens an/aus schalten (an die Engine melden).
-fn set_pattern(screens: &mut ScreenManager, engine: &EngineHandle, id: Uuid, enabled: bool) {
+/// Testbild eines Screens an/aus schalten (Screen-Modell ist Legacy; das
+/// Route-Testbild haengt an der Route, siehe Workspace Settings).
+fn set_pattern(screens: &mut ScreenManager, id: Uuid, enabled: bool) {
     if let Some(s) = screens.find_mut(id) {
         s.test_pattern = enabled;
     }
-    let pattern = enabled.then(|| screens.pattern_spec_for(id)).flatten();
-    let _ = engine.send(EngineCommand::SetTestPattern {
-        screen: id,
-        pattern,
-    });
 }
 
 /// Testbilder aller Screens an/aus schalten.
-fn set_all_patterns(screens: &mut ScreenManager, engine: &EngineHandle, enabled: bool) {
+fn set_all_patterns(screens: &mut ScreenManager, enabled: bool) {
     for id in screens.ids() {
-        set_pattern(screens, engine, id, enabled);
+        set_pattern(screens, id, enabled);
     }
 }
 

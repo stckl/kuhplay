@@ -53,8 +53,8 @@ use crate::core::{
 
 use super::clock::{Clock, RealClock, VirtualClock};
 use super::frame::{
-    new_frame_store, new_opacity_store, new_stage_frame_store, FrameStore, OpacityStore,
-    StageFrameStore, VideoFrame,
+    new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, FrameStore,
+    OpacityStore, RouteFrameStore, StageFrameStore, VideoFrame,
 };
 use super::{EngineCommand, EngineEvent, MediaEngine};
 
@@ -76,8 +76,10 @@ pub struct EngineHandle {
     pub frames: FrameStore,
     /// Aktuelle Deckkraft (Opacity) pro Cue – wird von Fades aktualisiert.
     pub opacities: OpacityStore,
-    /// Kompositioniertes Stage-Canvas pro Stage-Name (Screens/Compositor).
+    /// Kompositioniertes Stage-Canvas pro Stage-Name (Compositor).
     pub stage_frames: StageFrameStore,
+    /// Gerendertes Route-Bild pro Route-ID (Real-Engine; Mock: leer).
+    pub route_frames: RouteFrameStore,
 }
 
 impl EngineHandle {
@@ -108,9 +110,14 @@ impl EngineHandle {
             .unwrap_or(1.0)
     }
 
-    /// Aktuelles kompositioniertes Stage-Canvas (Screens/Compositor).
+    /// Aktuelles kompositioniertes Stage-Canvas (Compositor).
     pub fn latest_stage_frame(&self, stage: &str) -> Option<Arc<VideoFrame>> {
         self.stage_frames.lock().unwrap().get(stage).cloned()
+    }
+
+    /// Aktuelles Route-Bild (Video-Routing; Real-Engine rendert, Mock leer).
+    pub fn latest_route_frame(&self, route: Uuid) -> Option<Arc<VideoFrame>> {
+        self.route_frames.lock().unwrap().get(&route).cloned()
     }
 }
 
@@ -138,6 +145,7 @@ pub fn spawn_mock_engine_with_join() -> (EngineHandle, std::thread::JoinHandle<(
             frames: new_frame_store(),
             opacities: new_opacity_store(),
             stage_frames: new_stage_frame_store(),
+            route_frames: new_route_frame_store(),
         },
         join,
     )
@@ -771,10 +779,19 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                     }
                 }
             }
-            EngineCommand::SetTestPattern { screen, pattern } => {
-                // Mock rendert kein Canvas; Kommando wird nur protokolliert
-                // (Parität zur Real-Engine, die das Testbild komponiert).
-                debug!(%screen, enabled = pattern.is_some(), "set test pattern (mock)");
+            EngineCommand::ConfigureRoutes { routes } => {
+                // Mock rendert keine Route-Bilder; Kommando wird nur
+                // protokolliert und validiert (Parität zur Real-Engine).
+                debug!(count = routes.len(), "configure routes (mock)");
+                for route in routes.routes() {
+                    if let Err(err) = route.validate() {
+                        self.emit(EngineEvent::Error {
+                            cue_id: None,
+                            message: err.to_string(),
+                        });
+                        return Ok(());
+                    }
+                }
             }
             EngineCommand::PlayHtml {
                 cue_id,

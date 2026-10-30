@@ -10,8 +10,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::core::{
-    AudioRoute, FadeCurve, FadeParam, HtmlSource, LoopMode, MediaSlice, SlideNav, SlideShow, Stage,
-    SurfaceGeometry, TestPatternSpec, Timecode,
+    AudioRoute, FadeCurve, FadeParam, HtmlSource, LoopMode, MediaSlice, RouteManager, SlideNav,
+    SlideShow, Stage, SurfaceGeometry, Timecode,
 };
 
 /// Eine Anweisung an die Playback-Engine.
@@ -90,15 +90,11 @@ pub enum EngineCommand {
     /// Konfiguriert eine Video-Stage (Geometrie/Layer) → `StageConfigured`
     /// oder `Error` bei ungültiger Geometrie.
     ConfigureStage { stage: Stage },
-    /// Aktiviert/deaktiviert das Testbild (Rahmen/Kreis/Raster/Schachbrett/
-    /// Beschriftung) für alle Stages, die dem Screen `screen` zugeordnet
-    /// sind. `pattern = None` → Testbild aus. Das Testbild wird vom
-    /// Compositor **anstelle** der Inhalte gezeichnet (QLab „Test Pattern"
-    /// – zum Einrichten von Projektoren/LED-Wänden).
-    SetTestPattern {
-        screen: Uuid,
-        pattern: Option<TestPatternSpec>,
-    },
+    /// Konfiguriert die Output Routes (QLab 5 "Output Routing"): logische
+    /// Ausgänge mit Auflösung, Device, Testbild und Skalierung. Die Engine
+    /// rendert pro Route ein Bild in den Route-Frame-Store (Stage ->
+    /// Region -> Route; Route-Testbild überdeckt den Inhalt).
+    ConfigureRoutes { routes: RouteManager },
     /// Startet einen HTML5-Cue: Die Engine lädt die `source` in eine
     /// WebView-Instanz (auf `stage`/`layer`) und aktiviert die JS-Bridge.
     /// `duration = None` → Mock-Default (5 s); danach `Finished`.

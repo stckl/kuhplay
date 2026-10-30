@@ -806,7 +806,7 @@ fn manual_app() -> (
     crossbeam_channel::Sender<EngineEvent>,
 ) {
     use kuhplay::engine::{
-        new_frame_store, new_opacity_store, new_stage_frame_store, EngineHandle,
+        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, EngineHandle,
     };
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (evt_tx, evt_rx) = crossbeam_channel::unbounded();
@@ -816,6 +816,7 @@ fn manual_app() -> (
         frames: new_frame_store(),
         opacities: new_opacity_store(),
         stage_frames: new_stage_frame_store(),
+        route_frames: new_route_frame_store(),
     };
     let app = ShowApp::new(handle);
     // Startup-Commands (ConfigureStage aller Stages) verwerfen.

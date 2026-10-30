@@ -6,7 +6,11 @@
 //! Format (Screens + `Stage::screen`); es bleibt unverändert, damit die
 //! Migration auch künftig geprüft bleibt.
 
-use kuhplay::core::{DeviceArea, DeviceRef, DisplayRefInfo, ShowDocument, StageGeometry};
+use std::sync::Arc;
+
+use kuhplay::core::{
+    DeviceArea, DeviceRef, DisplayRefInfo, OutputRoute, Region, ShowDocument, StageGeometry,
+};
 
 fn display(id: u32, name: &str, x: i32, w: u32, h: u32, scale: f32) -> DisplayRefInfo {
     DisplayRefInfo {
@@ -86,4 +90,61 @@ fn legacy_fixture_without_matching_display_keeps_running() {
     assert!(route.validate().is_ok());
     let stage = doc.stages.find("Stage 1").unwrap();
     assert_eq!(stage.regions.len(), 1, "Region bleibt an der Route");
+}
+
+// ---------------------------------------------------------------------
+// Performance (Phase 3): Bilder pro Sekunde im Release-Build.
+// Aufruf: `cargo test --release --test video_routing -- --ignored --nocapture`
+// ---------------------------------------------------------------------
+
+#[test]
+#[ignore = "Nur auf Anfrage im Release-Build messen"]
+fn route_render_benchmark_1080p_and_5120x1440() {
+    use kuhplay::engine::frame::VideoFrame;
+    use kuhplay::engine::route_renderer::{auto_blends, render_route};
+    use std::time::Instant;
+
+    /// Stage-Frame mit halbbewegtem Inhalt (harte Kanten, keine Trivial-
+    /// Optimierung durch gleiche Zeilen).
+    fn noisy_frame(w: u32, h: u32, seed: u32) -> Arc<VideoFrame> {
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        let mut x = seed;
+        for _ in 0..w * h {
+            // xorshift für pseudo-zufällige, aber reproduzierbare Pixel.
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            rgba.extend_from_slice(&[(x & 0xff) as u8, ((x >> 8) & 0xff) as u8, 0, 255]);
+        }
+        Arc::new(VideoFrame::new(w, h, rgba))
+    }
+
+    for (name, w, h, stage_w, stage_h) in [
+        ("1080p", 1920u32, 1080u32, 1920.0f32, 1080.0f32),
+        ("5120x1440", 5120, 1440, 5120.0, 1440.0),
+    ] {
+        let route = OutputRoute::new(name, w, h);
+        let mut stage =
+            kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(stage_w, stage_h));
+        let mut region = Region::full_stage(stage_w, stage_h);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+        let blends = auto_blends(&stage.regions);
+        let frames: std::collections::HashMap<String, Arc<VideoFrame>> =
+            std::iter::once(("S".to_string(), noisy_frame(w, h, name.len() as u32))).collect();
+        // Warmlaufen (Allocationen), dann 30 Bilder messen.
+        for _ in 0..5 {
+            let _ = render_route(&route, std::slice::from_ref(&stage), &frames);
+        }
+        let _ = &blends; // Blend-Berechnung ist Teil des Renderpfads
+        let runs = 30u32;
+        let start = Instant::now();
+        for _ in 0..runs {
+            let _ = render_route(&route, std::slice::from_ref(&stage), &frames);
+        }
+        let elapsed = start.elapsed().as_secs_f32();
+        let fps = runs as f32 / elapsed;
+        println!("{name}: {fps:.1} frames/s (route {w}x{h})");
+        assert!(fps > 0.0);
+    }
 }

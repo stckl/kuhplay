@@ -79,10 +79,18 @@ pub fn new_opacity_store() -> OpacityStore {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-/// Kompositioniertes Stage-Canvas pro Stage-Name (Screens/Compositor).
+/// Kompositioniertes Stage-Canvas pro Stage-Name (Compositor).
 pub type StageFrameStore = Arc<Mutex<HashMap<String, Arc<VideoFrame>>>>;
 
 /// Erzeugt einen leeren Stage-Frame-Store.
 pub fn new_stage_frame_store() -> StageFrameStore {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Gerendertes Route-Bild pro Route-ID (Video-Routing, Route-Renderer).
+pub type RouteFrameStore = Arc<Mutex<HashMap<Uuid, Arc<VideoFrame>>>>;
+
+/// Erzeugt einen leeren Route-Frame-Store.
+pub fn new_route_frame_store() -> RouteFrameStore {
     Arc::new(Mutex::new(HashMap::new()))
 }
