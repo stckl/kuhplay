@@ -289,8 +289,18 @@ pub fn draw_device_outputs(app: &mut ShowApp, ctx: &Context) {
         let scale = display.scale_factor;
         let display_id = display.id;
         ctx.show_viewport_deferred(viewport_id, builder, move |ctx, _class| {
-            // Esc: Das Ausgabefenster liegt über allem, auch über der App.
-            // Sonst käme man mit nur einem Display nicht mehr an sie heran.
+            // Beim Öffnen einmal den Tastaturfokus holen, damit Esc ohne
+            // Klick ankommt (das Fenster liegt über allem – sonst käme man
+            // mit nur einem Display nicht mehr an die App heran).
+            let focus_id = egui::Id::new(("device_output_focused", display_id));
+            if !ctx.data_mut(|d| d.get_temp::<bool>(focus_id).unwrap_or(false)) {
+                ctx.data_mut(|d| d.insert_temp(focus_id, true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            // Playout: Der Mauszeiger bleibt auf der Ausgabe unsichtbar.
+            ctx.set_cursor_icon(egui::CursorIcon::None);
+            // Esc schließt die Ausgabe (Zusätzlich gilt: Esc in der App
+            // schaltet die Device-Ausgabe aus, siehe handle_hotkeys).
             let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
             if escape || ctx.input(|i| i.viewport().close_requested()) {
                 closed.lock().unwrap().insert(display_id);
@@ -312,6 +322,43 @@ pub fn draw_device_outputs(app: &mut ShowApp, ctx: &Context) {
                 .show(ctx, |ui| {
                     let window_rect = ui.available_rect_before_wrap();
                     ui.painter().rect_filled(window_rect, 0.0, Color32::BLACK);
+                    // Schließen ohne Tastatur: dezentes × oben rechts, nur
+                    // bei Mauskontakt sichtbar (Cursor ist versteckt).
+                    let pointer_inside = ctx.input(|i| {
+                        i.pointer
+                            .hover_pos()
+                            .is_some_and(|p| window_rect.contains(p))
+                    });
+                    if pointer_inside {
+                        let size = 28.0;
+                        let btn = egui::Rect::from_min_size(
+                            window_rect.right_top() - egui::vec2(size, 0.0),
+                            egui::vec2(size, size),
+                        );
+                        let hovered =
+                            ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| btn.contains(p)));
+                        let resp = ui.interact(
+                            btn,
+                            egui::Id::new(("device_close", display_id)),
+                            egui::Sense::click(),
+                        );
+                        if hovered {
+                            ui.painter()
+                                .rect_filled(btn, 4.0, with_alpha(palette::ACCENT, 40));
+                            ui.painter().text(
+                                btn.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "×",
+                                egui::FontId::proportional(20.0),
+                                palette::TEXT,
+                            );
+                        }
+                        if resp.clicked() {
+                            closed.lock().unwrap().insert(display_id);
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        resp.on_hover_text("Close this output (Esc)");
+                    }
                     // Listenreihenfolge der Routen: Die spätere Route liegt oben.
                     for route in &routes {
                         // Zielbereich auf dem Gerät (Gerätepixel).
@@ -470,4 +517,9 @@ pub fn draw_route_previews(app: &mut ShowApp, ctx: &Context) {
             },
         );
     }
+}
+
+/// Farbe mit Alpha (gamma-korrigiert, siehe docs/TODO-video-routing.md §7).
+fn with_alpha(c: Color32, a: u8) -> Color32 {
+    c.gamma_multiply(f32::from(a) / 255.0)
 }

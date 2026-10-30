@@ -2425,6 +2425,17 @@ impl ShowApp {
                 matched.push(sc.action);
             }
         });
+        // Bei aktiver Device-Ausgabe beendet Esc die Vollbild-Ausgabe statt
+        // Panic: Die Ausgabe liegt über allem, sonst käme man nicht mehr
+        // zurück (Esc im Ausgabefenster selbst schließt es ebenfalls).
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            && self.output_mode == OutputMode::Displays
+            && !text_input
+        {
+            self.set_output_mode(OutputMode::Off);
+            // PanicAll (Esc) in diesem Fall nicht zusätzlich auslösen.
+            matched.retain(|a| !matches!(a, ShortcutAction::PanicAll));
+        }
         let mut consume_space = false;
         for action in matched {
             let editable = !self.show_mode;
