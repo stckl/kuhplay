@@ -140,6 +140,35 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 
 ---
 
+## Aufgabe 6: macOS Live-Check — ERLEDIGT (Commit 794851e, Live-Test mit Release-Build)
+
+- **Farbiges Region-Grid:** `draw_region_grid` in Routenfarbe (Grid/Rahmen/
+  Achse), Testbild bleibt neutral. Live verifiziert via pattern-Test.
+- **Stage-Editor:** Inhalt jetzt in ScrollArea, Fenster 720×580 — Vorschau
+  wird nicht mehr abgeschnitten.
+- **WebView:** Subprocess-Fenster jetzt `with_visible(false)` — HTML5-Cues
+  rendern offscreen in die Stage (Snapshot via WKWebView), kein eigenes Fenster.
+- **Ruckeln:** Ursache war Engine-TICK 50 ms (nur 20 Hz Re-Render) + Debug-Build.
+  Jetzt TICK 16 ms (~60 Hz) und Release-Build für Live-Betrieb. Video-Cue läuft
+  live flüssig (Captures 1 s apart unterscheiden sich, Release).
+- **Video-Ton:** Video-Cues legen jetzt zusätzlich eine Audio-Voice an
+  (symphonia dekodiert die Tonspur aus dem Container, Pace gegen cpal-Callback
+  = Echtzeit; Start im selben Tick wie Video → synchron). Stop/Pause/Resume/
+  Seek/Finish führen die Voice mit. `EngineHandle::audio_voices` +
+  `has_audio_voice()`; Test `video_cue_with_audio_track_registers_audio_voice`.
+  webm/opus-Vorbis wird von symphonia nicht dekodiert (Feature fehlt) → webm
+  bleibt stumm (Video läuft), mp4/AAC hat Ton.
+- **Footage-Setup live:** Cart „Footage" mit 181 Video-Cues aus
+  ~/sync/Geschäftlich/Footage (Name=Datei, stage=Stage 1), alte Cues gelöscht;
+  Route auf großes Display entfernt, Stage 1 → Route „Display 2" (MacBook,
+  device_area Full), output_mode=displays → Ausgabe NUR auf dem Notebook
+  (5120,458 / 1512×982), App-Fenster liegt auf dem großen Display (1840,150).
+- **Offen für manuelle Bestätigung durch den Nutzer:** Esc ohne Klick schließt
+  die Vollbild-Ausgabe (Code in stage_view.rs + handle_hotkeys), Mauszeiger
+  auf der Ausgabe unsichtbar (set_cursor_icon(None)).
+
+---
+
 ## Aufgabe 5: Windows-11-PC (Testrechner) — Build & Tests dort
 
 **Zugang:** `ssh wolfb@192.168.88.132` (Zertifikat, BatchMode funktioniert).
