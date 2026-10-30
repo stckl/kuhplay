@@ -382,15 +382,17 @@ impl RealMediaEngine {
             Some(out) => (out.width(), out.height()),
             None => return,
         };
+        // Route-Bild statt Stage-Bild: Die konfigurierte Stage (KUHPLAY_DECKLINK_STAGE)
+        // liefert ueber ihre erste Region die Route, deren gerendertes Bild auf
+        // die Karte geht. Ohne Route: schwarz (wie vorher ohne Canvas).
         let stored = self
-            .stage_frames
-            .lock()
-            .unwrap()
+            .stages
             .get(&self.decklink_stage)
-            .cloned();
+            .and_then(|stage| stage.regions.iter().find_map(|r| r.route))
+            .and_then(|route| self.route_frames.lock().unwrap().get(&route).cloned());
         let black = Arc::new(VideoFrame::black(width, height));
         let frame = stored.as_ref().unwrap_or(&black);
-        // Stage-Canvas ≠ Karten-Auflösung → Nearest-Neighbor-Scaling.
+        // Route-Bild ≠ Karten-Auflösung → Nearest-Neighbor-Scaling.
         let scaled;
         let frame = if frame.width == width && frame.height == height {
             frame
@@ -398,7 +400,8 @@ impl RealMediaEngine {
             scaled = Arc::new(scale_nearest(frame, width, height));
             &scaled
         };
-        let result = self.decklink.as_mut().unwrap().push_frame(frame);
+        use super::output_sink::OutputSink as _;
+        let result = self.decklink.as_mut().unwrap().push(frame);
         if let Err(err) = result {
             warn!(%err, "decklink push fehlgeschlagen – Ausgabe deaktiviert");
             self.decklink = None;

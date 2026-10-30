@@ -70,6 +70,7 @@ pub mod decklink;
 pub mod frame;
 pub mod media_engine;
 pub mod mock_engine;
+pub mod output_sink;
 pub mod pattern;
 pub mod real_engine;
 pub mod route_renderer;
@@ -87,5 +88,6 @@ pub use media_engine::{EngineEvent, MediaEngine};
 pub use mock_engine::{
     spawn_mock_engine, spawn_mock_engine_with_join, EngineHandle, MockMediaEngine,
 };
+pub use output_sink::OutputSink;
 pub use pattern::draw_test_pattern;
 pub use real_engine::{spawn_real_engine, spawn_real_engine_with_join, RealMediaEngine};

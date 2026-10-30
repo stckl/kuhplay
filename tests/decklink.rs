@@ -229,3 +229,46 @@ fn decklink_config_from_env() {
     std::env::remove_var("KUHPLAY_DECKLINK_HEIGHT");
     std::env::remove_var("KUHPLAY_DECKLINK_FPS");
 }
+
+#[cfg(unix)]
+#[test]
+fn engine_pusht_route_bild_mit_decklink() {
+    use kuhplay::core::{OutputRoute, Region, RouteManager};
+    // Decklink bekommt das Route-Bild (Stage -> Region -> Route), nicht mehr
+    // das Stage-Canvas: Stage mit Region auf Route 8x8, Karten-Aufloesung 8x8.
+    let (evt_tx, _evt_rx) = crossbeam_channel::unbounded();
+    let mut engine = RealMediaEngine::new(
+        new_frame_store(),
+        new_opacity_store(),
+        new_stage_frame_store(),
+        new_route_frame_store(),
+        evt_tx,
+    );
+    let route = OutputRoute::new("SDI", 8, 8);
+    let mut routes = RouteManager::new();
+    routes.add(route.clone()).unwrap();
+    let mut stage = Stage::new("Stage 1", StageGeometry::new(8.0, 8.0));
+    let mut region = Region::full_stage(8.0, 8.0);
+    region.route = Some(route.id);
+    stage.regions = vec![region];
+    engine
+        .handle(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    engine
+        .handle(EngineCommand::ConfigureRoutes { routes })
+        .unwrap();
+    engine = engine.with_decklink(
+        DecklinkOutput::spawn("cat", &[], 8, 8).unwrap(),
+        "Stage 1".to_string(),
+        25,
+    );
+    for _ in 0..10 {
+        engine.tick();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let pushed = engine.decklink_frames_pushed();
+    assert!(
+        pushed >= 2,
+        "erwartet >=2 Route-Bilder auf Decklink, got {pushed}"
+    );
+}
