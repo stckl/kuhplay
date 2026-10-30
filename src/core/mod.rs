@@ -11,7 +11,10 @@
 //! * [`cart`]: [`CartManager`] – mehrere unabhängige Cue-Listen (QLab-Carts).
 //! * [`audio`]: Fade-Parameter/-Kurven (linear/dB), [`AudioRoute`], [`MediaSlice`].
 //! * [`timecode`]: [`Timecode`]/[`Fps`] – Grundlage für Timecode-Chasing.
-//! * [`stage`]: [`Stage`]/[`StageGeometry`]/[`Crop`] – Video-Ausgabeflächen.
+//! * [`stage`]: [`Stage`]/[`StageGeometry`]/[`Crop`] – Video-Ausgabeflächen
+//!   mit Regionen und Layern.
+//! * [`video_routing`]: [`OutputRoute`]/[`Region`]/[`RouteManager`] –
+//!   Stage → Region → Output Route → Device (QLab 5).
 //! * [`html`]: [`HtmlSource`] – Quelle eines HTML5-Cues (Datei/URL/Inline).
 //! * [`slideshow`]: [`SlideShow`]/[`Slide`]/[`SlideNav`] – Diashow-Cues.
 //! * [`error`] – [`ShowError`].
@@ -36,6 +39,7 @@ pub mod show;
 pub mod slideshow;
 pub mod stage;
 pub mod timecode;
+pub mod video_routing;
 
 /// Serde-Hilfsmodul: `Duration` als Millisekunden (JSON-lesbar).
 pub(crate) mod duration_ms {
@@ -74,3 +78,8 @@ pub use stage::{
     SurfaceGeometry,
 };
 pub use timecode::{Fps, Timecode};
+pub use video_routing::{
+    default_routes_for_displays, edge_factor, region_letter, regions_for_routes_proportional,
+    regions_in_reading_order, DeviceArea, DeviceRef, DisplayRefInfo, EdgeBlend, OutputRoute,
+    Region, RouteManager, RouteScaling,
+};

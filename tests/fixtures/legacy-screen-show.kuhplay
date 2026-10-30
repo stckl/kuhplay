@@ -1,0 +1,124 @@
+{
+  "name": "Legacy Screen Show",
+  "carts": {
+    "carts": [
+      {
+        "cues": [],
+        "selection": [],
+        "selection_anchor": null,
+        "cursor": 0,
+        "name": "Cart 1"
+      }
+    ],
+    "active": 0
+  },
+  "stages": {
+    "stages": [
+      {
+        "id": "54c3450b-0fea-4e1b-9040-f22647e82b56",
+        "name": "Stage 1",
+        "geometry": {
+          "x": 0.0,
+          "y": 0.0,
+          "width": 1920.0,
+          "height": 1080.0,
+          "scale": 1.0,
+          "crop": null
+        },
+        "layers": 0,
+        "screen": "1d7c318b-0f3b-4460-b02c-3e7866f09fca",
+        "visible": true
+      }
+    ]
+  },
+  "audio_output": null,
+  "audio_patch": {
+    "channels": [
+      {
+        "name": "Ch 1",
+        "output": 1
+      },
+      {
+        "name": "Ch 2",
+        "output": 2
+      },
+      {
+        "name": "Ch 3",
+        "output": 3
+      },
+      {
+        "name": "Ch 4",
+        "output": 4
+      },
+      {
+        "name": "Ch 5",
+        "output": 5
+      },
+      {
+        "name": "Ch 6",
+        "output": 6
+      },
+      {
+        "name": "Ch 7",
+        "output": 7
+      },
+      {
+        "name": "Ch 8",
+        "output": 8
+      },
+      {
+        "name": "Ch 9",
+        "output": 9
+      },
+      {
+        "name": "Ch 10",
+        "output": 10
+      },
+      {
+        "name": "Ch 11",
+        "output": 11
+      },
+      {
+        "name": "Ch 12",
+        "output": 12
+      },
+      {
+        "name": "Ch 13",
+        "output": 13
+      },
+      {
+        "name": "Ch 14",
+        "output": 14
+      },
+      {
+        "name": "Ch 15",
+        "output": 15
+      },
+      {
+        "name": "Ch 16",
+        "output": 16
+      }
+    ]
+  },
+  "screens": {
+    "screens": [
+      {
+        "id": "1d7c318b-0f3b-4460-b02c-3e7866f09fca",
+        "name": "Beamer Links",
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080,
+        "rotation": "Deg0",
+        "test_pattern": true,
+        "test_pattern_kind": "Grid",
+        "color": [
+          255,
+          64,
+          64
+        ],
+        "checker_size": 64
+      }
+    ]
+  }
+}

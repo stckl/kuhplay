@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::core::error::{ShowError, ShowResult};
+use crate::core::video_routing::Region;
 
 fn default_scale() -> f32 {
     1.0
@@ -36,6 +37,11 @@ fn default_true() -> bool {
 
 fn default_opacity() -> f32 {
     1.0
+}
+
+/// Default-Blend-Gamma (sRGB-artige Kurve, QLab „Blend Gamma“).
+fn default_gamma() -> f32 {
+    2.2
 }
 
 /// Seite einer Surface, an der ein Hard-Edge-Fade liegt.
@@ -481,12 +487,29 @@ pub struct Stage {
     /// QLab-Pendant: „Stage → Screen“-Zuordnung. Die Ausgabe erfolgt randlos
     /// und „immer oben" exakt auf dem Screen-Rechteck (ggf. gedreht, siehe
     /// [`crate::core::ScreenRotation`]).
-    #[serde(default)]
+    /// Altes Modell: zugeordneter Screen. Wird nur noch zum Laden alter
+    /// Shows gelesen (beim Speichern nicht mehr geschrieben) und beim
+    /// Laden via `migrate_legacy_screens` in Regionen/Routen überführt.
+    #[serde(default, skip_serializing)]
     pub screen: Option<Uuid>,
     /// Sichtbarkeit der Stage (ausgeblendete Stages werden nicht
     /// ausgegeben, laufende Cues bleiben aber aktiv).
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// Regionen: Ausschnitte der Stage, die auf Output Routes zeigen
+    /// (leer = Stage ohne Ausgabe, z. B. nur Vorschau/Audition).
+    #[serde(default)]
+    pub regions: Vec<Region>,
+    /// Stage-Layer: höher = oben (QLab „Stage Layer“). Bei gleichem Layer
+    /// liegt der alphabetisch frühere Name oben.
+    #[serde(default)]
+    pub layer: i32,
+    /// Blend-Gamma der Region-Edge-Blends (Default 2.2).
+    #[serde(default = "default_gamma")]
+    pub blend_gamma: f32,
+    /// Stage zwischen Cues schwarz halten (QLab „Keep Rendering“).
+    #[serde(default)]
+    pub keep_rendering: bool,
 }
 
 impl Stage {
@@ -499,6 +522,10 @@ impl Stage {
             layers: 0,
             screen: None,
             visible: true,
+            regions: Vec::new(),
+            layer: 0,
+            blend_gamma: default_gamma(),
+            keep_rendering: false,
         }
     }
 
@@ -509,7 +536,17 @@ impl Stage {
                 "stage name must not be empty".to_string(),
             ));
         }
-        self.geometry.validate()
+        self.geometry.validate()?;
+        for region in &self.regions {
+            region.validate(self.geometry.width, self.geometry.height)?;
+        }
+        if !self.blend_gamma.is_finite() || !(0.1..=10.0).contains(&self.blend_gamma) {
+            return Err(ShowError::InvalidParameter(format!(
+                "stage blend_gamma must be within 0.1-10.0, got {}",
+                self.blend_gamma
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -530,6 +567,11 @@ impl StageManager {
     /// Alle Stages (nur lesend).
     pub fn stages(&self) -> &[Stage] {
         &self.stages
+    }
+
+    /// Alle Stages (mutable, z. B. für die Migration).
+    pub fn stages_mut(&mut self) -> &mut [Stage] {
+        &mut self.stages
     }
 
     /// Anzahl der Stages.
@@ -581,6 +623,15 @@ impl StageManager {
         }
         self.add(Stage::new(name, StageGeometry::new(1920.0, 1080.0)));
         true
+    }
+
+    /// Stages in Zeichenreihenfolge (unten zuerst): Layer aufsteigend;
+    /// bei gleichem Layer der alphabetisch **spätere** Name zuerst, damit
+    /// der frühere Name oben liegt (QLab-Layer-Regel).
+    pub fn sorted_back_to_front(&self) -> Vec<&Stage> {
+        let mut sorted: Vec<&Stage> = self.stages.iter().collect();
+        sorted.sort_by(|a, b| a.layer.cmp(&b.layer).then_with(|| b.name.cmp(&a.name)));
+        sorted
     }
 }
 
@@ -775,16 +826,81 @@ mod tests {
         stage.screen = Some(screen_id);
         stage.visible = false;
 
+        // Screen ist ein Legacy-Feld: wird gelesen, aber nicht mehr
+        // gespeichert (Migration in `migrate_legacy_screens`).
         let json = serde_json::to_string(&stage).unwrap();
         let back: Stage = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.screen, Some(screen_id));
+        assert_eq!(back.screen, None, "Legacy-Feld nicht mehr schreiben");
         assert!(!back.visible);
+
+        // Alte Show-Dateien mit screen-Zuordnung laden weiter.
+        let legacy = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"Old","geometry":{"x":0.0,"y":0.0,"width":1920.0,"height":1080.0,"scale":1.0},"layers":0,"screen":"00000000-0000-0000-0000-000000000001"}"#;
+        let old: Stage = serde_json::from_str(legacy).unwrap();
+        assert!(old.screen.is_some(), "Legacy-screen wird gelesen");
+        assert!(old.visible);
+    }
+
+    #[test]
+    fn stage_regions_layer_and_defaults_serde() {
+        let mut stage = Stage::new("Main", StageGeometry::new(1920.0, 1080.0));
+        let mut region = crate::core::Region::full_stage(1920.0, 1080.0);
+        region.route = Some(Uuid::new_v4());
+        stage.regions = vec![region];
+        stage.layer = 5;
+        stage.blend_gamma = 1.8;
+        stage.keep_rendering = true;
+        let json = serde_json::to_string(&stage).unwrap();
+        let back: Stage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, stage);
 
         // Alte Shows ohne die neuen Felder laden (Abwärtskompatibilität).
         let legacy = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"Old","geometry":{"x":0.0,"y":0.0,"width":1920.0,"height":1080.0,"scale":1.0},"layers":0}"#;
         let old: Stage = serde_json::from_str(legacy).unwrap();
-        assert_eq!(old.screen, None);
-        assert!(old.visible);
+        assert!(old.regions.is_empty());
+        assert_eq!(old.layer, 0);
+        assert!((old.blend_gamma - 2.2).abs() < 1e-6);
+        assert!(!old.keep_rendering);
+    }
+
+    #[test]
+    fn stage_validate_checks_regions_and_gamma() {
+        let mut stage = Stage::new("Main", StageGeometry::new(1920.0, 1080.0));
+        assert!(stage.validate().is_ok());
+        // Region außerhalb der Stage.
+        stage.regions = vec![crate::core::Region::new(1000.0, 0.0, 1000.0, 100.0)];
+        assert!(stage.validate().is_err(), "Region ragt über die Stage");
+        stage.regions = vec![crate::core::Region::full_stage(1920.0, 1080.0)];
+        assert!(stage.validate().is_ok());
+        // Blend-Gamma außerhalb des sinnvollen Bereichs.
+        stage.blend_gamma = 0.0;
+        assert!(stage.validate().is_err());
+        stage.blend_gamma = 11.0;
+        assert!(stage.validate().is_err());
+        stage.blend_gamma = 2.2;
+        assert!(stage.validate().is_ok());
+    }
+
+    #[test]
+    fn stage_layer_sorting_back_to_front() {
+        let mut m = StageManager::new();
+        // Layer 1: "Beta" und "Alpha"; Layer 0: "Bottom".
+        let mut beta = Stage::new("Beta", StageGeometry::new(100.0, 100.0));
+        beta.layer = 1;
+        let mut alpha = Stage::new("Alpha", StageGeometry::new(100.0, 100.0));
+        alpha.layer = 1;
+        let mut bottom = Stage::new("Bottom", StageGeometry::new(100.0, 100.0));
+        bottom.layer = 0;
+        m.stages_mut()[0] = beta;
+        m.add(alpha);
+        m.add(bottom);
+        let order: Vec<&str> = m
+            .sorted_back_to_front()
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        // Unten zuerst: Layer 0, dann bei Layer 1 der alphabetisch spätere
+        // Name ("Beta") zuerst – "Alpha" liegt oben.
+        assert_eq!(order, vec!["Bottom", "Beta", "Alpha"]);
     }
 
     #[test]

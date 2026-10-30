@@ -189,11 +189,19 @@ fn stage_screen_assignment_roundtrip() {
     let mut stage = Stage::new("Stage 1", StageGeometry::new(1920.0, 1080.0));
     assert!(stage.screen.is_none(), "Default: kein Screen");
     stage.screen = Some(screen.id);
-    // Persistenz (Show-Datei): Screen-Referenz überlebt Serde.
-    // (Legacy-Shows ohne screen-Feld → `None`, siehe Unit-Test in stage.rs.)
+    // Persistenz (Show-Datei): Screen ist ein Legacy-Feld – es wird gelesen
+    // (siehe unten), aber nicht mehr geschrieben; stattdessen migriert
+    // `migrate_legacy_screens` die Zuordnung in Regionen + Routen.
     let json = serde_json::to_string(&stage).unwrap();
     let back: Stage = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.screen, Some(screen.id));
+    assert_eq!(back.screen, None, "Legacy-Feld wird nicht mehr gespeichert");
+    // Legacy-Shows mit screen-Feld laden weiter.
+    let legacy = format!(
+        r#"{{"id":"{}","name":"Old","geometry":{{"x":0.0,"y":0.0,"width":1920.0,"height":1080.0,"scale":1.0}},"layers":0,"screen":"{}"}}"#,
+        stage.id, screen.id
+    );
+    let old: Stage = serde_json::from_str(&legacy).unwrap();
+    assert_eq!(old.screen, Some(screen.id));
 }
 
 #[test]

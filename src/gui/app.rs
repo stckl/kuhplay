@@ -45,8 +45,9 @@ use egui::{Key, RichText};
 use uuid::Uuid;
 
 use crate::core::{
-    cue_type_for_file, CartManager, Cue, CueStatus, CueType, ScreenManager, ShowDocument,
-    ShowResult, Stage, StageManager,
+    cue_type_for_file, default_routes_for_displays, CartManager, Cue, CueStatus, CueType,
+    DisplayRefInfo, Region, RouteManager, ScreenManager, ShowDocument, ShowResult, Stage,
+    StageGeometry, StageManager,
 };
 use crate::engine::waveform::{Waveform, WaveformCache, WAVEFORM_BUCKETS};
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle};
@@ -164,6 +165,9 @@ pub struct ShowApp {
     /// frei platzierbar (Teile eines Displays, mehrere Displays, mehrere
     /// Screens pro Display), mit Drehung und Testbild.
     pub screens: ScreenManager,
+    /// Output Routes (QLab 5 "Video -> Output Routing"): logische Ausgaenge
+    /// mit eigener Aufloesung auf Displays oder Blackmagic-Geraeten.
+    pub routes: RouteManager,
     /// Offen gehaltene Stage-Vorschau-Fenster (QLab „Stage Window").
     pub stage_windows: HashSet<String>,
     /// Flags: welche Screens gerade als Vollbild-Ausgabe auf einem Display laufen.
@@ -474,6 +478,7 @@ impl ShowApp {
             prewait_started: HashMap::new(),
             stages,
             screens,
+            routes: RouteManager::new(),
             stage_windows: HashSet::new(),
             stage_screen_open: stage_view::new_stage_screen_open(),
             displays,
@@ -517,6 +522,10 @@ impl ShowApp {
                 }
             }
         }
+        // QLab-5-Default-Video-Setup: pro Display eine Route ("Display n")
+        // und Stages mit einer Region ueber die ganze Flaeche; Stage 1 bleibt
+        // fuer die Demo-Cues bestehen und liegt auf dem ersten Display.
+        app.setup_default_routes();
         // Remote-Server starten (Web-Remote + Companion, konfigurierbar via
         // Umgebungsvariablen – siehe RemoteConfig::from_env).
         app.remote_config = RemoteConfig::from_env();
@@ -551,6 +560,41 @@ impl ShowApp {
             let _ = self.engine.send(EngineCommand::ConfigureStage {
                 stage: found.clone(),
             });
+        }
+    }
+
+    /// Baut das Default-Video-Setup einer neuen Show (QLab 5): pro Display
+    /// eine Route ("Display n", Aufloesung in echten Pixeln) und pro
+    /// weiterem Display eine Stage in dessen Pixelgroesse mit einer Region
+    /// ueber die ganze Flaeche. Stage 1 bleibt fuer die Demo-Cues bestehen
+    /// und liegt mit einer Full-Canvas-Region auf dem ersten Display.
+    pub fn setup_default_routes(&mut self) {
+        let displays: Vec<DisplayRefInfo> =
+            self.displays.iter().map(DisplayRefInfo::from).collect();
+        self.routes = default_routes_for_displays(&displays);
+        let route_ids = self.routes.ids();
+        let Some(first) = route_ids.first().copied() else {
+            return;
+        };
+        if let Some(stage) = self.stages.find_mut("Stage 1") {
+            let (w, h) = (
+                stage.geometry.width.max(1.0),
+                stage.geometry.height.max(1.0),
+            );
+            let mut region = Region::full_stage(w, h);
+            region.route = Some(first);
+            stage.regions = vec![region];
+        }
+        for (i, id) in route_ids.iter().enumerate().skip(1) {
+            let Some(route) = self.routes.find(*id) else {
+                continue;
+            };
+            let (w, h) = (route.width as f32, route.height as f32);
+            let mut stage = Stage::new(format!("Stage {}", i + 1), StageGeometry::new(w, h));
+            let mut region = Region::full_stage(w, h);
+            region.route = Some(*id);
+            stage.regions = vec![region];
+            self.stages.add(stage);
         }
     }
 
@@ -1790,6 +1834,7 @@ impl ShowApp {
             name: self.show_name.clone(),
             carts: self.carts.clone(),
             stages: self.stages.clone(),
+            routes: self.routes.clone(),
             screens: self.screens.clone(),
             audio_output: self.audio_output.clone(),
             audio_patch: self.audio_patch.clone(),
@@ -1812,19 +1857,25 @@ impl ShowApp {
     /// Lädt eine Show aus einer JSON-Datei.
     pub fn load_show(&mut self, path: &Path) -> ShowResult<()> {
         let json = std::fs::read_to_string(path)?;
-        let doc = ShowDocument::from_json(&json)?;
+        let mut doc = ShowDocument::from_json(&json)?;
+        // Alte Shows (Screens/Stage.screen) migrieren: Routen + Regionen.
+        // Vor der Übernahme der Felder, damit `doc` noch ganz ist.
+        let displays: Vec<DisplayRefInfo> =
+            self.displays.iter().map(DisplayRefInfo::from).collect();
+        doc.migrate_legacy_screens(&displays);
         self.show_name = doc.name;
         self.carts = doc.carts;
         // Stages + Screens übernehmen; bei leeren Defaults neu aufbauen.
         self.stages = if doc.stages.is_empty() {
             StageManager::new()
         } else {
-            doc.stages
+            doc.stages.clone()
         };
+        self.routes = doc.routes.clone();
         self.screens = if doc.screens.is_empty() {
             ScreenManager::from_displays(&self.displays)
         } else {
-            doc.screens
+            doc.screens.clone()
         };
         self.set_audio_output(doc.audio_output);
         self.set_audio_patch(doc.audio_patch);
@@ -1850,6 +1901,7 @@ impl ShowApp {
         self.carts = CartManager::new();
         self.stages = StageManager::new();
         self.screens = ScreenManager::from_displays(&self.displays);
+        self.setup_default_routes();
         self.screen_editor_selected = None;
         self.stage_windows.clear();
         if let Ok(mut open) = self.stage_screen_open.lock() {
