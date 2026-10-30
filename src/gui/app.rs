@@ -1504,26 +1504,25 @@ impl ShowApp {
                 "displays" => OutputMode::Displays,
                 other => return Err(format!("Unknown output mode: {other}")),
             }),
-            RemoteCommand::AddScreen { name } => {
-                let screen = crate::core::Screen::new(name, 0, 0, 1920, 1080);
-                self.screens.add(screen).map_err(|e| e.to_string())?;
+            RemoteCommand::AddRoute {
+                name,
+                width,
+                height,
+            } => {
+                let route = crate::core::OutputRoute::new(name, width, height);
+                self.routes.add(route).map_err(|e| e.to_string())?;
+                self.configure_routes();
             }
-            RemoteCommand::UpdateScreen { id, changes } => {
-                self.remote_update_screen(id, changes)?
-            }
-            RemoteCommand::RemoveScreen { id } => {
-                let assigned: Vec<Stage> = self
-                    .stages
-                    .stages()
-                    .iter()
-                    .filter(|stage| stage.screen == Some(id))
-                    .cloned()
-                    .collect();
-                for mut stage in assigned {
-                    stage.screen = None;
-                    self.configure_stage(stage);
+            RemoteCommand::UpdateRoute { id, changes } => {
+                let route = self.routes.find(id).ok_or("Route not found.")?;
+                let updated: crate::core::OutputRoute = merge_json(route, changes, &["id"])?;
+                if let Some(found) = self.routes.find_mut(id) {
+                    *found = updated;
                 }
-                self.screens.remove(id);
+                self.configure_routes();
+            }
+            RemoteCommand::RemoveRoute { id } => {
+                self.remove_route(id);
             }
             RemoteCommand::AddStage { name } => {
                 self.ensure_stage(&name);
@@ -1534,6 +1533,47 @@ impl ShowApp {
                     .find(&name)
                     .ok_or_else(|| format!("Stage not found: {name}"))?;
                 let updated = merge_json(stage, changes, &["id", "name"])?;
+                self.configure_stage(updated);
+            }
+            RemoteCommand::RemoveStage { name } => {
+                if !self.remove_stage(&name) {
+                    return Err("Cues still use this stage.".to_string());
+                }
+            }
+            RemoteCommand::RenameStage { old, new } => {
+                self.rename_stage(&old, &new);
+            }
+            RemoteCommand::AddRegion { stage, changes } => {
+                let found = self.stages.find(&stage).ok_or("Stage not found.")?;
+                let (sw, sh) = (found.geometry.width, found.geometry.height);
+                let base = crate::core::Region::new(sw / 4.0, sh / 4.0, sw / 2.0, sh / 2.0);
+                let region: crate::core::Region = merge_json(&base, changes, &["id"])?;
+                let mut updated = found.clone();
+                updated.regions.push(region);
+                self.configure_stage(updated);
+            }
+            RemoteCommand::UpdateRegion {
+                stage,
+                region,
+                changes,
+            } => {
+                let found = self.stages.find(&stage).ok_or("Stage not found.")?;
+                let existing = found
+                    .regions
+                    .iter()
+                    .find(|r| r.id == region)
+                    .ok_or("Region not found.")?;
+                let updated: crate::core::Region = merge_json(existing, changes, &["id"])?;
+                let mut stage_updated = found.clone();
+                if let Some(existing) = stage_updated.regions.iter_mut().find(|r| r.id == region) {
+                    *existing = updated;
+                }
+                self.configure_stage(stage_updated);
+            }
+            RemoteCommand::RemoveRegion { stage, region } => {
+                let found = self.stages.find(&stage).ok_or("Stage not found.")?;
+                let mut updated = found.clone();
+                updated.regions.retain(|r| r.id != region);
                 self.configure_stage(updated);
             }
             RemoteCommand::EvalJs { id, script } => {
@@ -1578,21 +1618,6 @@ impl ShowApp {
         Ok(())
     }
 
-    /// Ändert Felder eines Screens und meldet ein geändertes Testbild.
-    fn remote_update_screen(&mut self, id: Uuid, changes: serde_json::Value) -> Result<(), String> {
-        let screen = self.screens.find(id).ok_or("Screen not found.")?;
-        let updated: crate::core::Screen = merge_json(screen, changes, &["id"])?;
-        let pattern_changed = updated.test_pattern != screen.test_pattern
-            || updated.test_pattern_kind != screen.test_pattern_kind
-            || updated.checker_size != screen.checker_size;
-        let pattern = updated.test_pattern;
-        *self.screens.find_mut(id).ok_or("Screen not found.")? = updated;
-        if pattern_changed {
-            self.set_screen_test_pattern(id, pattern);
-        }
-        Ok(())
-    }
-
     /// Baut die komplette Show für die Web-Remote.
     pub fn build_remote_workspace(&mut self) -> RemoteWorkspace {
         use crate::core::{
@@ -1600,7 +1625,7 @@ impl ShowApp {
             GroupMode, ScreenRotation, TestPatternKind,
         };
         use crate::engine::audio_backend::{default_output_name, output_devices};
-        use crate::remote::{RemoteAudioDevice, RemoteDisplay, RemoteOption, RemoteShortcut};
+        use crate::remote::{RemoteAudioDevice, RemoteDevice, RemoteOption, RemoteShortcut};
         fn options<T: serde::Serialize + Copy>(
             items: &[T],
             label: impl Fn(T) -> String,
@@ -1664,16 +1689,19 @@ impl ShowApp {
             cues,
             problems,
             stages: self.stages.stages().to_vec(),
-            screens: self.screens.screens().to_vec(),
-            displays: self
+            routes: self.routes.routes().to_vec(),
+            devices: self
                 .displays
                 .iter()
-                .map(|d| RemoteDisplay {
+                .map(|d| RemoteDevice {
+                    id: d.id,
                     name: d.name.clone(),
                     x: d.x,
                     y: d.y,
                     width: d.width,
                     height: d.height,
+                    scale_factor: d.scale_factor,
+                    frequency: d.frequency,
                 })
                 .collect(),
             options: [
@@ -1717,6 +1745,10 @@ impl ShowApp {
                 (
                     "rotation",
                     options(&ScreenRotation::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "route_scaling",
+                    options(&crate::core::RouteScaling::ALL, |v| v.label().to_string()),
                 ),
                 (
                     "test_pattern_kind",

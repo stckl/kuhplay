@@ -520,27 +520,71 @@ fn remote_structure_and_settings_commands_apply() {
     });
     assert_eq!(app.audio_patch.channels[0].output, 4);
 
-    app.handle_remote_command(RemoteCommand::AddScreen {
+    // Video-Routing (QLab 5: Route/Region statt Screen).
+    app.handle_remote_command(RemoteCommand::AddRoute {
         name: "Beamer".to_string(),
+        width: 1920,
+        height: 1080,
     });
-    let screen = app.screens.screens().last().unwrap().id;
-    app.handle_remote_command(RemoteCommand::UpdateScreen {
-        id: screen,
-        changes: serde_json::json!({ "x": 1920, "name": "Links" }),
+    let route = app.routes.routes().last().unwrap().id;
+    app.handle_remote_command(RemoteCommand::UpdateRoute {
+        id: route,
+        changes: serde_json::json!({ "width": 1280, "name": "Links" }),
     });
-    assert_eq!(app.screens.find(screen).unwrap().x, 1920);
+    assert_eq!(app.routes.find(route).unwrap().width, 1280);
     let stage = app.stages.stages()[0].name.clone();
     app.handle_remote_command(RemoteCommand::UpdateStage {
         name: stage.clone(),
-        changes: serde_json::json!({ "screen": screen }),
+        changes: serde_json::json!({ "layer": 3 }),
     });
-    assert_eq!(app.stages.find(&stage).unwrap().screen, Some(screen));
-    app.handle_remote_command(RemoteCommand::RemoveScreen { id: screen });
-    assert_eq!(
-        app.stages.find(&stage).unwrap().screen,
-        None,
-        "Zuordnung wird entfernt"
-    );
+    assert_eq!(app.stages.find(&stage).unwrap().layer, 3);
+    app.handle_remote_command(RemoteCommand::RenameStage {
+        old: stage.clone(),
+        new: "Hauptstage".to_string(),
+    });
+    assert!(app.stages.find("Hauptstage").is_some());
+    app.handle_remote_command(RemoteCommand::RenameStage {
+        old: "Hauptstage".to_string(),
+        new: stage.clone(),
+    });
+    // Region anlegen, ändern, entfernen.
+    app.handle_remote_command(RemoteCommand::AddRegion {
+        stage: stage.clone(),
+        changes: serde_json::json!({ "route": route, "x": 10.0, "y": 20.0 }),
+    });
+    let region = app.stages.find(&stage).unwrap().regions.last().unwrap().id;
+    app.handle_remote_command(RemoteCommand::UpdateRegion {
+        stage: stage.clone(),
+        region,
+        changes: serde_json::json!({ "width": 100.0, "auto_blend": false }),
+    });
+    let updated = app
+        .stages
+        .find(&stage)
+        .unwrap()
+        .regions
+        .iter()
+        .find(|r| r.id == region)
+        .unwrap();
+    assert_eq!(updated.width, 100.0);
+    assert!(!updated.auto_blend);
+    app.handle_remote_command(RemoteCommand::RemoveRegion {
+        stage: stage.clone(),
+        region,
+    });
+    assert!(app
+        .stages
+        .find(&stage)
+        .unwrap()
+        .regions
+        .iter()
+        .all(|r| r.id != region));
+    app.handle_remote_command(RemoteCommand::RemoveRoute { id: route });
+    assert!(app.routes.find(route).is_none(), "Route entfernt");
+    // Stage loeschen (mit Cues in Nutzung abgelehnt).
+    app.handle_remote_command(RemoteCommand::RemoveStage {
+        name: "Stage $NOPE$".to_string(),
+    });
 
     app.handle_remote_command(RemoteCommand::SetOutputMode {
         mode: "preview".to_string(),

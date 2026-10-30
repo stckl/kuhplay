@@ -22,7 +22,7 @@ pub use midi::{start_midi_input, MidiNoteMap};
 pub use osc::start_osc_server;
 pub use web::start_web_remote;
 
-use crate::core::{AudioPatch, Cue, CueType, Screen, Stage};
+use crate::core::{AudioPatch, Cue, CueType, Stage};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -130,14 +130,16 @@ pub enum RemoteCommand {
     SetOutputMode {
         mode: String,
     },
-    AddScreen {
+    AddRoute {
         name: String,
+        width: u32,
+        height: u32,
     },
-    UpdateScreen {
+    UpdateRoute {
         id: Uuid,
         changes: serde_json::Value,
     },
-    RemoveScreen {
+    RemoveRoute {
         id: Uuid,
     },
     AddStage {
@@ -146,6 +148,27 @@ pub enum RemoteCommand {
     UpdateStage {
         name: String,
         changes: serde_json::Value,
+    },
+    RemoveStage {
+        name: String,
+    },
+    RenameStage {
+        old: String,
+        new: String,
+    },
+    /// Region einer Stage anlegen (Felder wie im Show-Dokument).
+    AddRegion {
+        stage: String,
+        changes: serde_json::Value,
+    },
+    UpdateRegion {
+        stage: String,
+        region: Uuid,
+        changes: serde_json::Value,
+    },
+    RemoveRegion {
+        stage: String,
+        region: Uuid,
     },
     /// JavaScript in der laufenden WebView eines HTML5-Cues ausführen.
     EvalJs {
@@ -268,8 +291,8 @@ pub struct RemoteWorkspace {
     /// Kaputte Cues: ID → Gründe.
     pub problems: HashMap<Uuid, Vec<String>>,
     pub stages: Vec<Stage>,
-    pub screens: Vec<Screen>,
-    pub displays: Vec<RemoteDisplay>,
+    pub routes: Vec<crate::core::OutputRoute>,
+    pub devices: Vec<RemoteDevice>,
     /// Auswahlwerte: Feldname → (JSON-Wert, Anzeigename).
     pub options: BTreeMap<String, Vec<RemoteOption>>,
     pub shortcuts: Vec<RemoteShortcut>,
@@ -285,12 +308,20 @@ pub struct RemoteAudioDevice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteDisplay {
+pub struct RemoteDevice {
+    /// Betriebssystem-ID des Displays.
+    pub id: u32,
     pub name: String,
+    /// Position in globalen Display-Punkten.
     pub x: i32,
     pub y: i32,
+    /// Größe in logischen Punkten.
     pub width: u32,
     pub height: u32,
+    /// Retina-Skalierung (Punkte → Pixel).
+    pub scale_factor: f32,
+    /// Bildwiederholrate (Hz, 0 = unbekannt).
+    pub frequency: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

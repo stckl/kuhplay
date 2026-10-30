@@ -599,10 +599,10 @@ function tabGeometry(c) {
     field('Layer', number(c.layer, v => up(c, { layer: Math.max(0, Math.round(v)) }))));
   const stage = W.stages.find(s => s.name === c.stage);
   if (stage) {
-    const screens = [{ value: null, label: 'None' }, ...W.screens.map(s => ({ value: s.id, label: s.name }))];
     const set = changes => send('update_stage', { name: stage.name, changes });
-    left.append(...field('Canvas', h('div', { class: 'inline' }, number(stage.geometry.width, v => set({ geometry: { ...stage.geometry, width: v } })), '×', number(stage.geometry.height, v => set({ geometry: { ...stage.geometry, height: v } })))));
-    left.append(...field('Screen', select(screens, stage.screen, v => set({ screen: v }))));
+    left.append(...field('Canvas', h('div', { class: 'inline' }, number(stage.geometry.width, v => set({ geometry: { ...stage.geometry, width: Math.max(16, v) } })), '×', number(stage.geometry.height, v => set({ geometry: { ...stage.geometry, height: Math.max(16, v) } })))));
+    const routes = stage.regions.map(r => r.route).filter(Boolean).map(id => (W.routes.find(x => x.id === id) || {}).name).join(', ');
+    left.append(...field('Routes', h('span', { class: 'dim' }, routes || 'none')));
     left.append(...field('Stage Visible', check(stage.visible, 'Visible', v => set({ visible: v }))));
   }
   const parts = [left];
@@ -720,68 +720,77 @@ function pageAudio() {
   }));
   return [form, h('div', { class: 'label section' }, 'Channels'), rows, h('p', { class: 'note' }, 'Device, channel names and outputs are saved with the show.')];
 }
-const footprint = s => s.rotation === 'Deg90' || s.rotation === 'Deg270' ? [s.height, s.width] : [s.width, s.height];
-let mapDrag = null, mapSelected = null;
-// Karte wie in der App: Displays als Umriss, Screens als Flächen. Ziehen verschiebt,
-// der Griff unten rechts ändert die Größe, Kanten rasten an den Displays ein.
-function screenMap() {
+// Karte wie in der App: Stage als Umriss, Regionen in Routenfarbe. Ziehen
+// verschiebt, der Griff unten rechts aendert die Groesse, Kanten rasten an
+// Stage-Rand, Mittellinien und anderen Regionen ein.
+let videoTab = 'Stages', mapDrag = null, mapSelected = null;
+const regionLetters = stage => {
+  const sorted = [...stage.regions].sort((a, b) => a.y - b.y || a.x - b.x);
+  const letters = new Map();
+  sorted.forEach((r, i) => {
+    let n = i + 1, s = '';
+    do { n--; s = String.fromCharCode(65 + n % 26) + s; n = Math.floor(n / 26); } while (n > 0);
+    letters.set(r.id, s);
+  });
+  return letters;
+};
+const routeColor = id => {
+  const route = W.routes.find(r => r.id === id);
+  return route ? `rgb(${route.color})` : 'var(--dim)';
+};
+function stageMap(stage) {
   const NS = 'http://www.w3.org/2000/svg';
   const svg = (tag, attrs = {}) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; };
-  const rects = [...W.displays.map(d => [d.x, d.y, d.width, d.height]), ...W.screens.map(s => [s.x, s.y, ...footprint(s)])];
-  if (!rects.length) rects.push([0, 0, 1920, 1080]);
-  const x0 = Math.min(...rects.map(r => r[0])), y0 = Math.min(...rects.map(r => r[1]));
-  const x1 = Math.max(...rects.map(r => r[0] + r[2])), y1 = Math.max(...rects.map(r => r[1] + r[3]));
-  const margin = Math.max(x1 - x0, y1 - y0) * 0.02;
-  const root = svg('svg', { id: 'map', viewBox: `${x0 - margin} ${y0 - margin} ${x1 - x0 + 2 * margin} ${y1 - y0 + 2 * margin}`, style: 'max-height:280px' });
-  const unit = (x1 - x0 + 2 * margin) / 700;
-  for (const d of W.displays) {
-    root.append(svg('rect', { class: 'display', x: d.x, y: d.y, width: d.width, height: d.height, 'stroke-width': unit, 'stroke-dasharray': `${4 * unit}` }));
-    const label = svg('text', { class: 'dname', x: d.x + 4 * unit, y: d.y + d.height - 5 * unit, style: `font-size:${11 * unit}px` });
-    label.textContent = `${d.name} ${d.width}×${d.height}`;
-    root.append(label);
-  }
-  const snap = (value, size, edges) => {
-    const tolerance = 10 * unit;
-    for (const edge of edges) {
-      if (Math.abs(value - edge) < tolerance) return edge;
-      if (Math.abs(value + size - edge) < tolerance) return edge - size;
-    }
-    return Math.round(value);
-  };
-  const xEdges = W.displays.flatMap(d => [d.x, d.x + d.width]), yEdges = W.displays.flatMap(d => [d.y, d.y + d.height]);
+  const sw = stage.geometry.width, sh = stage.geometry.height;
+  const margin = Math.max(sw, sh) * 0.03;
+  const root = svg('svg', { id: 'map', viewBox: `${-margin} ${-margin} ${sw + 2 * margin} ${sh + 2 * margin}`, style: 'max-height:280px' });
+  const unit = (sw + 2 * margin) / 700;
+  root.append(svg('line', { x1: sw / 2, y1: 0, x2: sw / 2, y2: sh, stroke: 'var(--faint)', 'stroke-width': unit * 0.5 }));
+  root.append(svg('line', { x1: 0, y1: sh / 2, x2: sw, y2: sh / 2, stroke: 'var(--faint)', 'stroke-width': unit * 0.5 }));
+  root.append(svg('rect', { class: 'display', x: 0, y: 0, width: sw, height: sh, 'stroke-width': unit }));
+  const letters = regionLetters(stage);
   const toWorld = e => {
     const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(root.getScreenCTM().inverse());
     return [point.x, point.y];
   };
-  for (const s of W.screens) {
-    const [fw, fh] = footprint(s), color = `rgb(${s.color})`, on = mapSelected === s.id;
-    const box = svg('rect', { class: 'screen', 'data-screen': s.id, x: s.x, y: s.y, width: fw, height: fh, fill: color, 'fill-opacity': on ? 0.35 : 0.2, stroke: color, 'stroke-width': (on ? 2 : 1) * unit });
-    const label = svg('text', { x: s.x + fw / 2, y: s.y + fh / 2, 'text-anchor': 'middle', style: `font-size:${13 * unit}px` });
-    label.textContent = s.name + (s.rotation === 'Deg0' ? '' : ' (' + s.rotation.slice(3) + '°)');
+  for (const region of stage.regions) {
+    const color = routeColor(region.route), on = mapSelected === region.id;
+    const box = svg('rect', { class: 'screen', 'data-region': region.id, x: region.x, y: region.y, width: region.width, height: region.height, fill: color, 'fill-opacity': on ? 0.35 : 0.2, stroke: color, 'stroke-width': (on ? 2 : 1) * unit });
+    const label = svg('text', { x: region.x + 4 * unit, y: region.y + 14 * unit, style: `font-size:${12 * unit}px` });
+    label.textContent = (letters.get(region.id) || '') + (region.route ? ' ' + ((W.routes.find(r => r.id === region.route) || {}).name || '') : ' (no route)');
     const size = 10 * unit;
-    const handle = svg('rect', { class: 'handle', 'data-handle': s.id, x: s.x + fw - size, y: s.y + fh - size, width: size, height: size });
+    const handle = svg('rect', { class: 'handle', 'data-handle': region.id, x: region.x + region.width - size, y: region.y + region.height - size, width: size, height: size });
     const start = (e, mode) => {
       e.stopPropagation();
       if (!editable()) return;
-      mapSelected = s.id;
+      mapSelected = region.id;
       const [wx, wy] = toWorld(e);
-      mapDrag = { id: s.id, mode, wx, wy, x: s.x, y: s.y, w: fw, h: fh, box, label, handle };
+      mapDrag = { id: region.id, mode, wx, wy, x: region.x, y: region.y, w: region.width, h: region.height, box, label, handle };
       root.setPointerCapture(e.pointerId);
     };
     box.addEventListener('pointerdown', e => start(e, 'move'));
     handle.addEventListener('pointerdown', e => start(e, 'size'));
     root.append(box, label, handle);
   }
+  const snap = (value, candidates) => {
+    for (const edge of candidates) if (Math.abs(value - edge) < 10 * unit) return edge;
+    return Math.round(value);
+  };
   root.addEventListener('pointermove', e => {
     if (!mapDrag) return;
     const d = mapDrag, [wx, wy] = toWorld(e);
+    const others = stage.regions.filter(r => r.id !== d.id);
     if (d.mode === 'move') {
-      d.nx = snap(d.x + wx - d.wx, d.w, xEdges); d.ny = snap(d.y + wy - d.wy, d.h, yEdges);
+      const xC = [0, sw - d.w, sw / 2 - d.w / 2, ...others.flatMap(r => [r.x, r.x + r.width, r.x - d.w, r.x + r.width - d.w])];
+      const yC = [0, sh - d.h, sh / 2 - d.h / 2, ...others.flatMap(r => [r.y, r.y + r.height, r.y - d.h, r.y + r.height - d.h])];
+      d.nx = Math.max(0, Math.min(sw - d.w, snap(d.x + wx - d.wx, xC)));
+      d.ny = Math.max(0, Math.min(sh - d.h, snap(d.y + wy - d.wy, yC)));
       d.box.setAttribute('x', d.nx); d.box.setAttribute('y', d.ny);
       d.handle.setAttribute('x', d.nx + d.w - 10 * unit); d.handle.setAttribute('y', d.ny + d.h - 10 * unit);
-      d.label.setAttribute('x', d.nx + d.w / 2); d.label.setAttribute('y', d.ny + d.h / 2);
+      d.label.setAttribute('x', d.nx + 4 * unit); d.label.setAttribute('y', d.ny + 14 * unit);
     } else {
-      d.nw = Math.max(16, snap(d.x + d.w + wx - d.wx, 0, xEdges) - d.x); d.nh = Math.max(16, snap(d.y + d.h + wy - d.wy, 0, yEdges) - d.y);
+      d.nw = Math.max(16, Math.min(sw - d.x, snap(d.x + d.w + wx - d.wx, [sw, ...others.flatMap(r => [r.x, r.x + r.width])] ) - d.x));
+      d.nh = Math.max(16, Math.min(sh - d.y, snap(d.y + d.h + wy - d.wy, [sh, ...others.flatMap(r => [r.y, r.y + r.height])] ) - d.y));
       d.box.setAttribute('width', d.nw); d.box.setAttribute('height', d.nh);
       d.handle.setAttribute('x', d.x + d.nw - 10 * unit); d.handle.setAttribute('y', d.y + d.nh - 10 * unit);
     }
@@ -790,35 +799,94 @@ function screenMap() {
     const d = mapDrag;
     mapDrag = null;
     if (!d) return;
-    const screen = W.screens.find(s => s.id === d.id);
-    const rotated = screen && (screen.rotation === 'Deg90' || screen.rotation === 'Deg270');
-    if (d.nx !== undefined) send('update_screen', { id: d.id, changes: { x: d.nx, y: d.ny } });
-    else if (d.nw !== undefined) send('update_screen', { id: d.id, changes: rotated ? { width: d.nh, height: d.nw } : { width: d.nw, height: d.nh } });
+    if (d.nx !== undefined) send('update_region', { stage: stage.name, region: d.id, changes: { x: d.nx, y: d.ny } });
+    else if (d.nw !== undefined) send('update_region', { stage: stage.name, region: d.id, changes: { width: d.nw, height: d.nh } });
     else renderSettings();
   };
   root.addEventListener('pointerup', finish);
   root.addEventListener('pointercancel', finish);
   return root;
 }
+function stageCard(stage) {
+  const set = changes => send('update_stage', { name: stage.name, changes });
+  const letters = regionLetters(stage);
+  const routeOptions = [{ value: null, label: 'None' }, ...W.routes.map(r => ({ value: r.id, label: r.name }))];
+  const regions = stage.regions.map(region => {
+    const up = changes => send('update_region', { stage: stage.name, region: region.id, changes });
+    return h('div', { class: 'card' }, h('div', { class: 'form' },
+      field('Region ' + letters.get(region.id), h('div', { class: 'inline' },
+        select(routeOptions, region.route, v => up({ route: v })),
+        check(region.grid, 'Grid', v => up({ grid: v })),
+        h('button', { onclick: () => ask('Delete region ' + letters.get(region.id) + ' of ' + stage.name + '?', 'Delete', () => send('remove_region', { stage: stage.name, region: region.id })) }, 'Delete'))),
+      field('Position', h('div', { class: 'inline' }, 'X', number(region.x, v => up({ x: Math.max(0, v) })), 'Y', number(region.y, v => up({ y: Math.max(0, v) })))),
+      field('Size', h('div', { class: 'inline' }, 'W', number(region.width, v => up({ width: Math.max(1, v) })), 'H', number(region.height, v => up({ height: Math.max(1, v) })))),
+      field('Edge Blends', h('div', { class: 'inline' }, 'L', number(region.blend.left, v => up({ blend: { ...region.blend, left: Math.max(0, v) } })), 'R', number(region.blend.right, v => up({ blend: { ...region.blend, right: Math.max(0, v) } })), 'T', number(region.blend.top, v => up({ blend: { ...region.blend, top: Math.max(0, v) } })), 'B', number(region.blend.bottom, v => up({ blend: { ...region.blend, bottom: Math.max(0, v) } }))))),
+      field('Auto Blend', check(region.auto_blend, 'Blend against neighbours', v => up({ auto_blend: v }))));
+  });
+  return h('div', { class: 'card' },
+    h('div', { class: 'form' },
+      field('Stage', text(stage.name, v => { if (v.trim() && v !== stage.name) send('rename_stage', { old: stage.name, new: v.trim() }); })),
+      field('Canvas', h('div', { class: 'inline' }, number(stage.geometry.width, v => set({ geometry: { ...stage.geometry, width: Math.max(16, v) } })), '×', number(stage.geometry.height, v => set({ geometry: { ...stage.geometry, height: Math.max(16, v) } })))),
+      field('Layer', number(stage.layer, v => set({ layer: Math.round(v) }))),
+      field('Keep Rendering', check(stage.keep_rendering, 'Hold black between cues', v => set({ keep_rendering: v }))),
+      field('Visible', check(stage.visible, 'Visible', v => set({ visible: v }))),
+      h('div', { class: 'wide' }, h('button', { onclick: () => ask('Delete stage ' + stage.name + '?', 'Delete', () => send('remove_stage', { name: stage.name })) }, 'Delete Stage'))),
+    h('div', { class: 'label section' }, 'Regions'),
+    stageMap(stage),
+    h('p', { class: 'dim', style: 'margin:4px 0 8px' }, 'Drag to move, drag the corner to resize. Edges snap to the stage and other regions.'),
+    regions,
+    h('div', { class: 'inline' },
+      h('button', { onclick: () => send('add_region', { stage: stage.name, changes: { route: W.routes.length ? W.routes[0].id : null } }) }, '+ Add Region with Output'),
+      h('button', { onclick: () => send('add_region', { stage: stage.name, changes: {} }) }, '+ Empty Region')));
+}
+function pageStages() {
+  const stages = W.stages.map(stageCard);
+  return [...stages, h('div', { class: 'inline' },
+    h('button', { onclick: () => send('add_stage', { name: 'Stage ' + (W.stages.length + 1) }) }, '+ Add Stage'),
+    W.routes.length ? null : h('span', { class: 'dim' }, 'Create an output route first to give regions a target.'))];
+}
+function pageRouting() {
+  const deviceOptions = [{ value: null, label: 'None' }, ...W.devices.map(d => ({ value: d.id, label: d.name }))];
+  const routes = W.routes.map(route => {
+    const set = changes => send('update_route', { id: route.id, changes });
+    const deviceKind = route.device && Object.keys(route.device)[0];
+    const deviceId = deviceKind === 'Display' ? route.device.Display.id : null;
+    const pickDevice = id => {
+      if (id === null) return set({ device: null });
+      const device = W.devices.find(d => d.id === id);
+      set({ device: { Display: { id: device.id, name: device.name, width: device.width, height: device.height } } });
+    };
+    return h('div', { class: 'card' }, h('div', { class: 'form' },
+      field('Name', text(route.name, v => set({ name: v }))),
+      field('Resolution', h('div', { class: 'inline' }, number(route.width, v => set({ width: Math.max(1, Math.round(v)) })), '×', number(route.height, v => set({ height: Math.max(1, Math.round(v)) })))),
+      field('Device', select(deviceOptions, deviceId, pickDevice)),
+      field('Scaling', select(W.options.route_scaling, route.scaling, v => set({ scaling: v }))),
+      field('Rotation', select(W.options.rotation, route.rotation, v => set({ rotation: v }))),
+      field('Rear Projection', check(route.rear_projection, 'Mirror horizontally', v => set({ rear_projection: v }))),
+      field('Test Pattern', h('div', { class: 'inline' }, check(route.test_pattern, 'Show', v => set({ test_pattern: v })), select(W.options.test_pattern_kind, route.test_pattern_kind, v => set({ test_pattern_kind: v })), route.test_pattern_kind === 'LedWall' ? number(route.checker_size, v => set({ checker_size: Math.max(8, Math.round(v)) })) : null)),
+      h('div', { class: 'wide' }, h('button', { onclick: () => ask('Delete route ' + route.name + '?', 'Delete', () => send('remove_route', { id: route.id })) }, 'Delete Route'))));
+  });
+  const deviceButtons = W.devices.map(d => {
+    const size = { name: d.name, width: Math.round(d.width * d.scale_factor), height: Math.round(d.height * d.scale_factor) };
+    return h('button', { onclick: () => send('add_route', size) }, '+ ' + d.name);
+  });
+  return [...routes, h('div', { class: 'inline' },
+    h('button', { onclick: () => send('add_route', { name: 'Route ' + (W.routes.length + 1), width: 1920, height: 1080 }) }, '+ New Output Route'),
+    ...deviceButtons)];
+}
+function pageDevices() {
+  const rows = W.devices.map(d => h('div', { class: 'form' },
+    field(d.name, h('span', {}, Math.round(d.width * d.scale_factor) + '×' + Math.round(d.height * d.scale_factor) + ' px (' + d.width + '×' + d.height + ' pt)')),
+    field('', h('span', { class: 'dim' }, (d.frequency ? Math.round(d.frequency) + ' Hz' : 'Hz unknown') + (d.scale_factor > 1 ? ', Retina ×' + d.scale_factor : '')))));
+  return [...rows, h('p', { class: 'note' }, 'Arrange displays and change resolutions in the system settings of the KuhPlay computer.')];
+}
 function pageVideo() {
   const modes = [['off', 'Off'], ['preview', 'Preview Windows'], ['displays', 'Displays']];
   const top = h('div', { class: 'form' }, field('Output', h('div', { class: 'inline' }, modes.map(([m, label]) => h('button', { class: 'seg' + (W.output_mode === m ? ' on' : ''), onclick: () => send('set_output_mode', { mode: m }) }, label)))));
-  const displays = W.displays.map(d => h('div', { class: 'dim' }, `${d.name}: ${d.width}×${d.height} at ${d.x}, ${d.y}`));
-  const screens = W.screens.map(s => {
-    const set = changes => send('update_screen', { id: s.id, changes });
-    return h('div', { class: 'card' }, h('div', { class: 'form' },
-      field('Name', text(s.name, v => set({ name: v }))),
-      field('Position', h('div', { class: 'inline' }, 'X', number(s.x, v => set({ x: Math.round(v) })), 'Y', number(s.y, v => set({ y: Math.round(v) })))),
-      field('Size', h('div', { class: 'inline' }, 'W', number(s.width, v => set({ width: Math.max(1, Math.round(v)) })), 'H', number(s.height, v => set({ height: Math.max(1, Math.round(v)) })))),
-      field('Rotation', select(W.options.rotation, s.rotation, v => set({ rotation: v }))),
-      field('Test Pattern', h('div', { class: 'inline' }, check(s.test_pattern, 'Show', v => set({ test_pattern: v })), select(W.options.test_pattern_kind, s.test_pattern_kind, v => set({ test_pattern_kind: v })), s.test_pattern_kind === 'LedWall' ? number(s.checker_size, v => set({ checker_size: Math.max(8, Math.round(v)) })) : null)),
-      h('div', { class: 'wide' }, h('button', { onclick: () => ask('Delete screen ' + s.name + '?', 'Delete', () => send('remove_screen', { id: s.id })) }, 'Delete Screen'))));
-  });
-  const screenOptions = [{ value: null, label: 'None' }, ...W.screens.map(s => ({ value: s.id, label: s.name }))];
-  const stages = W.stages.map(s => h('div', { class: 'form' }, field(s.name, select(screenOptions, s.screen, v => send('update_stage', { name: s.name, changes: { screen: v } })))));
-  return [top, h('div', { class: 'label section' }, 'Displays'), displays, h('p', { class: 'dim' }, 'Displays are arranged in the system settings of the KuhPlay computer.'),
-    h('div', { class: 'label section' }, 'Screens'), screenMap(), h('p', { class: 'dim', style: 'margin:4px 0 8px' }, 'Drag to move, drag the corner to resize. Edges snap to the displays.'), screens, h('button', { onclick: () => send('add_screen', { name: 'Screen ' + (W.screens.length + 1) }) }, '+ Add Screen'),
-    h('div', { class: 'label section' }, 'Stages'), stages, h('button', { onclick: () => send('add_stage', { name: 'Stage ' + (W.stages.length + 1) }) }, '+ Add Stage')];
+  const tabs = h('div', { class: 'tabs' },
+    ['Stages', 'Routing', 'Devices'].map(t => h('button', { class: videoTab === t ? 'on' : '', onclick: () => { videoTab = t; renderSettings(); } }, t)));
+  const body = { Stages: pageStages, Routing: pageRouting, Devices: pageDevices }[videoTab]();
+  return [top, tabs, body];
 }
 function infoRows(rows, note) { return [h('div', { class: 'form' }, rows.flatMap(([k, v]) => field(k, h('span', {}, v)))), h('p', { class: 'note' }, note)]; }
 function pageKeys() {
