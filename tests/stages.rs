@@ -197,7 +197,7 @@ fn video_playback_with_stage_reference_runs_normally() {
     let events = drain(&rx);
     assert!(events
         .iter()
-        .any(|e| matches!(e, EngineEvent::Started { cue_id } if *cue_id == id)));
+        .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == id)));
     assert!(events
         .iter()
         .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)));

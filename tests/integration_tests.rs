@@ -20,7 +20,7 @@ type TestEngine = MockMediaEngine<VirtualClock>;
 fn apply_events(list: &mut CueList, events: Vec<EngineEvent>) {
     for event in events {
         match event {
-            EngineEvent::Started { cue_id } => {
+            EngineEvent::Started { cue_id, .. } => {
                 let _ = list.set_status(cue_id, CueStatus::Playing);
             }
             EngineEvent::Paused { cue_id } => {

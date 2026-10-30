@@ -1075,7 +1075,10 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
             if playback.started_at.is_none() && playback.paused_since.is_none() {
                 if now.saturating_sub(playback.received_at) >= playback.pre_wait {
                     playback.started_at = Some(now);
-                    out.push(EngineEvent::Started { cue_id: *cue_id });
+                    out.push(EngineEvent::Started {
+                        cue_id: *cue_id,
+                        duration: None,
+                    });
                     match &mut playback.kind {
                         PlaybackKind::Html(source) => {
                             // WebView-Instanz wird aktiv (JS-Bridge ab jetzt offen).
@@ -1266,7 +1269,7 @@ mod tests {
         let mut saw_finished = false;
         while Instant::now() < deadline && !saw_finished {
             match engine.try_recv_event() {
-                Some(EngineEvent::Started { cue_id: id }) => {
+                Some(EngineEvent::Started { cue_id: id, .. }) => {
                     assert_eq!(id, cue_id);
                     saw_started = true;
                 }

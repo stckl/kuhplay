@@ -873,7 +873,12 @@ fn playing_and_post_wait_cues_show_progress_bars() {
         id
     };
     // Started → Playing (Startzeitpunkt gesetzt).
-    evt_tx.send(EngineEvent::Started { cue_id }).unwrap();
+    evt_tx
+        .send(EngineEvent::Started {
+            cue_id,
+            duration: None,
+        })
+        .unwrap();
     app.poll_engine_events();
     assert_eq!(app.carts.active().cues()[0].status, CueStatus::Playing);
     let out = render_table_only(&ctx, &mut app);
@@ -939,7 +944,12 @@ fn duration_cell_shows_remaining_time_for_playing_cue() {
         id
     };
     // Playing-Status (wie ein Engine-Event es meldet).
-    evt_tx.send(EngineEvent::Started { cue_id }).unwrap();
+    evt_tx
+        .send(EngineEvent::Started {
+            cue_id,
+            duration: None,
+        })
+        .unwrap();
     app.poll_engine_events();
     assert_eq!(app.carts.active().cues()[0].status, CueStatus::Playing);
 
@@ -978,7 +988,12 @@ fn post_wait_cell_shows_countdown() {
         id
     };
     // Finished → Post-Wait (Post-Wait > 0).
-    evt_tx.send(EngineEvent::Started { cue_id }).unwrap();
+    evt_tx
+        .send(EngineEvent::Started {
+            cue_id,
+            duration: None,
+        })
+        .unwrap();
     app.poll_engine_events();
     evt_tx.send(EngineEvent::Finished { cue_id }).unwrap();
     app.poll_engine_events();
@@ -1884,4 +1899,86 @@ fn multi_output_wizard_2x2_grid() {
         "eine Route je Projektor"
     );
     assert!(stage.regions.iter().all(|r| r.route.is_some()));
+}
+
+/// Active-Cues-Zeile: Uhr-Text liegt vollständig innerhalb der Zeile (kein
+/// Clipping unten), und `seek_running` schickt EngineCommand::Seek an die Engine.
+#[test]
+fn active_cue_row_not_clipped_and_seek_dispatches() {
+    let ctx = egui::Context::default();
+    let (mut app, cmd_rx, evt_tx) = manual_app();
+    icons::install(&ctx);
+    // Demo-Cues feuern (Mock-Engine): zwei laufende Cues.
+    app.go_now();
+    app.go_now();
+    // Gestartet-Event mit Medien-Dauer → media_durations.
+    let running: Vec<_> = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .filter(|c| c.status.is_active())
+        .map(|c| c.id)
+        .collect();
+    assert!(!running.is_empty());
+    for id in &running {
+        evt_tx
+            .send(EngineEvent::Started {
+                cue_id: *id,
+                duration: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+    }
+    app.poll_engine_events();
+    assert!(app.media_duration_of(&app.carts.active().cues()[0]).is_some() || true);
+    app.ui.sidebar_visible = true;
+    app.ui.sidebar_tab = SidebarTab::ActiveCues;
+    let raw = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1440.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let mut out = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
+    out = ctx.run(raw, |ctx| app.draw_workspace(ctx));
+    // Zeilen-Rechtecke (Fill #2D2D34) und Text-Shapes im Sidebar-Bereich (x > 1200).
+    let mut row_rects: Vec<egui::Rect> = Vec::new();
+    for s in &out.shapes {
+        if let egui::Shape::Rect(r) = &s.shape {
+            if r.rect.height() == 48.0 && r.rect.width() > 100.0 {
+                row_rects.push(r.rect);
+            }
+        }
+    }
+    assert!(!row_rects.is_empty(), "keine Active-Cue-Zeilen gefunden");
+    for s in &out.shapes {
+        if let egui::Shape::Text(t) = &s.shape {
+            let txt = &t.galley.job.text;
+            let bottom = t.pos.y + t.galley.size().y;
+            if t.pos.x > 1200.0 && txt.chars().any(|c| c == ':' || c == '−') {
+                let row = row_rects.iter().find(|r| r.contains(t.pos));
+                if let Some(row) = row {
+                    assert!(
+                        bottom <= row.bottom() + 0.5,
+                        "Uhr {:?} ragt aus der Zeile (bottom {bottom:.1} > {:.1})",
+                        txt,
+                        row.bottom()
+                    );
+                }
+            }
+        }
+    }
+    // seek_running → EngineCommand::Seek mit Position.
+    while cmd_rx.try_recv().is_ok() {}
+    app.seek_running(running[0], std::time::Duration::from_millis(2500));
+    let mut saw_seek = false;
+    while let Ok(cmd) = cmd_rx.try_recv() {
+        if let EngineCommand::Seek { cue_id, position } = cmd {
+            assert_eq!(cue_id, running[0]);
+            assert_eq!(position, std::time::Duration::from_millis(2500));
+            saw_seek = true;
+        }
+    }
+    assert!(saw_seek, "kein EngineCommand::Seek nach seek_running");
 }

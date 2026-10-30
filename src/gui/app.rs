@@ -154,6 +154,8 @@ pub struct ShowApp {
     text_field_active: bool,
     /// Startzeitpunkte laufender Cues (für elapsed-Anzeige in der Sidebar).
     started_at: HashMap<Uuid, Instant>,
+    /// Medien-Dauer pro Cue (aus `EngineEvent::Started`), Basis fürs Spulen.
+    media_durations: HashMap<Uuid, Duration>,
     /// Akkumulierte aktive Zeit pausierter Cues.
     banked: HashMap<Uuid, Duration>,
     /// Startzeitpunkte von Cues in Pre-Wait (Countdown in der Pre-Wait-
@@ -512,6 +514,7 @@ impl ShowApp {
             text_field_ids_prev: HashSet::new(),
             text_field_active: false,
             started_at: HashMap::new(),
+            media_durations: HashMap::new(),
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
             stages,
@@ -1954,6 +1957,21 @@ impl ShowApp {
     // Timing-Anzeige (Sidebar „Active Cues")
     // ------------------------------------------------------------------
 
+    /// Spult einen laufenden Media-Cue (Audio/Video) an `position`
+    /// (QLab „Scrub" in den Active Cues; Bild+Ton springen synchron, weil
+    /// beide Backends im selben Engine-Command den Seek bekommen).
+    pub fn seek_running(&mut self, id: Uuid, position: Duration) {
+        self.dispatch(vec![EngineCommand::Seek {
+            cue_id: id,
+            position,
+        }]);
+    }
+
+    /// Medien-Dauer eines Cues (aus dem Started-Event), falls bekannt.
+    pub fn media_duration_of(&self, cue: &Cue) -> Option<Duration> {
+        self.media_durations.get(&cue.id).copied()
+    }
+
     /// Elapsed-Zeit eines aktiven Cues (Playing: laufend akkumuliert,
     /// Paused: akkumulierter Wert bis zur Pause).
     pub fn elapsed_of(&self, cue: &Cue) -> Option<Duration> {
@@ -2309,9 +2327,12 @@ impl ShowApp {
     pub fn poll_engine_events(&mut self) {
         while let Some(event) = self.engine.try_recv_event() {
             match event {
-                EngineEvent::Started { cue_id } => {
+                EngineEvent::Started { cue_id, duration } => {
                     self.apply_status(cue_id, CueStatus::Playing);
                     self.note_started(cue_id);
+                    if let Some(d) = duration {
+                        self.media_durations.insert(cue_id, d);
+                    }
                     let (number, name) = self.cue_label(cue_id);
                     self.broadcast_remote_event(RemoteEvent::CueStarted {
                         id: cue_id,
@@ -2392,12 +2413,25 @@ impl ShowApp {
                 EngineEvent::SlideChanged { cue_id, index, at } => {
                     tracing::debug!(%cue_id, index, ?at, "slideshow changed slide");
                 }
+                // Spulen (Seek): elapsed-Uhr an die Sprungposition hängen.
+                EngineEvent::TimecodeJump { cue_id, to, .. } => {
+                    if self
+                        .carts
+                        .find_cue_any(cue_id)
+                        .map(|c| c.status.is_active())
+                        .unwrap_or(false)
+                    {
+                        self.banked.insert(cue_id, to);
+                        if self.started_at.contains_key(&cue_id) {
+                            self.started_at.insert(cue_id, Instant::now());
+                        }
+                    }
+                }
                 // Informative Events (V1 ohne UI-Anzeige, über Events abgedeckt).
                 EngineEvent::Position { .. }
                 | EngineEvent::LoopIteration { .. }
                 | EngineEvent::FadeProgress { .. }
                 | EngineEvent::FrameDrop { .. }
-                | EngineEvent::TimecodeJump { .. }
                 | EngineEvent::Loaded { .. }
                 | EngineEvent::StageConfigured { .. }
                 | EngineEvent::Pong(_) => {}

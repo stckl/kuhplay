@@ -103,6 +103,8 @@ struct ActiveCueRow {
     status: CueStatus,
     duration: Duration,
     elapsed: Option<Duration>,
+    /// Medien-Dauer (aus Engine-Event), falls bekannt – Basis fürs Spulen.
+    media: Option<Duration>,
 }
 
 /// Tab „Active Cues": laufende Cues mit Einzel-Steuerung.
@@ -118,6 +120,7 @@ fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
                 status: cue.status,
                 duration: cue.duration,
                 elapsed: app.elapsed_of(cue),
+                media: app.media_duration_of(cue),
             });
         }
     }
@@ -143,8 +146,10 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         status,
         duration,
         elapsed,
+        media,
     } = row;
-    let (id, cue_type, status, duration, elapsed) = (*id, *cue_type, *status, *duration, *elapsed);
+    let (id, cue_type, status, duration, elapsed, media) =
+        (*id, *cue_type, *status, *duration, *elapsed, *media);
     let progress = match (elapsed, duration) {
         (Some(e), d) if d > Duration::ZERO => {
             (e.as_secs_f64() / d.as_secs_f64()).clamp(0.0, 1.0) as f32
@@ -158,8 +163,10 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
     } else {
         palette::PLAYING
     };
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 48.0),
+        egui::Sense::click_and_drag(),
+    );
     // Fortschrittsbalken im Hintergrund (QLab: über die ganze Zeilenbreite).
     ui.painter().rect_filled(rect, 5.0, palette::RAISED);
     let bar_width = rect.width() * progress;
@@ -175,9 +182,11 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         color,
     );
     // Widgets über dem Balken.
+    // Volle Zeilenhoehe nutzbar (nur horizontal eingerückt): Die Uhr darf
+    // nicht unten abgeschnitten werden.
     let mut row_ui = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(6.0, 2.0)))
+            .max_rect(rect.shrink2(egui::vec2(6.0, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     row_ui.horizontal(|ui| {
@@ -210,6 +219,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             .on_hover_text(format!("{} cue", cue_type.label()));
         ui.add_space(size::SPACE_SMALL);
         ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
             ui.label(RichText::new(format!("{}  {}", number, name)).strong());
             // Restzeit (docs/UI.md §5.4).
             let time = match (elapsed, duration) {
@@ -246,5 +256,25 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             }
         });
     });
+    // Spulen (QLab „Scrub"): Ziehen/Klick auf der Zeile springt im Medium an
+    // die Stelle – Bild und Ton bekommen im selben Engine-Command den Seek.
+    let total = if duration > Duration::ZERO {
+        Some(duration)
+    } else {
+        media
+    };
+    if let Some(total) = total.filter(|t| *t > Duration::ZERO) {
+        let interact = (response.dragged() || response.clicked())
+            && ui
+                .input(|i| i.pointer.interact_pos())
+                .is_some_and(|p| rect.contains(p));
+        if interact {
+            if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+                let frac = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                app.seek_running(id, total.mul_f64(f64::from(frac)));
+            }
+        }
+        response.on_hover_text("Drag to scrub / click to jump to this position");
+    }
     ui.add_space(size::SPACE_SMALL);
 }

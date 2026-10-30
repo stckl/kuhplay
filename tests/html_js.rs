@@ -53,7 +53,7 @@ fn start_html(
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id)),
+            .any(|e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id)),
         "engine must report Started: {events:?}"
     );
     assert!(

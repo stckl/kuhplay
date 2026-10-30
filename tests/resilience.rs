@@ -116,7 +116,7 @@ fn valid_media_file_plays_and_finishes_without_error() {
     let events = drain(&rx);
     assert!(events
         .iter()
-        .any(|e| matches!(e, EngineEvent::Started { cue_id } if *cue_id == id)));
+        .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == id)));
     assert!(events
         .iter()
         .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)));

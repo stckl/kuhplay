@@ -11,8 +11,12 @@ use super::EngineCommand;
 /// Rückmeldungen der Engine an die UI (asynchron, thread-sicher).
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
-    /// Wiedergabe gestartet (nach Ablauf von Pre-Wait).
-    Started { cue_id: Uuid },
+    /// Wiedergabe gestartet (nach Ablauf von Pre-Wait). `duration` ist die
+    /// erkannte Medien-Dauer (None = unbekannt/bis EOF) – Basis fürs Spulen.
+    Started {
+        cue_id: Uuid,
+        duration: Option<Duration>,
+    },
     /// Wiedergabe pausiert.
     Paused { cue_id: Uuid },
     /// Wiedergabe fortgesetzt.

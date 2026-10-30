@@ -343,7 +343,7 @@ fn invalid_route_yields_error_event_and_valid_route_plays() {
     let events = drain(&rx);
     assert!(events
         .iter()
-        .any(|e| matches!(e, EngineEvent::Started { cue_id } if *cue_id == good)));
+        .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == good)));
     assert!(
         events
             .iter()
@@ -387,7 +387,7 @@ fn route_patch_validation_end_to_end() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, EngineEvent::Started { cue_id } if *cue_id == good)),
+            .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == good)),
         "valid patch must play: {events:?}"
     );
 }

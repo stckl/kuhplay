@@ -1577,7 +1577,6 @@ impl MediaEngine for RealMediaEngine {
             if playback.started_at.is_none() && playback.paused_since.is_none() {
                 if now.saturating_sub(playback.received_at) >= playback.pre_wait {
                     playback.started_at = Some(now);
-                    out.push(EngineEvent::Started { cue_id });
                     let kind = playback.kind.clone();
                     let path = playback.path.clone();
                     let route = playback.route;
@@ -1631,6 +1630,11 @@ impl MediaEngine for RealMediaEngine {
                             }
                         }
                     }
+                    // Started erst nach Backend-Start: Medien-Dauer ist dann bekannt.
+                    out.push(EngineEvent::Started {
+                        cue_id,
+                        duration: playback.media_duration,
+                    });
                 } else {
                     continue;
                 }

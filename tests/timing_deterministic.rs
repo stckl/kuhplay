@@ -95,7 +95,7 @@ fn pre_wait_starts_playback_at_the_exact_millisecond() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, EngineEvent::Started { cue_id } if *cue_id == id)),
+            .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == id)),
         "Started exactly when pre-wait elapsed"
     );
     assert!(!events

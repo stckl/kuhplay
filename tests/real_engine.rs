@@ -334,7 +334,7 @@ fn audio_play_started_then_finished_at_eof() {
 
     let started = wait_for_event(
         &engine.events,
-        |e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id),
+        |e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id),
         Duration::from_secs(3),
     );
     assert!(started.is_some(), "expected Started event");
@@ -371,7 +371,7 @@ fn audio_pause_resume_stop_events() {
     assert!(
         wait_for_event(
             &engine.events,
-            |e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id),
+            |e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id),
             Duration::from_secs(3),
         )
         .is_some(),
@@ -500,7 +500,7 @@ fn slideshow_auto_advances_and_finishes() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id)),
+            .any(|e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id)),
         "expected Started"
     );
     // Wechsel auf Slide 1 und 2 (Auto-Advance nach je 250 ms).
@@ -553,7 +553,7 @@ fn slideshow_manual_slide_nav() {
     assert!(
         wait_for_event(
             &engine.events,
-            |e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id),
+            |e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id),
             Duration::from_secs(3),
         )
         .is_some(),
@@ -629,7 +629,7 @@ fn stage_canvas_composites_surface_with_area_of_interest() {
     assert!(
         wait_for_event(
             &engine.events,
-            |e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id),
+            |e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id),
             Duration::from_secs(3),
         )
         .is_some(),
@@ -691,7 +691,7 @@ fn stage_canvas_reflects_opacity_fade() {
     assert!(
         wait_for_event(
             &engine.events,
-            |e| matches!(e, EngineEvent::Started { cue_id: id } if *id == cue_id),
+            |e| matches!(e, EngineEvent::Started { cue_id: id, .. } if *id == cue_id),
             Duration::from_secs(3),
         )
         .is_some(),
@@ -766,7 +766,7 @@ fn stop_all_stops_running_playbacks() {
         || {
             let mut seen: Vec<Uuid> = Vec::new();
             while let Ok(event) = engine.events.try_recv() {
-                if let EngineEvent::Started { cue_id } = event {
+                if let EngineEvent::Started { cue_id, .. } = event {
                     seen.push(cue_id);
                 }
             }
@@ -906,4 +906,60 @@ fn video_cue_with_audio_track_registers_audio_voice() {
     engine.send(EngineCommand::Stop { cue_id }).expect("stop");
     let gone = wait_until(|| !engine.has_audio_voice(cue_id), Duration::from_secs(2));
     assert!(gone, "Stop muss die Audio-Voice austragen");
+}
+
+/// Spulen (Seek) in einem laufenden Video: TimecodeJump-Event mit Zielposition,
+/// danach läuft das Video ab der neuen Stelle weiter (Frame im Store bleibt da).
+#[test]
+fn seek_in_running_video_jumps_and_continues() {
+    if !ffmpeg_available() {
+        eprintln!("SKIP: ffmpeg not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mp4 = dir.path().join("seek.mp4");
+    write_test_video(&mp4, 3.0, 320, 240).expect("ffmpeg could not create test video");
+
+    let engine = spawn_real_engine();
+    let cue_id = Uuid::new_v4();
+    engine
+        .commands
+        .send(play_cmd(cue_id, &mp4, None))
+        .expect("send play");
+    assert!(
+        wait_until(
+            || engine
+                .events
+                .try_iter()
+                .any(|e| matches!(e, EngineEvent::Started { cue_id: id, .. } if id == cue_id)),
+            Duration::from_secs(5)
+        ),
+        "Started-Event fehlt"
+    );
+    // 1 s laufen lassen, dann auf 2.5 s spulen.
+    std::thread::sleep(Duration::from_millis(1000));
+    engine
+        .send(EngineCommand::Seek {
+            cue_id,
+            position: Duration::from_millis(2500),
+        })
+        .expect("seek");
+    let jumped = wait_until(
+        || {
+            engine.events.try_iter().any(|e| matches!(
+                e,
+                EngineEvent::TimecodeJump { cue_id: id, to, .. } if id == cue_id && to == Duration::from_millis(2500)
+            ))
+        },
+        Duration::from_secs(3),
+    );
+    assert!(jumped, "TimecodeJump auf 2.5 s fehlt");
+    // Video läuft danach weiter (Frames landen weiter im Store).
+    assert!(
+        wait_until(
+            || engine.frames.lock().unwrap().get(&cue_id).is_some(),
+            Duration::from_secs(5)
+        ),
+        "nach dem Seek kommen keine Frames mehr"
+    );
 }
