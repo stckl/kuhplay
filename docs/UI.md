@@ -254,11 +254,16 @@ Post-wait · Continue**.
     (Anzahl/Auflösung/Überlappung der Projektoren; erzeugt je Projektor eine
     Route und eine Stage mit überlappenden Regionen). Löschen nur, wenn kein
     Cue die Stage nutzt.
-  - **Output Routing:** Tabelle der Routen (logische Ausgänge): Name,
-    Auflösung in echten Pixeln, Device (Display oder Blackmagic), Testbild,
-    Farbe, Edit, Delete. Fehlende Geräte erscheinen kursiv mit „(missing)“.
-    Route-Editor: Name, Größe, „Set from Device“, Drehung, Rear Projection,
-    Skalierung (Center/Fit/Stretch/Fill), Device, Teilbereich (Full/Part).
+  - **Output Routing:** Device-Karte oben (alle Displays als Umrisse in
+    globalen Punkten, Routen als farbige Rechtecke an ihrer DeviceArea-Position;
+    Ziehen verschiebt, Ecke unten rechts skaliert, Doppelklick = Full,
+    Einrasten an Geräterändern, Shift ohne Snap; Part-Angabe in Gerätepixeln,
+    z. B. LED-Wand 800×600 aus einem 1920×1080-SDI). Darunter die Tabelle der
+    Routen (logische Ausgänge): Name, Auflösung in echten Pixeln, Device
+    (Display oder Blackmagic), Testbild, Farbe, Edit, Delete. Fehlende Geräte
+    erscheinen kursiv mit „(missing)“. Route-Editor (eigenes Fenster): Name,
+    Größe, „Set from Device“, Drehung, Rear Projection, Skalierung
+    (Center/Fit/Stretch/Fill), Device, Teilbereich (Full/Part).
   - **Output Devices:** erkannte Displays mit Auflösung (Pixel und Punkte)
     und Wiederholrate; Hinweis, dass Anordnung/Auflösung in den
     Systemeinstellungen geändert werden.

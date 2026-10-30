@@ -111,35 +111,20 @@ Test: `viewport_window_embedded_fallback_renders` (gui_smoke).
 
 ---
 
-## Aufgabe 3: Routen frei auf Ausgabegeräten positionieren (Device-Karte)
+## Aufgabe 3: Routen frei auf Ausgabegeräten positionieren (Device-Karte) — ERLEDIGT
 
-**Wunsch/Nutzungsszenario (Nutzer-Zitat):** „LED-Wand per SDI: SDI ist 1920×1080,
-die Wand aber 800×600 — wir nutzen nur einen Teil des SDI-Signals (Area of
-Interest).“ Dazu: „Beim Output Routing will ich die Displays/Routen frei auf den
-Output-Devices positionieren können.“
-
-**Das Modell kann das schon** (`DeviceArea::Part { x, y, width, height }` in
-**Gerätepixeln**); es fehlt die grafische Bedienung (früher hatte der gelöschte
-`screen_editor.rs` genau so eine Karte — als Vorlage aus der Git-History holen:
-`git show 5c1cc0f^:src/gui/screen_editor.rs`).
-
-**Entwurf:** Im Reiter „Output Routing“ (workspace_settings.rs) über der Routen-
-Tabelle eine Karte (`draw_device_map`) pro Device (oder eine Karte mit allen
-Displays nebeneinander):
-- SVG-artiges Zeichnen mit `ui.painter()` wie `stage_editor::draw_canvas`:
-  Display-Umriss (Punkte→Pixel über `scale_factor`), Routen als farbige Rechtecke
-  (Routenfarbe) an ihrer `DeviceArea::Part`-Position, `Full` = ganzes Display;
-- **Ziehen** verschiebt (ändert `Part.x/y`), **Ecke unten rechts** skaliert
-  (`Part.width/height`), Doppelklick oder „Full“-Button auf Full zurück;
-  Einrasten an Display-Rändern (Toleranz, ⌘ schaltet aus — wie stage_editor);
-- Nur Routen mit `DeviceRef::Display { id }` des angezeigten Devices;
-  Blackmagic-Routen ohne Karte (nur Tabellen-Edit);
-- Nach jeder Änderung `app.configure_routes()` aufrufen;
-- Buttons „Set from Device“ (im Route-Editor vorhanden) bleibt.
-- Tests: headless gui_smoke — Karte rendert ohne Panic, Routen mit Part erscheinen
-  (Text/„Resolution“-Assertions erweitern); Interaktion nur manuell prüfbar
-  (Screencapture live — siehe „Live-Test-Werkzeuge“ unten).
-- Doku: `docs/UI.md` §5.7 + qlab5-parity („Output Routing“-Zeile).
+**Umgesetzt:** `draw_device_map` oben im Tab „Output Routing"
+(workspace_settings.rs): alle Displays als Umrisse (Welt = globale
+Display-Punkte), Routen als farbige Rechtecke an ihrer `DeviceArea`-Position
+(Part in Gerätepixeln, Umrechnung Punkte↔Pixel über `scale_factor`).
+Interaktion: Ziehen verschiebt (Part.x/y), Ziehen an der Ecke unten rechts
+skaliert (Part.width/height), Doppelklick setzt auf „Full“, Einrasten an
+Geräterändern (Shift = ohne Snap), Änderungen wirken sofort über
+`configure_routes()`. LED-Wand-Szenario abgedeckt: 800×600-Ausschnitt aus
+1920×1080-SDI als `DeviceArea::Part`.
+Pure Geometrie als `route_map_rect()` + 2 Unit-Tests (Full/Part, Retina-Skalierung);
+Smoke-Test `output_routing_device_map_renders_route_area` (rendert nur, wenn im
+Testprozess Displays erkannt werden). Doku: docs/UI.md §5.7.
 
 ---
 

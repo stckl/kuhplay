@@ -668,7 +668,325 @@ fn draw_stages_table(ui: &mut egui::Ui, app: &mut ShowApp) {
 
 /// Reiter „Output Routing“: Tabelle Name, Auflösung, Device-Auswahl,
 /// Teilbereich, Testbild, Farbe, Edit, Löschen + „New Output Route“.
+/// Device-Karte im Tab „Output Routing": alle Displays als Umrisse (Welt =
+/// globale Display-Punkte), jede Route als farbiges Rechteck an ihrer
+/// `DeviceArea`-Position (Part ist in Gerätepixeln, Umrechnung über
+/// `scale_factor`). Ziehen verschiebt die Route auf dem Gerät, Ziehen an der
+/// Ecke unten rechts skaliert den Ausschnitt, Doppelklick = „Full".
+/// Einrasten an den Geräte-Rändern (Shift deaktiviert), Änderungen wirken
+/// sofort (`configure_routes`).
+fn draw_device_map(ui: &mut egui::Ui, app: &mut ShowApp) {
+    use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+
+    /// Drag-Zustand der Karte (im Context gespeichert, überdauert Frames).
+    #[derive(Clone, Copy, Default)]
+    enum MapDrag {
+        #[default]
+        Idle,
+
+        Move {
+            id: uuid::Uuid,
+            grab: (f32, f32),
+        },
+        Resize {
+            id: uuid::Uuid,
+        },
+    }
+
+    let displays = app.displays.clone();
+    if displays.is_empty() {
+        return;
+    }
+    // Welt = Bounding-Box aller Displays in globalen Punkten.
+    let min_x = displays.iter().map(|d| d.x).min().unwrap_or(0) as f32;
+    let min_y = displays.iter().map(|d| d.y).min().unwrap_or(0) as f32;
+    let bw = (displays
+        .iter()
+        .map(|d| d.x + d.width as i32)
+        .max()
+        .unwrap_or(0) as f32
+        - min_x)
+        .max(1.0);
+    let bh = (displays
+        .iter()
+        .map(|d| d.y + d.height as i32)
+        .max()
+        .unwrap_or(0) as f32
+        - min_y)
+        .max(1.0);
+
+    let canvas_height = 210.0_f32;
+    let (canvas_rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), canvas_height),
+        Sense::click_and_drag(),
+    );
+    ui.set_clip_rect(canvas_rect.intersect(ui.clip_rect()));
+    ui.painter()
+        .rect_filled(canvas_rect, 4.0, theme::palette::BACKGROUND);
+
+    let margin = 20.0_f32;
+    let scale = ((canvas_rect.width() - 2.0 * margin) / bw)
+        .min((canvas_rect.height() - 2.0 * margin) / bh)
+        .max(0.001);
+    let offset = Vec2::new(
+        canvas_rect.center().x - (min_x + bw / 2.0) * scale,
+        canvas_rect.center().y - (min_y + bh / 2.0) * scale,
+    );
+    let to_screen = |x: f32, y: f32| Pos2::new(x * scale + offset.x, y * scale + offset.y);
+    let to_world = |p: Pos2| ((p.x - offset.x) / scale, (p.y - offset.y) / scale);
+    let pointer_world = ui
+        .input(|i| i.pointer.hover_pos())
+        .filter(|p| canvas_rect.contains(*p))
+        .map(to_world);
+
+    // Route → Rechteck in Welt-Punkten (Part in Gerätepixeln → Punkte).
+    let route_rect = |route: &crate::core::OutputRoute,
+                      d: &display_info::DisplayInfo|
+     -> Option<(f32, f32, f32, f32)> {
+        let crate::core::DeviceRef::Display { id, .. } = route.device.as_ref()? else {
+            return None;
+        };
+        if *id != d.id {
+            return None;
+        }
+        Some(route_map_rect(
+            &route.device_area,
+            (d.width, d.height),
+            d.scale_factor,
+            (d.x as f32, d.y as f32),
+        ))
+    };
+
+    let mut routes = app.routes.routes().to_vec();
+    let drag_id = ui.id().with("device_map_drag");
+    let sel_id = ui.id().with("device_map_selected");
+    let mut selected: Option<uuid::Uuid> = ui.ctx().data_mut(|d| d.get_temp(sel_id));
+    let mut changed = false;
+
+    // --- Interaktion ---
+    if response.drag_started() {
+        if let Some(pw) = pointer_world {
+            // Oberste Route am Pointer finden (zuletzt gezeichnete zuerst).
+            let hit = routes.iter().rev().find_map(|r| {
+                displays
+                    .iter()
+                    .find_map(|d| route_rect(r, d).map(|(x, y, w, h)| (r.id, x, y, w, h)))
+                    .filter(|(_, x, y, w, h)| {
+                        pw.0 >= *x && pw.0 <= *x + *w && pw.1 >= *y && pw.1 <= *y + *h
+                    })
+            });
+            if let Some((id, x, y, w, _h)) = hit {
+                selected = Some(id);
+                let corner_tol = 10.0 / scale;
+                let drag = if (pw.0 - (x + w)).abs() <= corner_tol
+                    && (pw.1 - (y + _h)).abs() <= corner_tol
+                {
+                    MapDrag::Resize { id }
+                } else {
+                    MapDrag::Move {
+                        id,
+                        grab: (pw.0 - x, pw.1 - y),
+                    }
+                };
+                ui.ctx().data_mut(|d| d.insert_temp(drag_id, drag));
+            }
+        }
+    }
+    if response.dragged() {
+        let drag = ui.ctx().data_mut(|d| d.get_temp::<MapDrag>(drag_id));
+        let snap = !ui.input(|i| i.modifiers.shift);
+        if let (Some(drag), Some(pw)) = (drag, pointer_world) {
+            let id = match drag {
+                MapDrag::Move { id, .. } | MapDrag::Resize { id } => id,
+                MapDrag::Idle => return,
+            };
+            let Some(route) = routes.iter_mut().find(|r| r.id == id) else {
+                return;
+            };
+            let Some((d, (rx, ry, rw, rh))) = displays
+                .iter()
+                .find_map(|d| route_rect(route, d).map(|r| (d.clone(), r)))
+            else {
+                return;
+            };
+            let sf = d.scale_factor.max(0.001);
+            let (pw_dev, ph_dev) = (
+                (d.width as f32 * sf).round().max(1.0),
+                (d.height as f32 * sf).round().max(1.0),
+            );
+            // Pointer in Gerätepixeln relativ zur Display-Kante.
+            let px = (pw.0 - d.x as f32) * sf;
+            let py = (pw.1 - d.y as f32) * sf;
+            let (mut nx, mut ny, mut nw, mut nh) = match drag {
+                MapDrag::Move { grab, .. } => {
+                    let gx = grab.0 * sf;
+                    let gy = grab.1 * sf;
+                    (px - gx, py - gy, rw * sf, rh * sf)
+                }
+                MapDrag::Resize { .. } => (rx * sf, ry * sf, px - rx * sf, py - ry * sf),
+                MapDrag::Idle => unreachable!(),
+            };
+            // An Geräte-Rändern einrasten (in Gerätepixeln).
+            if snap {
+                let tol = 12.0;
+                if nx.abs() < tol {
+                    nx = 0.0;
+                }
+                if ny.abs() < tol {
+                    ny = 0.0;
+                }
+                if (nx + nw - pw_dev).abs() < tol {
+                    nw = pw_dev - nx;
+                }
+                if (ny + nh - ph_dev).abs() < tol {
+                    nh = ph_dev - ny;
+                }
+            }
+            // Im Gerät halten, Mindestgröße 16 px.
+            nw = nw.clamp(16.0, pw_dev - nx.min(pw_dev - 16.0).max(0.0));
+            nh = nh.clamp(16.0, ph_dev - ny.min(ph_dev - 16.0).max(0.0));
+            nx = nx.clamp(0.0, pw_dev - nw);
+            ny = ny.clamp(0.0, ph_dev - nh);
+            let new_area = crate::core::DeviceArea::Part {
+                x: nx.round().max(0.0) as u32,
+                y: ny.round().max(0.0) as u32,
+                width: nw.round().max(1.0) as u32,
+                height: nh.round().max(1.0) as u32,
+            };
+            if route.device_area != new_area {
+                route.device_area = new_area;
+                changed = true;
+            }
+        }
+    }
+    if response.drag_stopped() {
+        ui.ctx().data_mut(|d| d.remove_temp::<MapDrag>(drag_id));
+    }
+    if response.double_clicked() {
+        if let Some(pw) = pointer_world {
+            let hit = routes.iter().rev().find(|r| {
+                displays.iter().any(|d| {
+                    route_rect(r, d)
+                        .map(|(x, y, w, h)| {
+                            pw.0 >= x && pw.0 <= x + w && pw.1 >= y && pw.1 <= y + h
+                        })
+                        .unwrap_or(false)
+                })
+            });
+            if let Some(hit_id) = hit.map(|r| r.id) {
+                if let Some(route) = routes.iter_mut().find(|x| x.id == hit_id) {
+                    if route.device_area != crate::core::DeviceArea::Full {
+                        route.device_area = crate::core::DeviceArea::Full;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    if response.clicked() {
+        if let Some(pw) = pointer_world {
+            selected = routes
+                .iter()
+                .rev()
+                .find(|r| {
+                    displays.iter().any(|d| {
+                        route_rect(r, d)
+                            .map(|(x, y, w, h)| {
+                                pw.0 >= x && pw.0 <= x + w && pw.1 >= y && pw.1 <= y + h
+                            })
+                            .unwrap_or(false)
+                    })
+                })
+                .map(|r| r.id);
+        }
+    }
+    ui.ctx().data_mut(|d| {
+        if let Some(sel) = selected {
+            d.insert_temp(sel_id, sel);
+        } else {
+            d.remove_temp::<uuid::Uuid>(sel_id);
+        }
+    });
+
+    // --- Displays zeichnen ---
+    for d in &displays {
+        let r = Rect::from_min_size(
+            to_screen(d.x as f32, d.y as f32),
+            egui::vec2(d.width as f32 * scale, d.height as f32 * scale),
+        );
+        ui.painter()
+            .rect_stroke(r, 2.0, Stroke::new(1.0, theme::palette::COMPLETED));
+        ui.painter().text(
+            r.left_bottom() + egui::vec2(4.0, -2.0),
+            Align2::LEFT_BOTTOM,
+            format!("{}  {}×{} pt", d.name, d.width, d.height),
+            FontId::proportional(10.0),
+            theme::palette::COMPLETED,
+        );
+    }
+
+    // --- Routen zeichnen ---
+    for route in &routes {
+        let Some((d, (x, y, w, h))) = displays
+            .iter()
+            .find_map(|d| route_rect(route, d).map(|r| (d, r)))
+        else {
+            continue;
+        };
+        let _ = d;
+        let r = Rect::from_min_size(to_screen(x, y), egui::vec2(w * scale, h * scale));
+        let is_sel = selected == Some(route.id);
+        let color = egui::Color32::from_rgb(route.color[0], route.color[1], route.color[2]);
+        let fill = if is_sel {
+            egui::Color32::from_rgba_unmultiplied(
+                route.color[0],
+                route.color[1],
+                route.color[2],
+                96,
+            )
+        } else {
+            egui::Color32::from_rgba_unmultiplied(
+                route.color[0],
+                route.color[1],
+                route.color[2],
+                56,
+            )
+        };
+        ui.painter().rect_filled(r, 2.0, fill);
+        ui.painter()
+            .rect_stroke(r, 2.0, Stroke::new(if is_sel { 2.5 } else { 1.0 }, color));
+        let area_label = match route.device_area {
+            crate::core::DeviceArea::Full => "Full".to_string(),
+            crate::core::DeviceArea::Part { width, height, .. } => format!("{width}×{height} px"),
+        };
+        ui.painter().text(
+            r.center(),
+            Align2::CENTER_CENTER,
+            format!("{} ({})", route.name, area_label),
+            FontId::proportional(11.0),
+            theme::palette::TEXT,
+        );
+        // Resize-Griff unten rechts.
+        let grip = Rect::from_center_size(
+            r.right_bottom() - egui::vec2(0.0, 0.0),
+            egui::vec2(10.0, 10.0),
+        );
+        ui.painter().rect_filled(grip, 2.0, color);
+    }
+
+    if changed {
+        for updated in routes {
+            if let Some(r) = app.routes.find_mut(updated.id) {
+                *r = updated;
+            }
+        }
+        app.configure_routes();
+    }
+}
+
 fn draw_routes_table(ui: &mut egui::Ui, app: &mut ShowApp) {
+    draw_device_map(ui, app);
+    ui.add_space(theme::size::SPACE_MEDIUM);
     let routes: Vec<crate::core::OutputRoute> = app.routes.routes().to_vec();
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -1104,5 +1422,58 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
         app.multi_output_wizard = Some(w);
     } else {
         app.multi_output_wizard = None;
+    }
+}
+
+/// Rechteck einer Route in globalen Display-Punkten: `device_area` ist in
+/// Gerätepixeln, `scale_factor` rechnet Punkte → Pixel, `origin` ist die
+/// Display-Position in globalen Punkten. `Full` = gesamtes Display.
+fn route_map_rect(
+    area: &crate::core::DeviceArea,
+    display_points: (u32, u32),
+    scale_factor: f32,
+    origin: (f32, f32),
+) -> (f32, f32, f32, f32) {
+    let sf = scale_factor.max(0.001);
+    let (pw, ph) = (
+        (display_points.0 as f32 * sf).round().max(1.0) as u32,
+        (display_points.1 as f32 * sf).round().max(1.0) as u32,
+    );
+    let (ax, ay, aw, ah) = area.rect(pw, ph);
+    (
+        origin.0 + ax as f32 / sf,
+        origin.1 + ay as f32 / sf,
+        aw as f32 / sf,
+        ah as f32 / sf,
+    )
+}
+
+#[cfg(test)]
+mod device_map_tests {
+    use super::route_map_rect;
+    use crate::core::DeviceArea;
+
+    #[test]
+    fn full_area_covers_whole_display_in_points() {
+        // Retina-Display 1920x1080 pt @2x an (5120, 458).
+        let r = route_map_rect(&DeviceArea::Full, (1920, 1080), 2.0, (5120.0, 458.0));
+        assert_eq!(r, (5120.0, 458.0, 1920.0, 1080.0));
+    }
+
+    #[test]
+    fn part_area_is_device_pixels_converted_to_points() {
+        // LED-Wand-Szenario: SDI 1920x1080 px, genutzter Ausschnitt 800x600 px
+        // bei scale_factor 1 → 800x600 pt auf dem Display.
+        let area = DeviceArea::Part {
+            x: 100,
+            y: 50,
+            width: 800,
+            height: 600,
+        };
+        let r = route_map_rect(&area, (1920, 1080), 1.0, (0.0, 0.0));
+        assert_eq!(r, (100.0, 50.0, 800.0, 600.0));
+        // Retina @2x: Gerätepixel halb so viele Punkte.
+        let r2 = route_map_rect(&area, (1920, 1080), 2.0, (5120.0, 458.0));
+        assert_eq!(r2, (5120.0 + 50.0, 458.0 + 25.0, 400.0, 300.0));
     }
 }

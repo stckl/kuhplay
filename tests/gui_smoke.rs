@@ -1801,3 +1801,41 @@ fn viewport_window_embedded_fallback_renders() {
     assert_eq!(counter, 2, "Content läuft pro Frame einmal");
     assert!(open, "Flag bleibt ohne Close-Request offen");
 }
+
+/// Output-Routing-Tab: Device-Karte rendert die Route als Rechteck mit
+/// Bereichsangabe (nur wenn im Testprozess Displays erkannt werden).
+#[test]
+fn output_routing_device_map_renders_route_area() {
+    use kuhplay::core::{DeviceArea, DeviceRef, OutputRoute};
+    use kuhplay::gui::workspace_settings::VideoTab;
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    if app.displays.is_empty() {
+        return; // headless ohne WindowServer-Displays
+    }
+    let d = app.displays[0].clone();
+    let mut route = OutputRoute::new("LED Wand", 800, 600);
+    route.device = Some(DeviceRef::Display {
+        id: d.id,
+        name: d.name.clone(),
+        width: d.width,
+        height: d.height,
+    });
+    route.device_area = DeviceArea::Part {
+        x: 100,
+        y: 50,
+        width: 800,
+        height: 600,
+    };
+    app.routes.add(route).unwrap();
+    app.configure_routes();
+    app.ui.workspace_settings_open = true;
+    app.ui.workspace_settings_page = SettingsPage::Video;
+    app.ui.video_tab = VideoTab::Routing;
+    let mut out = egui::FullOutput::default();
+    for _ in 0..3 {
+        out = render_frame(&ctx, &mut app);
+    }
+    assert!(output_has_text(&out, "LED Wand"), "Route fehlt auf der Karte/Tabelle");
+    assert!(output_has_text(&out, "800×600 px"), "Part-Bereichsangabe fehlt");
+}
