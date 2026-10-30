@@ -74,8 +74,11 @@ impl ShowDocument {
 
     /// Deserialisiert ein Show-Dokument aus JSON.
     pub fn from_json(json: &str) -> ShowResult<Self> {
-        serde_json::from_str(json)
-            .map_err(|err| ShowError::InvalidParameter(format!("deserialize show: {err}")))
+        let mut doc: Self = serde_json::from_str(json)
+            .map_err(|err| ShowError::InvalidParameter(format!("deserialize show: {err}")))?;
+        // Legacy-Audio-Patch (ein Ausgang je Kanal) in die Matrix migrieren.
+        doc.audio_patch.migrate_legacy();
+        Ok(doc)
     }
 
     /// `true`, wenn das Dokument noch alte Screens bzw. `Stage::screen`-

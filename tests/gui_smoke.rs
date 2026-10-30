@@ -1524,13 +1524,27 @@ fn audio_patch_is_saved_and_loaded_with_show() {
     let mut app = demo_app();
     let mut patch = app.audio_patch.clone();
     patch.channels[0].name = "Mains L".to_string();
-    patch.channels[0].output = 3;
+    // Matrix: Kanal 1 -> Ausgang 3 am Standardgerät UND Ausgang 1 am Interface.
+    patch.channels[0].outputs = vec![
+        kuhplay::core::ChannelOutput {
+            device: None,
+            output: 3,
+        },
+        kuhplay::core::ChannelOutput {
+            device: Some("Interface".to_string()),
+            output: 1,
+        },
+    ];
     app.set_audio_patch(patch.clone());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("show.kuhplay");
     app.save_show(&path);
     let mut loaded = demo_app();
     loaded.load_show(&path).unwrap();
+    // Das Legacy-Feld `output` wird nicht serialisiert (nur `outputs` zählt).
+    for channel in &mut patch.channels {
+        channel.output = 0;
+    }
     assert_eq!(loaded.audio_patch, patch);
 }
 

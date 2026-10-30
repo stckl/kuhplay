@@ -89,17 +89,34 @@ pub fn linear_to_db_clamped(v: f32) -> f32 {
 /// Anzahl der logischen Audio-Kanäle einer Show.
 pub const AUDIO_CHANNEL_COUNT: usize = 16;
 
-/// Logischer Audio-Kanal: Cues routen auf ihn, er liegt auf einem Geräte-Ausgang.
+/// Eine einzelne Patch-Zuordnung: logischer Kanal → Ausgang eines Geräts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AudioChannel {
-    /// Anzeigename, z. B. „Mains L".
-    pub name: String,
+pub struct ChannelOutput {
+    /// Zielgerät (Name); `None` = System-Standard (primäres Gerät).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
     /// 1-basierter Geräte-Ausgang; 0 = aus.
     pub output: u8,
 }
 
+/// Logischer Audio-Kanal: Cues routen auf ihn, er kann auf **mehrere**
+/// Geräte-Ausgänge liegen — auch auf verschiedenen Geräten gleichzeitig
+/// (Mehrgeräte-Betrieb parallel).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioChannel {
+    /// Anzeigename, z. B. „Mains L".
+    pub name: String,
+    /// Legacy-Feld (altes Show-Format, ein Ausgang, kein Gerät): wird gelesen,
+    /// aber nicht mehr geschrieben; beim Laden in `outputs` migriert.
+    #[serde(default, skip_serializing)]
+    pub output: u8,
+    /// Alle Zuordnungen des Kanals (mehrere Ausgänge/Geräte gleichzeitig).
+    #[serde(default)]
+    pub outputs: Vec<ChannelOutput>,
+}
+
 /// Zuordnung der logischen Kanäle zu Geräte-Ausgängen (Workspace-Einstellung).
-/// Default: Kanal n → Ausgang n.
+/// Default: Kanal n → Ausgang n am Standardgerät.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioPatch {
     pub channels: [AudioChannel; AUDIO_CHANNEL_COUNT],
@@ -111,15 +128,78 @@ impl Default for AudioPatch {
             channels: std::array::from_fn(|i| AudioChannel {
                 name: format!("Ch {}", i + 1),
                 output: i as u8 + 1,
+                outputs: vec![ChannelOutput {
+                    device: None,
+                    output: i as u8 + 1,
+                }],
             }),
         }
     }
 }
 
 impl AudioPatch {
-    /// Geräte-Ausgänge aller Kanäle (für die Engine).
+    /// Migriert das Legacy-Format: Kanäle mit leerem `outputs`, aber gesetztem
+    /// `output`, bekommen eine Zuordnung am Standardgerät. Aufruf nach jedem
+    /// Deserialisieren (Show-Datei, Remote-Command).
+    pub fn migrate_legacy(&mut self) {
+        for channel in &mut self.channels {
+            if channel.outputs.is_empty() && channel.output > 0 {
+                channel.outputs = vec![ChannelOutput {
+                    device: None,
+                    output: channel.output,
+                }];
+            }
+        }
+    }
+
+    /// Alle im Patch referenzierten Geräte (`None` = Standardgerät), eindeutig,
+    /// in stabiler Reihenfolge (erstes Vorkommen).
+    pub fn devices(&self) -> Vec<Option<String>> {
+        let mut devices: Vec<Option<String>> = Vec::new();
+        for channel in &self.channels {
+            for out in &channel.outputs {
+                if out.output > 0 && !devices.contains(&out.device) {
+                    devices.push(out.device.clone());
+                }
+            }
+        }
+        devices
+    }
+
+    /// Kanal→Ausgänge als Bitmaske **für ein Gerät** (Bit 0 = Ausgang 1,
+    /// 0 = Kanal auf diesem Gerät aus). `device = None` = Standardgerät.
+    /// Ein Kanal kann mehrere Ausgänge haben (mehrere Bits).
+    pub fn device_output_mask(&self, device: Option<&str>) -> [u16; AUDIO_CHANNEL_COUNT] {
+        let mut masks = [0u16; AUDIO_CHANNEL_COUNT];
+        for (channel, entry) in self.channels.iter().enumerate() {
+            for out in &entry.outputs {
+                if out.output == 0 {
+                    continue;
+                }
+                let same_device = match (&out.device, device) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a == b,
+                    _ => false,
+                };
+                if same_device && (out.output as usize) <= 16 {
+                    masks[channel] |= 1 << (out.output - 1);
+                }
+            }
+        }
+        masks
+    }
+
+    /// Kanäle als altes 1-Ausgang-Array (nur für Kompatibilität; für die Engine
+    /// bitte `device_output_mask` verwenden). Erster Ausgang gewinnt.
     pub fn outputs(&self) -> [u8; AUDIO_CHANNEL_COUNT] {
-        std::array::from_fn(|i| self.channels[i].output)
+        std::array::from_fn(|i| {
+            self.channels[i]
+                .outputs
+                .iter()
+                .find(|o| o.output > 0)
+                .map(|o| o.output)
+                .unwrap_or(self.channels[i].output)
+        })
     }
 }
 
@@ -416,5 +496,75 @@ mod tests {
         let json = serde_json::to_string(&slice).unwrap();
         let back: MediaSlice = serde_json::from_str(&json).unwrap();
         assert_eq!(slice, back);
+    }
+}
+
+#[cfg(test)]
+mod patch_matrix_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_output_field_migrates_to_outputs() {
+        // Altes Show-Format: Kanal mit nur "output", ohne outputs.
+        let channel: AudioChannel = serde_json::from_str(r#"{"name":"Ch 1","output":3}"#).unwrap();
+        assert_eq!(channel.output, 3);
+        assert!(channel.outputs.is_empty());
+        let mut patch = AudioPatch::default();
+        patch.channels[0] = channel;
+        patch.migrate_legacy();
+        assert_eq!(
+            patch.channels[0].outputs,
+            vec![ChannelOutput {
+                device: None,
+                output: 3
+            }]
+        );
+    }
+
+    #[test]
+    fn device_output_mask_supports_multiple_outputs_and_devices() {
+        let mut patch = AudioPatch::default();
+        // Kanal 1 -> Ausgaenge 1+2 am Standardgeraet UND Ausgang 1 am Interface.
+        patch.channels[0].outputs = vec![
+            ChannelOutput {
+                device: None,
+                output: 1,
+            },
+            ChannelOutput {
+                device: None,
+                output: 2,
+            },
+            ChannelOutput {
+                device: Some("Interface".to_string()),
+                output: 1,
+            },
+        ];
+        // Kanal 2 -> nur Ausgang 5 am Interface.
+        patch.channels[1].outputs = vec![ChannelOutput {
+            device: Some("Interface".to_string()),
+            output: 5,
+        }];
+        let std_mask = patch.device_output_mask(None);
+        assert_eq!(std_mask[0], 0b11, "Kanal 1 auf Ausgaenge 1+2");
+        assert_eq!(std_mask[1], 0, "Kanal 2 nicht am Standardgeraet");
+        let iface_mask = patch.device_output_mask(Some("Interface"));
+        assert_eq!(iface_mask[0], 0b1, "Kanal 1 auf Interface-Ausgang 1");
+        assert_eq!(iface_mask[1], 0b10000, "Kanal 2 auf Interface-Ausgang 5");
+        assert_eq!(patch.devices(), vec![None, Some("Interface".to_string())]);
+    }
+
+    #[test]
+    fn patch_serde_roundtrip_and_legacy_read() {
+        let mut patch = AudioPatch::default();
+        patch.channels[2].outputs.push(ChannelOutput {
+            device: Some("Blackmagic".to_string()),
+            output: 7,
+        });
+        let json = serde_json::to_string(&patch).unwrap();
+        let back: AudioPatch = serde_json::from_str(&json).unwrap();
+        for i in 0..AUDIO_CHANNEL_COUNT {
+            assert_eq!(back.channels[i].name, patch.channels[i].name);
+            assert_eq!(back.channels[i].outputs, patch.channels[i].outputs);
+        }
     }
 }

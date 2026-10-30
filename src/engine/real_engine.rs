@@ -248,8 +248,11 @@ pub struct RealMediaEngine {
     pending_fade_values: Vec<(Uuid, FadeParam, f32)>,
     /// Audio-Device-Fehler nur einmal melden (kein Log-Spam pro Cue).
     audio_broken_reported: bool,
-    /// Geräte-Ausgang je Audio-Kanal; übersteht einen Gerätewechsel.
-    audio_outputs: [u8; crate::core::AUDIO_CHANNEL_COUNT],
+    /// Zusätzliche Audio-Streams (weitere Ausgabegeräte parallel); teilen den
+    /// Mixer des primären Backends. Pro Gerät höchstens einer (device_name).
+    extra_audio: Vec<AudioBackend>,
+    /// Zuletzt angewendeter Audio-Patch (überlebt Gerätewechsel des Primären).
+    audio_patch: crate::core::AudioPatch,
     /// Decklink-Hardware-Ausgabe (optional, siehe [`Self::start_decklink_from_env`]).
     decklink: Option<DecklinkOutput>,
     /// Stage, deren Compositor-Frames auf die Decklink-Karte gehen.
@@ -303,7 +306,8 @@ impl RealMediaEngine {
             compositor: Compositor::new(),
             pending_fade_values: Vec::new(),
             audio_broken_reported: false,
-            audio_outputs: crate::core::AudioPatch::default().outputs(),
+            extra_audio: Vec::new(),
+            audio_patch: crate::core::AudioPatch::default(),
             decklink: None,
             decklink_stage: String::new(),
             decklink_fps: 25,
@@ -523,6 +527,67 @@ impl RealMediaEngine {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Wendet den Audio-Patch an: primäres Gerät (System-Standard bzw. vom
+    /// Nutzer gewählt) plus alle weiteren im Patch referenzierten Geräte
+    /// parallel – jeder Stream mit dem gemeinsamen Mixer, damit dieselben
+    /// Voices überall laufen. Nicht mehr referenzierte Extra-Streams werden
+    /// geschlossen, fehlende Geräte melden `Error` (ohne die Show zu stoppen).
+    fn apply_audio_patch(&mut self) {
+        let patch = self.audio_patch.clone();
+        // Primäres Backend sicherstellen.
+        if self.audio.is_none() {
+            match AudioBackend::new() {
+                Ok(backend) => self.audio = Some(backend),
+                Err(err) => {
+                    if !self.audio_broken_reported {
+                        self.audio_broken_reported = true;
+                        warn!(%err, "audio device unavailable");
+                    }
+                    self.emit(EngineEvent::Error {
+                        cue_id: None,
+                        message: format!("no audio output device available: {err}"),
+                    });
+                    return;
+                }
+            }
+        }
+        if let Some(primary) = &self.audio {
+            primary.set_channel_outputs(patch.device_output_mask(None));
+        }
+        // Weitere Geräte parallel verwalten.
+        let wanted: Vec<String> = patch.devices().into_iter().flatten().collect();
+        self.extra_audio
+            .retain(|b| b.device_name().is_some_and(|n| wanted.contains(&n)));
+        let Some(primary) = &self.audio else {
+            return;
+        };
+        let mixer = primary.mixer();
+        for name in &wanted {
+            let existing = self
+                .extra_audio
+                .iter()
+                .find(|b| b.device_name().as_deref() == Some(name.as_str()));
+            if let Some(backend) = existing {
+                backend.set_channel_outputs(patch.device_output_mask(Some(name)));
+                continue;
+            }
+            match AudioBackend::with_shared_mixer(Some(name), mixer.clone()) {
+                Ok(backend) => {
+                    backend.set_channel_outputs(patch.device_output_mask(Some(name)));
+                    info!(device = %name, "zusätzliches Audio-Gerät parallel gestartet");
+                    self.extra_audio.push(backend);
+                }
+                Err(err) => {
+                    warn!(device = %name, %err, "zusätzliches Audio-Gerät nicht verfügbar");
+                    self.emit(EngineEvent::Error {
+                        cue_id: None,
+                        message: format!("audio output \"{name}\" not available: {err}"),
+                    });
+                }
+            }
         }
     }
 
@@ -1086,11 +1151,9 @@ impl MediaEngine for RealMediaEngine {
                     self.chasing.remove(&cue_id);
                 }
             },
-            EngineCommand::SetAudioPatch { outputs } => {
-                self.audio_outputs = outputs;
-                if let Some(audio) = self.audio.as_ref() {
-                    audio.set_channel_outputs(outputs);
-                }
+            EngineCommand::SetAudioPatch { patch } => {
+                self.audio_patch = (*patch).clone();
+                self.apply_audio_patch();
             }
             EngineCommand::SetAudioOutput { device } => {
                 // Laufende Voices lassen sich nicht umziehen; ein Wechsel würde
@@ -1099,14 +1162,24 @@ impl MediaEngine for RealMediaEngine {
                     .active
                     .values()
                     .any(|playback| matches!(playback.kind, PlaybackKind::Audio));
-                let opened = if audio_running {
-                    Err("Stop running audio cues before changing the output.".to_string())
-                } else {
-                    AudioBackend::with_device(device.as_deref())
+                if audio_running {
+                    self.emit(EngineEvent::Error {
+                        cue_id: None,
+                        message: "Stop running audio cues before changing the output.".to_string(),
+                    });
+                    return Ok(());
+                }
+                // Primäres Gerät neu aufbauen; Mixer (Voices) und Patch mitnehmen.
+                let opened = match &self.audio {
+                    Some(old) => {
+                        let mixer = old.mixer();
+                        AudioBackend::with_shared_mixer(device.as_deref(), mixer)
+                    }
+                    None => AudioBackend::with_device(device.as_deref()),
                 };
                 match opened {
                     Ok(backend) => {
-                        backend.set_channel_outputs(self.audio_outputs);
+                        backend.set_channel_outputs(self.audio_patch.device_output_mask(None));
                         self.audio = Some(backend);
                         self.audio_broken_reported = false;
                         self.emit(EngineEvent::AudioOutputChanged { device });

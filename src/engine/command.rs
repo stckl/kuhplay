@@ -82,11 +82,10 @@ pub enum EngineCommand {
     /// `AudioOutputChanged`, oder `Error` (altes Gerät bleibt aktiv), wenn das
     /// Gerät fehlt oder gerade Audio-Cues laufen.
     SetAudioOutput { device: Option<String> },
-    /// Legt die logischen Audio-Kanäle auf Geräte-Ausgänge (1-basiert, 0 = aus).
-    /// Wirkt sofort, auch auf laufende Cues.
-    SetAudioPatch {
-        outputs: [u8; crate::core::AUDIO_CHANNEL_COUNT],
-    },
+    /// Legt die logischen Audio-Kanäle auf Geräte-Ausgänge — als Matrix:
+    /// jeder Kanal kann auf mehrere Ausgänge und mehrere Geräte gleichzeitig
+    /// (Parallelbetrieb). Wirkt sofort, auch auf laufende Cues.
+    SetAudioPatch { patch: Box<crate::core::AudioPatch> },
     /// Konfiguriert eine Video-Stage (Geometrie/Layer) → `StageConfigured`
     /// oder `Error` bei ungültiger Geometrie.
     ConfigureStage { stage: Stage },

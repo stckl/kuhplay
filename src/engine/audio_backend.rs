@@ -25,7 +25,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -54,7 +54,11 @@ pub enum AudioControl {
 }
 
 /// Gemeinsamer Voice-Zustand (Mixer-Callback ↔ Decoder-Thread ↔ Engine).
-struct VoiceShared {
+/// Geteilter Voice-Zustand (Mixer-Sicht). Öffentlich nur, weil die Signatur
+/// von [`AudioBackend::mixer`] / [`AudioBackend::with_shared_mixer`] den Typ
+/// nennt; die Felder bleiben privat.
+#[doc(hidden)]
+pub struct VoiceShared {
     /// Interleaved f32-Samples (Stream-Rate, **Cue-Kanal-Layout**), FIFO.
     queue: VecDeque<f32>,
     /// Kanalanzahl des Cue-Layouts (Voice-Queue-Layout).
@@ -76,7 +80,9 @@ struct VoiceShared {
 }
 
 type VoiceRef = Arc<Mutex<VoiceShared>>;
-type ChannelOutputs = Arc<[AtomicU8; AUDIO_CHANNEL_COUNT]>;
+/// Kanal→Ausgänge als Bitmaske pro Kanal (Bit 0 = Ausgang 1, mehrere Bits =
+/// Kanal auf mehrere Ausgänge). Atomar, damit der Callback nicht blockiert.
+type ChannelOutputs = Arc<[AtomicU16; AUDIO_CHANNEL_COUNT]>;
 
 /// Ein laufender Audio-Player (Decoder-Thread + Control-Channel).
 struct AudioVoice {
@@ -88,6 +94,8 @@ struct AudioVoice {
 pub struct AudioBackend {
     voices: HashMap<Uuid, AudioVoice>,
     mixer: Arc<Mutex<HashMap<Uuid, VoiceRef>>>,
+    /// Name des Geräts dieses Streams (`None` = System-Standard).
+    device_name: Option<String>,
     /// Geräte-Ausgang je logischem Kanal (1-basiert, 0 = aus). Atomar, damit
     /// der Callback nicht blockiert und Umlegen auch live wirkt.
     channel_outputs: ChannelOutputs,
@@ -143,6 +151,34 @@ impl AudioBackend {
     /// Öffnet das Ausgabegerät `name` (`None` = System-Standard) und startet
     /// den Stream. Fehler (Gerät nicht da / kein f32-Support) → `Err`.
     pub fn with_device(name: Option<&str>) -> Result<Self, String> {
+        let mixer: Arc<Mutex<HashMap<Uuid, VoiceRef>>> = Arc::new(Mutex::new(HashMap::new()));
+        Self::build(name, mixer)
+    }
+
+    /// Wie [`Self::with_device`], aber mit **geteiltem Mixer**: Mehrere Streams
+    /// (verschiedene Geräte parallel) mischen dieselben Voices; die Voices
+    /// selbst verwaltet nur das primäre Backend (siehe [`Self::mixer`]).
+    pub fn with_shared_mixer(
+        name: Option<&str>,
+        mixer: Arc<Mutex<HashMap<Uuid, VoiceRef>>>,
+    ) -> Result<Self, String> {
+        Self::build(name, mixer)
+    }
+
+    /// Gemeinsamer Mixer aller Streams (für `with_shared_mixer`).
+    pub fn mixer(&self) -> Arc<Mutex<HashMap<Uuid, VoiceRef>>> {
+        self.mixer.clone()
+    }
+
+    /// Name des Geräts, auf dem dieser Stream läuft (`None` = Standard).
+    pub fn device_name(&self) -> Option<String> {
+        self.device_name.clone()
+    }
+
+    fn build(
+        name: Option<&str>,
+        mixer: Arc<Mutex<HashMap<Uuid, VoiceRef>>>,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = match name {
             Some(name) => host
@@ -179,10 +215,10 @@ impl AudioBackend {
         let stream_sample_rate = stream_config.sample_rate;
         let stream_channels = stream_config.channels as usize;
 
-        let mixer: Arc<Mutex<HashMap<Uuid, VoiceRef>>> = Arc::new(Mutex::new(HashMap::new()));
         let mixer_cb = mixer.clone();
+        let device_name = name.map(|s| s.to_string());
         let channel_outputs: ChannelOutputs =
-            Arc::new(std::array::from_fn(|i| AtomicU8::new(i as u8 + 1)));
+            Arc::new(std::array::from_fn(|i| AtomicU16::new(1u16 << i)));
         let outputs_cb = channel_outputs.clone();
         let channels = stream_channels;
         let stream = device
@@ -200,6 +236,7 @@ impl AudioBackend {
         Ok(Self {
             voices: HashMap::new(),
             mixer,
+            device_name,
             channel_outputs,
             stream_sample_rate,
             stream_channels,
@@ -207,10 +244,12 @@ impl AudioBackend {
         })
     }
 
-    /// Legt die logischen Kanäle auf Geräte-Ausgänge (1-basiert, 0 = aus).
-    pub fn set_channel_outputs(&self, outputs: [u8; AUDIO_CHANNEL_COUNT]) {
-        for (slot, output) in self.channel_outputs.iter().zip(outputs) {
-            slot.store(output, Ordering::Relaxed);
+    /// Legt die logischen Kanäle auf Geräte-Ausgänge als Bitmaske
+    /// (Bit 0 = Ausgang 1; mehrere Bits = Kanal auf mehrere Ausgänge;
+    /// 0 = Kanal auf diesem Gerät aus).
+    pub fn set_channel_outputs(&self, outputs: [u16; AUDIO_CHANNEL_COUNT]) {
+        for (slot, mask) in self.channel_outputs.iter().zip(outputs) {
+            slot.store(mask, Ordering::Relaxed);
         }
     }
 
@@ -228,7 +267,7 @@ impl AudioBackend {
             return;
         }
         let frames = data.len() / channels;
-        let outputs: [u8; AUDIO_CHANNEL_COUNT] =
+        let outputs: [u16; AUDIO_CHANNEL_COUNT] =
             std::array::from_fn(|i| outputs[i].load(Ordering::Relaxed));
         let voices = mixer.lock().unwrap();
         for voice in voices.values() {
@@ -693,7 +732,7 @@ fn mix_voice(
     queue: &mut VecDeque<f32>,
     voice_channels: usize,
     masks: &[u16; AUDIO_CHANNEL_COUNT],
-    outputs: &[u8; AUDIO_CHANNEL_COUNT],
+    outputs: &[u16; AUDIO_CHANNEL_COUNT],
     pan: f32,
     volume: f32,
     frames: usize,
@@ -714,10 +753,18 @@ fn mix_voice(
             if voice_channels >= 2 && vc < 2 {
                 s *= if vc == 0 { gain_l } else { gain_r };
             }
-            for (channel, output) in outputs.iter().enumerate() {
-                let output = usize::from(*output);
-                if masks[vc] & (1 << channel) != 0 && output > 0 && output <= device_channels {
-                    data[f * device_channels + output - 1] += s;
+            for (channel, &out_mask) in outputs.iter().enumerate() {
+                if masks[vc] & (1 << channel) != 0 {
+                    // Kanal auf mehrere Ausgänge: jedes gesetzte Bit ist ein Ziel.
+                    let mut mask = out_mask;
+                    while mask != 0 {
+                        let bit = mask.trailing_zeros() as usize;
+                        mask &= !(1 << bit);
+                        let output = bit + 1;
+                        if output <= device_channels {
+                            data[f * device_channels + output - 1] += s;
+                        }
+                    }
                 }
             }
         }
@@ -731,8 +778,10 @@ fn mix_voice(
 mod tests {
     use super::*;
 
-    const IDENTITY: [u8; AUDIO_CHANNEL_COUNT] =
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    /// Kanal n → Ausgang n als Bitmaske (Bit n-1).
+    const IDENTITY: [u16; AUDIO_CHANNEL_COUNT] = [
+        1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
+    ];
 
     /// Fortlaufender Patch ab Kanal `first` (0-basiert), Kanal n → Ausgang n.
     #[allow(clippy::too_many_arguments)]
@@ -769,9 +818,9 @@ mod tests {
         route.toggle(0, 2);
         let masks = std::array::from_fn(|i| route.channel_mask(i));
         let mut outputs = IDENTITY;
-        outputs[0] = 4;
-        outputs[1] = 0;
-        outputs[2] = 1;
+        outputs[0] = 1 << 3; // Kanal 1 → Ausgang 4
+        outputs[1] = 0; // Kanal 2 → aus
+        outputs[2] = 1; // Kanal 3 → Ausgang 1
         let mut queue: VecDeque<f32> = vec![0.5, 0.25].into();
         let mut data = vec![0.0f32; 4];
         mix_voice(&mut data, 4, &mut queue, 2, &masks, &outputs, 0.0, 1.0, 1);
@@ -783,7 +832,7 @@ mod tests {
         let route = AudioRoute::new(1);
         let masks = std::array::from_fn(|i| route.channel_mask(i));
         let mut outputs = IDENTITY;
-        outputs[0] = 5;
+        outputs[0] = 1 << 4; // Kanal 1 → Ausgang 5 (hinter dem 2-Kanal-Gerät)
         let mut queue: VecDeque<f32> = vec![1.0].into();
         let mut data = vec![0.0f32; 2];
         assert_eq!(

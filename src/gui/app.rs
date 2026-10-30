@@ -1518,7 +1518,7 @@ impl ShowApp {
             }
             RemoteCommand::SetAudition { enabled } => self.set_audition_mode(enabled),
             RemoteCommand::SetAudioOutput { device } => self.set_audio_output(device),
-            RemoteCommand::SetAudioPatch { patch } => self.set_audio_patch(*patch),
+            RemoteCommand::SetAudioPatch { patch } => self.set_audio_patch(*patch), // migriert in set_audio_patch
             RemoteCommand::RefreshAudioDevices => self.audio_devices = None,
             RemoteCommand::SetOutputMode { mode } => self.set_output_mode(match mode.as_str() {
                 "off" => OutputMode::Off,
@@ -1995,11 +1995,14 @@ impl ShowApp {
         }
     }
 
-    /// Übernimmt die Kanal-Zuordnung und meldet sie an die Engine.
-    pub fn set_audio_patch(&mut self, patch: crate::core::AudioPatch) {
-        let outputs = patch.outputs();
-        self.audio_patch = patch;
-        self.dispatch(vec![EngineCommand::SetAudioPatch { outputs }]);
+    /// Übernimmt die Kanal-Zuordnung (Matrix: Kanal → mehrere Geräte-Ausgänge)
+    /// und meldet sie an die Engine.
+    pub fn set_audio_patch(&mut self, mut patch: crate::core::AudioPatch) {
+        patch.migrate_legacy();
+        self.audio_patch = patch.clone();
+        self.dispatch(vec![EngineCommand::SetAudioPatch {
+            patch: Box::new(patch),
+        }]);
     }
 
     /// Aktives Audio-Ausgabegerät (`None` = System-Standard).

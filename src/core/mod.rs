@@ -57,7 +57,7 @@ pub(crate) mod duration_ms {
 
 pub use audio::{
     db_to_linear, linear_to_db, linear_to_db_clamped, AudioChannel, AudioPatch, AudioRoute,
-    FadeCurve, FadeParam, MediaSlice, AUDIO_CHANNEL_COUNT, DB_FLOOR,
+    ChannelOutput, FadeCurve, FadeParam, MediaSlice, AUDIO_CHANNEL_COUNT, DB_FLOOR,
 };
 pub use cart::CartManager;
 pub use cue::{
