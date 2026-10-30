@@ -349,10 +349,12 @@ fn workspace_settings_video_page_renders_and_edits_stages_and_routes() {
         render_frame(&ctx, &mut app);
     }
     app.add_multi_output_stage(&kuhplay::gui::app::MultiOutputWizard {
-        count: 3,
+        cols: 3,
+        rows: 1,
         width: 1920,
         height: 1080,
-        overlap: 100,
+        overlap_x: 100,
+        overlap_y: 100,
     });
     app.multi_output_wizard = None;
     let last = app.stages.stages().last().cloned().unwrap();
@@ -1836,6 +1838,49 @@ fn output_routing_device_map_renders_route_area() {
     for _ in 0..3 {
         out = render_frame(&ctx, &mut app);
     }
-    assert!(output_has_text(&out, "LED Wand"), "Route fehlt auf der Karte/Tabelle");
-    assert!(output_has_text(&out, "800×600 px"), "Part-Bereichsangabe fehlt");
+    assert!(
+        output_has_text(&out, "LED Wand"),
+        "Route fehlt auf der Karte/Tabelle"
+    );
+    assert!(
+        output_has_text(&out, "800×600 px"),
+        "Part-Bereichsangabe fehlt"
+    );
+}
+
+/// Multi-Output 2×2: 4 Regionen im Raster (row-major), Stage-Größe
+/// 2w−overlap_x × 2h−overlap_y, 4 Routen.
+#[test]
+fn multi_output_wizard_2x2_grid() {
+    let mut app = demo_app();
+    let routes_before = app.routes.len();
+    app.add_multi_output_stage(&kuhplay::gui::app::MultiOutputWizard {
+        cols: 2,
+        rows: 2,
+        width: 1920,
+        height: 1080,
+        overlap_x: 100,
+        overlap_y: 50,
+    });
+    let stage = app.stages.stages().last().cloned().unwrap();
+    assert_eq!(stage.regions.len(), 4, "eine Region je Projektor (2×2)");
+    assert!((stage.geometry.width - (2.0 * 1920.0 - 100.0)).abs() < 0.5);
+    assert!((stage.geometry.height - (2.0 * 1080.0 - 50.0)).abs() < 0.5);
+    let mut pos: Vec<(f32, f32)> = stage.regions.iter().map(|r| (r.x, r.y)).collect();
+    pos.sort_by(|a, b| {
+        a.1.partial_cmp(&b.1)
+            .unwrap()
+            .then(a.0.partial_cmp(&b.0).unwrap())
+    });
+    assert_eq!(
+        pos,
+        vec![(0.0, 0.0), (1820.0, 0.0), (0.0, 1030.0), (1820.0, 1030.0)],
+        "Raster-Positionen row-major"
+    );
+    assert_eq!(
+        app.routes.len(),
+        routes_before + 4,
+        "eine Route je Projektor"
+    );
+    assert!(stage.regions.iter().all(|r| r.route.is_some()));
 }

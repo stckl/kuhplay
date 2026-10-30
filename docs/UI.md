@@ -251,8 +251,10 @@ Post-wait · Continue**.
   - **Video Outputs (Stages):** Tabelle pro Stage (Name, Auflösung, Devices,
     Edit, Monitor, Delete). „New Stage“-Menü: leere Stage (1920×1080), Stage
     mit Ausgabe (neue Route + Full-Canvas-Region) oder Multi-Output-Stage
-    (Anzahl/Auflösung/Überlappung der Projektoren; erzeugt je Projektor eine
-    Route und eine Stage mit überlappenden Regionen). Löschen nur, wenn kein
+    (Raster Zeilen × Spalten, Auflösung und getrennte Überlappung X/Y je
+    Projektor; erzeugt je Projektor eine Route und eine Stage mit im Raster
+    angeordneten, überlappenden Regionen – z. B. 2×2 für eine 8K-Stage auf
+    4 4K-Displays). Löschen nur, wenn kein
     Cue die Stage nutzt.
   - **Output Routing:** Device-Karte oben (alle Displays als Umrisse in
     globalen Punkten, Routen als farbige Rechtecke an ihrer DeviceArea-Position;

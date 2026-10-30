@@ -128,21 +128,15 @@ Testprozess Displays erkannt werden). Doku: docs/UI.md §5.7.
 
 ---
 
-## Aufgabe 4: Multi-Output-Assistent mit freier Anordnung (2×2 etc.)
+## Aufgabe 4: Multi-Output-Assistent mit Raster (2×2 etc.) — ERLEDIGT
 
-**Nutzungsszenario (Nutzer):** „8K-Stage auf 4 4K-Displays — oben rechts, oben
-links, unten rechts, unten links.“ Der Assistent (`add_multi_output_stage` in
-`app.rs`, Wizard-UI `draw_multi_output_wizard`) legt derzeit nur **horizontal**
-an.
-
-**Entwurf:** `MultiOutputWizard` um `rows: u32`/`cols: u32` (statt nur `count`)
-ergänzen; Regionen werden zeilenweise angeordnet (x = col*(w-overlap),
-y = row*(h-overlap_v)), Overlap horizontal + vertikal getrennt;
-`add_multi_output_stage` entsprechend umbauen (Stage-Breite/-Höhe aus dem Raster).
-Serde/default der Wizard-Struktur ist nur UI-State (nicht persistent) — einfach.
-Tests: `add_multi_output_stage` mit rows=2, cols=2 → 4 Regionen, Stage-Größe
-`2*w-overlap × 2*h-overlap_v`, Regionen an den Rasterpositionen; Wizard rendert
-headless. Danach in `docs/UI.md` erwähnen.
+**Umgesetzt:** `MultiOutputWizard` jetzt mit `cols`/`rows` (statt `count`) und
+getrennter Überlappung `overlap_x`/`overlap_y`; `add_multi_output_stage` legt
+eine Route je Projektor an (zeilenweise row-major) und eine Stage mit
+Gesamtgröße `cols·w−(cols−1)·ox × rows·h−(rows−1)·oy`, Regionen an den
+Raster-Positionen mit auto_blend. Wizard-UI: Layout Cols/Rows + Overlap X/Y.
+Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
+(1820,1030), Stage 3740×2110 bei 1920×1080, ox=100, oy=50). Doku: docs/UI.md.
 
 ---
 

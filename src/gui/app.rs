@@ -220,27 +220,34 @@ pub struct ShowApp {
     pub waveforms: WaveformCache,
 }
 
-/// Assistent für eine Multi-Output-Stage: Anzahl, Auflösung und
-/// Überlappung der Projektoren (horizontale Anordnung).
+/// Assistent für eine Multi-Output-Stage: Raster (Zeilen × Spalten) aus
+/// Projektoren, Auflösung je Projektor und Überlappung (getrennt horizontal /
+/// vertikal, Pixel).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MultiOutputWizard {
-    /// Anzahl der Projektoren (nebeneinander).
-    pub count: u32,
+    /// Spalten (Projektoren nebeneinander).
+    pub cols: u32,
+    /// Zeilen (Projektoren untereinander).
+    pub rows: u32,
     /// Auflösung je Projektor (Pixel).
     pub width: u32,
     /// Höhe je Projektor (Pixel).
     pub height: u32,
-    /// Überlappung benachbarter Projektoren (Pixel).
-    pub overlap: u32,
+    /// Horizontale Überlappung benachbarter Projektoren (Pixel).
+    pub overlap_x: u32,
+    /// Vertikale Überlappung benachbarter Projektoren (Pixel).
+    pub overlap_y: u32,
 }
 
 impl Default for MultiOutputWizard {
     fn default() -> Self {
         Self {
-            count: 2,
+            cols: 2,
+            rows: 1,
             width: 1920,
             height: 1080,
-            overlap: 200,
+            overlap_x: 200,
+            overlap_y: 200,
         }
     }
 }
@@ -697,16 +704,18 @@ impl ShowApp {
     /// horizontal mit `overlap` Pixeln Überlappung; eine Stage, deren
     /// Regionen die Stage in Projektionsbreite aufteilen (Auto-Blend an).
     pub fn add_multi_output_stage(&mut self, wizard: &MultiOutputWizard) {
-        let count = wizard.count.clamp(1, 12);
+        let cols = wizard.cols.clamp(1, 6);
+        let rows = wizard.rows.clamp(1, 6);
         let (w, h) = (wizard.width.clamp(1, 30000), wizard.height.clamp(1, 30000));
-        let overlap = wizard.overlap.min(w.saturating_sub(1));
+        let overlap_x = wizard.overlap_x.min(w.saturating_sub(1));
+        let overlap_y = wizard.overlap_y.min(h.saturating_sub(1));
         let mut number = self.stages.len() + 1;
         while self.stages.find(&format!("Stage {number}")).is_some() {
             number += 1;
         }
-        // Routen: „Route n“ (je Projektor).
+        // Routen: „Route n“ (je Projektor, zeilenweise von links oben).
         let mut route_ids = Vec::new();
-        for _ in 0..count {
+        for _ in 0..(cols * rows) {
             let mut route_number = self.routes.len() + 1;
             while self
                 .routes
@@ -721,19 +730,23 @@ impl ShowApp {
                 route_ids.push(id);
             }
         }
-        // Stage: Gesamtbreite = count·w − (count−1)·overlap.
-        let stage_w = (count as f32 * w as f32 - (count as f32 - 1.0) * overlap as f32).max(1.0);
+        // Stage: Raster-Gesamtgröße = cols·w − (cols−1)·overlap_x bzw. Zeilen.
+        let stage_w = (cols as f32 * w as f32 - (cols as f32 - 1.0) * overlap_x as f32).max(1.0);
+        let stage_h = (rows as f32 * h as f32 - (rows as f32 - 1.0) * overlap_y as f32).max(1.0);
         let mut stage = Stage::new(
             format!("Stage {number}"),
-            StageGeometry::new(stage_w, h as f32),
+            StageGeometry::new(stage_w, stage_h),
         );
-        let mut x = 0.0f32;
-        for id in &route_ids {
-            let mut region = Region::new(x, 0.0, w as f32, h as f32);
+        // Regionen zeilenweise (row-major): oben links → rechts, dann nächste Zeile.
+        for (index, id) in route_ids.iter().enumerate() {
+            let col = (index as u32) % cols;
+            let row = (index as u32) / cols;
+            let x = col as f32 * (w as f32 - overlap_x as f32);
+            let y = row as f32 * (h as f32 - overlap_y as f32);
+            let mut region = Region::new(x, y, w as f32, h as f32);
             region.route = Some(*id);
             region.auto_blend = true;
             stage.regions.push(region);
-            x += w as f32 - overlap as f32;
         }
         self.configure_stage(stage);
         self.configure_routes();

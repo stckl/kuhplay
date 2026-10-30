@@ -1380,8 +1380,19 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
                 .color(theme::palette::TEXT_DIM),
             );
             theme::form_grid("multi_output_wizard").show(ui, |ui| {
-                theme::field_label(ui, "Projectors");
-                ui.add(egui::DragValue::new(&mut w.count).range(1..=12));
+                theme::field_label(ui, "Layout");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut w.cols)
+                            .range(1..=6)
+                            .prefix("Cols "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut w.rows)
+                            .range(1..=6)
+                            .prefix("Rows "),
+                    );
+                });
                 ui.end_row();
                 theme::field_label(ui, "Resolution");
                 ui.horizontal(|ui| {
@@ -1398,11 +1409,18 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
                 });
                 ui.end_row();
                 theme::field_label(ui, "Overlap");
-                ui.add(
-                    egui::DragValue::new(&mut w.overlap)
-                        .range(0..=2048)
-                        .suffix(" px"),
-                );
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut w.overlap_x)
+                            .range(0..=2048)
+                            .prefix("X "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut w.overlap_y)
+                            .range(0..=2048)
+                            .prefix("Y "),
+                    );
+                });
                 ui.end_row();
             });
             ui.horizontal(|ui| {
