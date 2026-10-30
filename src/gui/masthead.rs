@@ -27,9 +27,9 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         // GO-Button (QLab: groß, dunkel, grün umrandet wenn ein Cue bereitsteht).
         let ready = app.carts.standby().is_some();
         let stroke = if ready {
-            egui::Stroke::new(3.0, palette::PLAYING)
+            egui::Stroke::new(3.0_f32, palette::PLAYING)
         } else {
-            egui::Stroke::new(1.0, palette::STOPPED)
+            egui::Stroke::new(1.0_f32, palette::STOPPED)
         };
         let go = egui::Button::new(
             RichText::new("GO")
@@ -184,7 +184,7 @@ fn panic_button(ui: &mut egui::Ui) -> egui::Response {
         palette::RAISED
     };
     ui.painter()
-        .rect(rect, 8.0, fill, egui::Stroke::new(2.0, palette::PANIC));
+        .rect(rect, 8.0, fill, egui::Stroke::new(2.0_f32, palette::PANIC));
     let icon_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + 14.0, rect.center().y - 8.0),
         egui::vec2(16.0, 16.0),

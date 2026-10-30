@@ -495,7 +495,7 @@ pub fn draw_route_previews(app: &mut ShowApp, ctx: &Context) {
                         // Verkleinert gingen die 1-px-Linien des Testbilds
                         // verloren.
                         if test_pattern {
-                            let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                            let stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
                             ui.painter().rect_stroke(rect.shrink(0.5), 0.0, stroke);
                             ui.painter().circle_stroke(
                                 rect.center(),

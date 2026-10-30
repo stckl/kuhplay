@@ -96,6 +96,9 @@ pub struct UiState {
     pub about_open: bool,
     /// „Keyboard Shortcuts"-Fenster geöffnet (TODO.md Phase 5).
     pub shortcuts_open: bool,
+    /// Test-Grid über allen Regionen der Stages an (Footer-Icon; im Show-Mode
+    /// immer aus).
+    pub test_grid: bool,
     /// Find-Leiste über der Cue-Liste (TODO.md Phase 5; reiner
     /// Laufzeit-Zustand, wird nicht persistiert).
     #[serde(skip)]
@@ -140,6 +143,7 @@ impl Default for UiState {
             workspace_settings_page: SettingsPage::General,
             about_open: false,
             shortcuts_open: false,
+            test_grid: false,
             find: FindState::default(),
             cue_columns: CueColumnLayout::default(),
         }
@@ -199,6 +203,7 @@ mod tests {
         // Shortcuts-Fenster-Flag persistiert wie about_open.
         let state2 = UiState {
             shortcuts_open: true,
+            test_grid: false,
             ..Default::default()
         };
         assert!(UiState::from_json(&state2.to_json()).shortcuts_open);

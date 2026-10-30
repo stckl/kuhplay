@@ -503,7 +503,7 @@ pub fn stacked_button(
         visuals.widgets.inactive.bg_fill
     };
     let stroke = if response.hovered() && enabled {
-        Stroke::new(1.0, visuals.widgets.hovered.fg_stroke.color)
+        Stroke::new(1.0_f32, visuals.widgets.hovered.fg_stroke.color)
     } else {
         visuals.widgets.inactive.fg_stroke
     };

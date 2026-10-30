@@ -961,21 +961,21 @@ fn draw_canvas(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
     // --- Stage-Umriss + Mittellinien ---
     let stage_rect = Rect::from_min_size(to_screen(0.0, 0.0), egui::vec2(sw * scale, sh * scale));
     ui.painter()
-        .rect_stroke(stage_rect, 2.0, Stroke::new(1.0, palette::COMPLETED));
+        .rect_stroke(stage_rect, 2.0, Stroke::new(1.0_f32, palette::COMPLETED));
     let center = stage_rect.center();
     ui.painter().line_segment(
         [
             Pos2::new(center.x, stage_rect.top()),
             Pos2::new(center.x, stage_rect.bottom()),
         ],
-        Stroke::new(0.5, with_alpha(palette::COMPLETED, 40)),
+        Stroke::new(0.5_f32, with_alpha(palette::COMPLETED, 40)),
     );
     ui.painter().line_segment(
         [
             Pos2::new(stage_rect.left(), center.y),
             Pos2::new(stage_rect.right(), center.y),
         ],
-        Stroke::new(0.5, with_alpha(palette::COMPLETED, 40)),
+        Stroke::new(0.5_f32, with_alpha(palette::COMPLETED, 40)),
     );
     ui.painter().text(
         stage_rect.left_bottom() + egui::vec2(4.0, -2.0),
@@ -1010,7 +1010,7 @@ fn draw_canvas(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
         let stroke = if region.route.is_some() {
             Stroke::new(if is_sel { 2.0 } else { 1.0 }, with_alpha(color, 220))
         } else {
-            Stroke::new(1.0, with_alpha(color, 160))
+            Stroke::new(1.0_f32, with_alpha(color, 160))
         };
         ui.painter().rect_stroke(r, 2.0, stroke);
         // Blend-Bereiche schraffiert (diagonale Linien).
@@ -1040,7 +1040,7 @@ fn draw_canvas(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
         ui.painter()
             .rect_filled(rect, 2.0, with_alpha(palette::ACCENT, 30));
         ui.painter()
-            .rect_stroke(rect, 2.0, Stroke::new(1.5, palette::ACCENT));
+            .rect_stroke(rect, 2.0, Stroke::new(1.5_f32, palette::ACCENT));
     }
     ui.label(
         egui::RichText::new(
@@ -1206,7 +1206,7 @@ fn hatch(ui: &mut egui::Ui, rect: Rect, color: Color32) {
                     rect.top() + (x1 - x).max(0.0) - (x.max(rect.left()) - x),
                 ),
             ],
-            Stroke::new(1.0, color),
+            Stroke::new(1.0_f32, color),
         );
         x += step;
     }

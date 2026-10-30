@@ -1390,6 +1390,23 @@ impl ShowApp {
     /// Schaltet den Show-Mode um (Editing deaktiviert/aktiviert).
     pub fn set_show_mode(&mut self, show_mode: bool) {
         self.show_mode = show_mode;
+        if show_mode {
+            // Show-Mode: Test-Grid immer aus (kein Overlay im Playout).
+            self.set_test_grid(false);
+        }
+        self.remote_dirty = true;
+    }
+
+    /// Test-Grid über allen Regionen an/aus (Footer-Icon). Wirkt sofort auf
+    /// alle Stages/Routen.
+    pub fn set_test_grid(&mut self, on: bool) {
+        self.ui.test_grid = on;
+        for stage in self.stages.stages_mut() {
+            for region in &mut stage.regions {
+                region.grid = on;
+            }
+        }
+        self.configure_routes();
         self.remote_dirty = true;
     }
 
@@ -2795,7 +2812,7 @@ impl ShowApp {
                 theme::panel_frame(size::SPACE_MEDIUM_LARGE, size::SPACE_MEDIUM_LARGE);
             if self.show_mode {
                 masthead_frame = masthead_frame
-                    .stroke(egui::Stroke::new(2.0, palette::PANIC))
+                    .stroke(egui::Stroke::new(2.0_f32, palette::PANIC))
                     .fill(palette::SHOW_MODE_BG);
             }
             egui::TopBottomPanel::top("masthead")

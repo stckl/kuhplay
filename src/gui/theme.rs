@@ -161,27 +161,27 @@ pub fn apply_theme(ctx: &egui::Context) {
     let mut visuals = Visuals::dark();
     visuals.panel_fill = palette::PANEL;
     visuals.window_fill = palette::PANEL;
-    visuals.window_stroke = Stroke::new(1.0, palette::BORDER);
+    visuals.window_stroke = Stroke::new(1.0_f32, palette::BORDER);
     visuals.extreme_bg_color = palette::BACKGROUND;
     visuals.faint_bg_color = palette::ROW_STRIPE;
     visuals.code_bg_color = palette::BACKGROUND;
     visuals.override_text_color = Some(palette::TEXT);
     visuals.hyperlink_color = palette::PAUSED;
     visuals.selection.bg_fill = palette::SELECTION;
-    visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(120, 160, 200));
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(120, 160, 200));
 
     // Linien: 1 px, kaum sichtbar (Flächen statt Linien).
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette::BORDER);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, palette::BORDER);
     visuals.widgets.noninteractive.bg_fill = palette::PANEL;
     visuals.widgets.noninteractive.weak_bg_fill = palette::PANEL;
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, palette::TEXT_DIM);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, palette::TEXT_DIM);
     visuals.widgets.inactive.bg_fill = palette::RAISED;
     visuals.widgets.inactive.weak_bg_fill = palette::RAISED;
     visuals.widgets.inactive.bg_stroke = Stroke::NONE;
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, palette::TEXT);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, palette::TEXT);
     visuals.widgets.hovered.bg_fill = Color32::from_rgb(58, 58, 68);
     visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(58, 58, 68);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(80, 80, 92));
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(80, 80, 92));
     visuals.widgets.active.bg_fill = Color32::from_rgb(70, 70, 82);
     visuals.widgets.active.weak_bg_fill = Color32::from_rgb(70, 70, 82);
 
@@ -322,7 +322,7 @@ pub fn tab_bar<T: PartialEq + Copy>(
                             egui::pos2(r.left(), r.bottom() + 3.0),
                             egui::pos2(r.right(), r.bottom() + 3.0),
                         ],
-                        Stroke::new(2.0, palette::TEXT),
+                        Stroke::new(2.0_f32, palette::TEXT),
                     );
                 } else if resp.hovered() {
                     ui.painter().line_segment(
@@ -330,7 +330,7 @@ pub fn tab_bar<T: PartialEq + Copy>(
                             egui::pos2(resp.rect.left(), resp.rect.bottom() + 3.0),
                             egui::pos2(resp.rect.right(), resp.rect.bottom() + 3.0),
                         ],
-                        Stroke::new(2.0, palette::BORDER),
+                        Stroke::new(2.0_f32, palette::BORDER),
                     );
                 }
                 if resp.clicked() && !active {
@@ -347,7 +347,7 @@ pub fn tab_bar<T: PartialEq + Copy>(
             egui::pos2(full.left(), line_y),
             egui::pos2(full.right(), line_y),
         ],
-        Stroke::new(1.0, palette::BORDER),
+        Stroke::new(1.0_f32, palette::BORDER),
     );
     ui.add_space(size::SPACE_MEDIUM);
     changed

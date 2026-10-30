@@ -357,7 +357,7 @@ pub fn draw(
                         .expand2(egui::vec2(ui.spacing().item_spacing.x * 0.5, 0.0));
                     painter.line_segment(
                         [r.left_bottom(), r.right_bottom()],
-                        egui::Stroke::new(1.0, palette::BORDER),
+                        egui::Stroke::new(1.0_f32, palette::BORDER),
                     );
                     // Rechtsklick auf den Header: Spalten ein-/ausblenden (QLab).
                     let resp = ui.interact(
@@ -926,7 +926,7 @@ pub fn draw(
                         painter.rect_stroke(
                             response.rect,
                             0.0,
-                            egui::Stroke::new(1.5, palette::ACCENT),
+                            egui::Stroke::new(1.5_f32, palette::ACCENT),
                         );
                     }
                     // Drop: Aktion vormerken (Ausführung nach der Tabelle).
@@ -1138,7 +1138,7 @@ pub fn draw(
                 egui::pos2(x, y - ROW_HEIGHT * 0.25),
                 egui::pos2(x, y + ROW_HEIGHT * 0.25),
             ],
-            egui::Stroke::new(1.5, palette::ACCENT.gamma_multiply(0.55)),
+            egui::Stroke::new(1.5_f32, palette::ACCENT.gamma_multiply(0.55)),
         );
     }
 

@@ -369,7 +369,7 @@ fn placement_preview(
     ui.painter().rect_stroke(
         stage,
         2.0,
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(150, 150, 160)),
     );
     // Ziel-Rechteck des Inhalts auf der Stage.
     let ((x, y, w, h), _) = surface.placement((sw, sh), (cw as u32, ch as u32));
@@ -381,7 +381,7 @@ fn placement_preview(
     ui.painter()
         .rect_filled(content_rect, 1.0, accent.gamma_multiply(0.18));
     ui.painter()
-        .rect_stroke(content_rect, 1.0, egui::Stroke::new(1.5, accent));
+        .rect_stroke(content_rect, 1.0, egui::Stroke::new(1.5_f32, accent));
     // Hard-Edge-Bereich: abgestufte Flaeche an der blendenden Kante.
     if let Some(edge) = &surface.hard_edge {
         let band = (edge.width * scale).min(content_rect.width() / 2.0);

@@ -2048,3 +2048,36 @@ fn kill_others_stops_other_running_media_cues() {
         "der neue Cue selbst darf nicht gestoppt werden"
     );
 }
+
+/// Test-Grid (Footer-Icon): setzt region.grid auf allen Stages und wird im
+/// Show-Mode gezwungen abgeschaltet.
+#[test]
+fn test_grid_toggle_and_show_mode_forces_off() {
+    let mut app = demo_app();
+    app.set_test_grid(true);
+    assert!(app.ui.test_grid);
+    assert!(app
+        .stages
+        .stages()
+        .iter()
+        .flat_map(|s| s.regions.iter())
+        .all(|r| r.grid));
+    app.set_test_grid(false);
+    assert!(app
+        .stages
+        .stages()
+        .iter()
+        .flat_map(|s| s.regions.iter())
+        .all(|r| !r.grid));
+    // Show-Mode: Grid immer aus.
+    app.set_test_grid(true);
+    app.set_show_mode(true);
+    assert!(!app.ui.test_grid);
+    assert!(app
+        .stages
+        .stages()
+        .iter()
+        .flat_map(|s| s.regions.iter())
+        .all(|r| !r.grid));
+    app.set_show_mode(false);
+}

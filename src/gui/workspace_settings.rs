@@ -915,7 +915,7 @@ fn draw_device_map(ui: &mut egui::Ui, app: &mut ShowApp) {
             egui::vec2(d.width as f32 * scale, d.height as f32 * scale),
         );
         ui.painter()
-            .rect_stroke(r, 2.0, Stroke::new(1.0, theme::palette::COMPLETED));
+            .rect_stroke(r, 2.0, Stroke::new(1.0_f32, theme::palette::COMPLETED));
         ui.painter().text(
             r.left_bottom() + egui::vec2(4.0, -2.0),
             Align2::LEFT_BOTTOM,
@@ -953,8 +953,11 @@ fn draw_device_map(ui: &mut egui::Ui, app: &mut ShowApp) {
             )
         };
         ui.painter().rect_filled(r, 2.0, fill);
-        ui.painter()
-            .rect_stroke(r, 2.0, Stroke::new(if is_sel { 2.5 } else { 1.0 }, color));
+        ui.painter().rect_stroke(
+            r,
+            2.0,
+            Stroke::new(if is_sel { 2.5_f32 } else { 1.0_f32 }, color),
+        );
         let area_label = match route.device_area {
             crate::core::DeviceArea::Full => "Full".to_string(),
             crate::core::DeviceArea::Part { width, height, .. } => format!("{width}×{height} px"),

@@ -98,6 +98,23 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             if panel_toggle(ui, Icon::Gear, gear_tooltip, app.ui.workspace_settings_open) {
                 app.ui.workspace_settings_open = !app.ui.workspace_settings_open;
             }
+            // Test-Grid an/aus (neben den Einstellungen); im Show-Mode immer aus.
+            let grid_on = app.ui.test_grid && !app.show_mode;
+            let grid_tooltip = if app.show_mode {
+                "Test grid is always off in Show Mode".to_string()
+            } else if grid_on {
+                "Hide test grid on all stages".to_string()
+            } else {
+                "Show test grid on all stages".to_string()
+            };
+            if ui
+                .add_enabled_ui(!app.show_mode, |ui| {
+                    panel_toggle(ui, Icon::GridNine, &grid_tooltip, grid_on)
+                })
+                .inner
+            {
+                app.set_test_grid(!grid_on);
+            }
             ui.separator();
             let inspector_tooltip = if app.ui.inspector_visible {
                 "Hide Inspector (⌘I)"

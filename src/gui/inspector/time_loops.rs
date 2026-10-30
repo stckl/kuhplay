@@ -200,11 +200,11 @@ fn draw_waveform(
     painter.hline(
         rect.x_range(),
         mid,
-        egui::Stroke::new(1.0, theme::palette::STOPPED),
+        egui::Stroke::new(1.0_f32, theme::palette::STOPPED),
     );
     let n = waveform.bucket_count().max(1);
     let bw = rect.width() / n as f32;
-    let stroke = egui::Stroke::new(1.0, theme::palette::PLAYING);
+    let stroke = egui::Stroke::new(1.0_f32, theme::palette::PLAYING);
     for (i, &(min, max)) in waveform.buckets.iter().enumerate() {
         let x = rect.left() + (i as f32 + 0.5) * bw;
         let y_top = mid - max.clamp(0.0, 1.0) * half;

@@ -232,7 +232,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                         .fill(fill)
                         .min_size(egui::vec2(18.0, 18.0));
                     let btn = if selected {
-                        btn.stroke(egui::Stroke::new(2.0, palette::TEXT))
+                        btn.stroke(egui::Stroke::new(2.0_f32, palette::TEXT))
                     } else {
                         btn
                     };
