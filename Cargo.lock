@@ -2997,6 +2997,7 @@ dependencies = [
 name = "kuhplay"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "axum",
  "base64",
  "block2 0.5.1",
@@ -3006,12 +3007,15 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "epaint_default_fonts",
  "hound",
  "image",
  "midir",
  "muda",
+ "objc2 0.6.5",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
+ "objc2-foundation 0.3.2",
  "objc2-web-kit",
  "rfd",
  "rosc",

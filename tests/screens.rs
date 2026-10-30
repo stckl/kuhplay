@@ -252,7 +252,7 @@ fn mock_engine_accepts_set_test_pattern_and_stays_alive() {
 #[test]
 fn real_engine_set_test_pattern_marks_stage_dirty() {
     // Real-Engine ohne Media-Hardware: Compositor zeichnet das Testbild
-    // in das Stage-Canvas (weißer Rahmen + Schachbrett), sobald die Stage
+    // in das Stage-Canvas (1-px-Rand + Raster), sobald die Stage
     // dem Screen zugeordnet ist.
     let engine = spawn_real_engine();
     let screen = Screen::new("TestScreen", 0, 0, 64, 64);
@@ -263,7 +263,7 @@ fn real_engine_set_test_pattern_marks_stage_dirty() {
         .send(EngineCommand::ConfigureStage { stage })
         .expect("send configure");
 
-    // Testbild an → Canvas enthält weißen Rahmen (margin = max(64/20, 8) = 8).
+    // Testbild an → Canvas hat den 1-px-Rand exakt am Bildrand.
     let spec = screen.pattern_spec();
     engine
         .commands
@@ -278,13 +278,13 @@ fn real_engine_set_test_pattern_marks_stage_dirty() {
             let Some(frame) = store.get("PatternStage") else {
                 return false;
             };
-            let i = (8 * 64 + 32) * 4; // Rahmen oben, Mitte
-            frame.rgba[i] > 200 // weißer Rahmen
-                && frame.rgba[0] < 60 // Ecke: Schachbrett-Grau
+            let inside = (2 * 64 + 20) * 4;
+            frame.rgba[20 * 4] == 255 // Rand oben
+                && frame.rgba[inside] < 100 // direkt daneben dunkel
         },
         Duration::from_secs(3),
     );
-    assert!(ok, "Testbild (Rahmen + Schachbrett) im Stage-Canvas");
+    assert!(ok, "Testbild im Stage-Canvas");
 
     // Testbild aus → Canvas schwarz (keine Surfaces auf der Stage).
     engine

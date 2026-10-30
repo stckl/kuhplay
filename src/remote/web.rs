@@ -4,16 +4,17 @@
 //! * `GET /` – HTML-UI (eingebettet, keine externen Dateien)
 //! * `POST /api/command` – JSON-[`RemoteCommand`] ausführen
 //! * `GET /api/status` – aktueller [`RemoteStatus`] als JSON
+//! * `POST /api/login`, `GET /api/session` – Anmeldung mit PIN
 //! * `GET /api/workspace` – komplette Show ([`RemoteWorkspace`]) als JSON
 //! * `WS /ws` – WebSocket für bidirektionale Echtzeit-Updates
 //!
 //! ## Sicherheit
-//! Der Server lauscht auf `0.0.0.0` (alle Interfaces) und hat **keine
-//! Anmeldung**: Wer ihn im Netz erreicht, kann die Show bearbeiten. Er gehört
-//! also in ein vertrauenswürdiges Show-Netz; `KUHPLAY_REMOTE_WEB=off` schaltet
-//! ihn ab. Anfragen aus fremden Webseiten werden über den `Origin`-Header
-//! abgelehnt ([`origin_allowed`]), sonst könnte jede im Browser geöffnete Seite
-//! die Show steuern.
+//! Der Server lauscht auf `0.0.0.0` (alle Interfaces). Der Zugriff ist mit
+//! einem PIN geschützt ([`WebAuth`]): Nach `POST /api/login` gilt ein Cookie,
+//! falsche Eingaben sperren die Anmeldung kurz. Die Verbindung ist unverschlüsselt
+//! (HTTP), der PIN schützt also nicht gegen Mitlesen im Netz. Anfragen aus fremden
+//! Webseiten werden zusätzlich über den `Origin`-Header abgelehnt
+//! ([`origin_allowed`]).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -33,6 +34,175 @@ use uuid::Uuid;
 
 use super::{RemoteCommand, RemoteEvent, RemoteStatus, RemoteWorkspace};
 
+const SESSION_COOKIE: &str = "kuhplay_session";
+/// Fehlversuche bis zur Sperre und deren Dauer (bremst das Durchprobieren).
+const MAX_FAILURES: u32 = 5;
+const LOCKOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Ergebnis einer Anmeldung.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LoginResult {
+    /// Richtig: Sitzungs-Token für das Cookie.
+    Ok(String),
+    Wrong,
+    Locked,
+}
+
+#[derive(Default)]
+struct AuthState {
+    pin: Option<String>,
+    sessions: HashSet<String>,
+    failures: u32,
+    locked_until: Option<std::time::Instant>,
+}
+
+/// Anmeldung der Web-Remote. Geteilt mit der App, die den PIN ändern kann.
+#[derive(Clone, Default)]
+pub struct WebAuth(Arc<std::sync::Mutex<AuthState>>);
+
+impl WebAuth {
+    pub fn new(pin: Option<String>) -> Self {
+        Self(Arc::new(std::sync::Mutex::new(AuthState {
+            pin,
+            ..Default::default()
+        })))
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, AuthState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// `true`, wenn ein PIN gesetzt ist.
+    pub fn required(&self) -> bool {
+        self.state().pin.is_some()
+    }
+
+    pub fn pin(&self) -> Option<String> {
+        self.state().pin.clone()
+    }
+
+    /// Ändert den PIN und meldet alle Browser ab.
+    pub fn set_pin(&self, pin: String) {
+        let mut state = self.state();
+        state.pin = Some(pin);
+        state.sessions.clear();
+        state.failures = 0;
+        state.locked_until = None;
+    }
+
+    pub fn login(&self, pin: &str) -> LoginResult {
+        let mut state = self.state();
+        if state
+            .locked_until
+            .is_some_and(|until| std::time::Instant::now() < until)
+        {
+            return LoginResult::Locked;
+        }
+        if state.pin.as_deref() != Some(pin) {
+            state.failures += 1;
+            if state.failures >= MAX_FAILURES {
+                state.failures = 0;
+                state.locked_until = Some(std::time::Instant::now() + LOCKOUT);
+            }
+            return LoginResult::Wrong;
+        }
+        state.failures = 0;
+        state.locked_until = None;
+        let token = Uuid::new_v4().to_string();
+        state.sessions.insert(token.clone());
+        LoginResult::Ok(token)
+    }
+
+    /// Prüft das Cookie einer Anfrage; ohne PIN ist alles erlaubt.
+    pub fn allowed(&self, headers: &HeaderMap) -> bool {
+        let state = self.state();
+        state.pin.is_none()
+            || session_token(headers).is_some_and(|token| state.sessions.contains(&token))
+    }
+
+    fn session_valid(&self, token: &Option<String>) -> bool {
+        let state = self.state();
+        state.pin.is_none()
+            || token
+                .as_ref()
+                .is_some_and(|token| state.sessions.contains(token))
+    }
+}
+
+/// Liest das Sitzungs-Token aus dem `Cookie`-Header.
+fn session_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .find_map(|cookie| {
+            cookie
+                .trim()
+                .strip_prefix(SESSION_COOKIE)?
+                .strip_prefix('=')
+                .map(str::to_string)
+        })
+}
+
+/// Neuer zufälliger 4-stelliger PIN.
+pub fn generate_pin() -> String {
+    let random = u128::from_le_bytes(*Uuid::new_v4().as_bytes());
+    format!("{:04}", random % 10_000)
+}
+
+/// Gültig sind 4 bis 8 Ziffern.
+pub fn valid_pin(pin: &str) -> bool {
+    (4..=8).contains(&pin.len()) && pin.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Datei mit dem PIN im Konfigurationsordner des Benutzers.
+fn pin_path() -> Option<std::path::PathBuf> {
+    let dir = if cfg!(target_os = "windows") {
+        std::path::PathBuf::from(std::env::var_os("APPDATA")?).join("KuhPlay")
+    } else if cfg!(target_os = "macos") {
+        std::path::PathBuf::from(std::env::var_os("HOME")?)
+            .join("Library/Application Support/KuhPlay")
+    } else if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
+        std::path::PathBuf::from(config).join("kuhplay")
+    } else {
+        std::path::PathBuf::from(std::env::var_os("HOME")?).join(".config/kuhplay")
+    };
+    Some(dir.join("remote_pin"))
+}
+
+/// Speichert den PIN, unter Unix nur für den Benutzer lesbar.
+pub fn save_pin(pin: &str) -> std::io::Result<()> {
+    let path = pin_path().ok_or_else(|| std::io::Error::other("no config directory"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(path)?, pin.as_bytes())
+}
+
+/// Liest den gespeicherten PIN oder legt beim ersten Start einen neuen an.
+pub fn load_or_create_pin() -> String {
+    if let Some(pin) = pin_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|pin| pin.trim().to_string())
+        .filter(|pin| valid_pin(pin))
+    {
+        return pin;
+    }
+    let pin = generate_pin();
+    if let Err(e) = save_pin(&pin) {
+        tracing::warn!(%e, "remote-PIN konnte nicht gespeichert werden");
+    }
+    pin
+}
+
 /// Gemeinsamer Zustand für alle Handler.
 #[derive(Clone)]
 pub struct WebRemoteState {
@@ -46,11 +216,24 @@ pub struct WebRemoteState {
     pub workspace: Arc<Mutex<Option<Box<RemoteWorkspace>>>>,
     /// Aktive WebSocket-Verbindungen (für Cleanup).
     pub connections: Arc<Mutex<HashSet<Uuid>>>,
+    /// Anmeldung mit PIN.
+    pub auth: WebAuth,
 }
 
-/// Startet den Web-Remote Server (blockiert nicht – tokio::spawn).
+/// Startet den Web-Remote Server ohne PIN (blockiert nicht – tokio::spawn).
 pub fn start_web_remote(
     port: u16,
+) -> (
+    mpsc::Receiver<RemoteCommand>,
+    broadcast::Sender<RemoteEvent>,
+) {
+    start_web_remote_with_auth(port, WebAuth::default())
+}
+
+/// Startet den Web-Remote Server mit Anmeldung (blockiert nicht).
+pub fn start_web_remote_with_auth(
+    port: u16,
+    auth: WebAuth,
 ) -> (
     mpsc::Receiver<RemoteCommand>,
     broadcast::Sender<RemoteEvent>,
@@ -64,6 +247,7 @@ pub fn start_web_remote(
         status: Arc::new(Mutex::new(None)),
         workspace: Arc::new(Mutex::new(None)),
         connections: Arc::new(Mutex::new(HashSet::new())),
+        auth,
     };
 
     // Status-Cacher: hält den zuletzt gebroadcasteten `RemoteEvent::Status`
@@ -87,6 +271,8 @@ pub fn start_web_remote(
 
     let app = Router::new()
         .route("/", get(index_html))
+        .route("/api/login", post(handle_login))
+        .route("/api/session", get(handle_session))
         .route("/api/command", post(handle_command))
         .route("/api/status", get(handle_status))
         .route("/api/workspace", get(handle_workspace))
@@ -146,7 +332,53 @@ pub fn origin_allowed(headers: &HeaderMap) -> bool {
     host.is_some() && host == origin_host
 }
 
-async fn handle_workspace(State(state): State<WebRemoteState>) -> Response {
+/// Anfrage der Anmeldung.
+#[derive(serde::Deserialize)]
+struct LoginRequest {
+    pin: String,
+}
+
+async fn handle_login(
+    State(state): State<WebRemoteState>,
+    headers: HeaderMap,
+    Json(request): Json<LoginRequest>,
+) -> Response {
+    if !origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match state.auth.login(&request.pin) {
+        LoginResult::Ok(token) => (
+            [(
+                header::SET_COOKIE,
+                format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/"),
+            )],
+            Json(serde_json::json!({"ok": true})),
+        )
+            .into_response(),
+        LoginResult::Wrong => StatusCode::UNAUTHORIZED.into_response(),
+        LoginResult::Locked => StatusCode::TOO_MANY_REQUESTS.into_response(),
+    }
+}
+
+async fn handle_session(State(state): State<WebRemoteState>, headers: HeaderMap) -> Response {
+    Json(serde_json::json!({ "authenticated": state.auth.allowed(&headers) })).into_response()
+}
+
+/// Bearbeitet ein Command aus dem Browser (Datei-Zugriff nur mit PIN).
+async fn accept_command(state: &WebRemoteState, cmd: RemoteCommand) -> bool {
+    if cmd.accesses_files() && !state.auth.required() {
+        let _ = state.event_tx.send(RemoteEvent::Error {
+            message: "Opening and saving files needs a remote PIN.".to_string(),
+        });
+        return true;
+    }
+    state.command_tx.send(cmd).await.is_ok()
+}
+
+async fn handle_workspace(State(state): State<WebRemoteState>, headers: HeaderMap) -> Response {
+    if !state.auth.allowed(&headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     match state.workspace.lock().await.as_ref() {
         Some(workspace) => (StatusCode::OK, Json(workspace.clone())).into_response(),
         None => (
@@ -168,16 +400,25 @@ async fn handle_command(
             Json(serde_json::json!({"ok": false, "error": "foreign origin"})),
         );
     }
-    match state.command_tx.send(cmd).await {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))),
-        Err(_) => (
+    if !state.auth.allowed(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"ok": false, "error": "pin required"})),
+        );
+    }
+    match accept_command(&state, cmd).await {
+        true => (StatusCode::OK, Json(serde_json::json!({"ok": true}))),
+        false => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"ok": false, "error": "command channel closed"})),
         ),
     }
 }
 
-async fn handle_status(State(state): State<WebRemoteState>) -> Response {
+async fn handle_status(State(state): State<WebRemoteState>, headers: HeaderMap) -> Response {
+    if !state.auth.allowed(&headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let status = state.status.lock().await;
     match status.as_ref() {
         Some(s) => (StatusCode::OK, Json(s.clone())).into_response(),
@@ -201,10 +442,14 @@ async fn ws_handler(
     if !origin_allowed(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    if !state.auth.allowed(&headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let token = session_token(&headers);
+    ws.on_upgrade(move |socket| handle_socket(socket, state, token))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: WebRemoteState) {
+async fn handle_socket(mut socket: WebSocket, state: WebRemoteState, token: Option<String>) {
     let conn_id = Uuid::new_v4();
     state.connections.lock().await.insert(conn_id);
 
@@ -224,6 +469,10 @@ async fn handle_socket(mut socket: WebSocket, state: WebRemoteState) {
     // daher kein futures_util::StreamExt/split nötig).
     let mut event_rx = state.event_tx.subscribe();
     loop {
+        // PIN geändert: Sitzung ist ungültig, Verbindung beenden.
+        if !state.auth.session_valid(&token) {
+            break;
+        }
         tokio::select! {
             event = event_rx.recv() => match event {
                 Ok(event) => {
@@ -242,7 +491,7 @@ async fn handle_socket(mut socket: WebSocket, state: WebRemoteState) {
                 Some(Ok(Message::Text(text))) => {
                     match serde_json::from_str::<RemoteCommand>(&text) {
                         Ok(cmd) => {
-                            if state.command_tx.send(cmd).await.is_err() {
+                            if !accept_command(&state, cmd).await {
                                 break;
                             }
                         }
@@ -287,6 +536,7 @@ mod tests {
             status: Arc::new(Mutex::new(None)),
             workspace: Arc::new(Mutex::new(None)),
             connections: Arc::new(Mutex::new(HashSet::new())),
+            auth: WebAuth::default(),
         };
         // Status update + broadcast testen.
         let status = RemoteStatus {
@@ -320,5 +570,45 @@ mod tests {
         assert!(!origin_allowed(&headers(Some("https://evil.example"))));
         assert!(!origin_allowed(&headers(Some("http://show.local:9999"))));
         assert!(!origin_allowed(&headers(Some("null"))));
+    }
+
+    #[test]
+    fn login_locks_after_repeated_wrong_pins_and_pin_change_ends_sessions() {
+        let auth = WebAuth::new(Some("1234".to_string()));
+        let LoginResult::Ok(token) = auth.login("1234") else {
+            panic!("richtiger PIN");
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("other=1; {SESSION_COOKIE}={token}")
+                .parse()
+                .unwrap(),
+        );
+        assert!(auth.allowed(&headers));
+        assert!(!auth.allowed(&HeaderMap::new()));
+
+        for _ in 0..MAX_FAILURES {
+            assert_eq!(auth.login("0000"), LoginResult::Wrong);
+        }
+        assert_eq!(
+            auth.login("1234"),
+            LoginResult::Locked,
+            "auch richtig gesperrt"
+        );
+        assert!(auth.allowed(&headers), "bestehende Sitzung bleibt");
+
+        auth.set_pin("5678".to_string());
+        assert!(!auth.allowed(&headers), "neuer PIN meldet alle ab");
+        assert!(matches!(auth.login("5678"), LoginResult::Ok(_)));
+    }
+
+    #[test]
+    fn pin_rules() {
+        assert!(valid_pin(&generate_pin()));
+        assert!(valid_pin("12345678"));
+        assert!(!valid_pin("123"));
+        assert!(!valid_pin("123456789"));
+        assert!(!valid_pin("12a4"));
     }
 }

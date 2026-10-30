@@ -19,7 +19,7 @@ pub fn demo_cues() -> Vec<Cue> {
     let media_path = |name: &str| format!("{media}/{name}");
     let slide_path = |name: &str| format!("{slides}/{name}");
     // Vollflächige Surface (Default: gesamtes Stage-Canvas).
-    let full_surface = SurfaceGeometry::full_canvas();
+    let full_surface = SurfaceGeometry::fit();
 
     // HTML5-Cue (Inline-Quelle, keine Datei nötig) – die Data-Cue "8" zielt auf ihn.
     let html = Cue::new("6", "Lower Third (HTML5)", CueType::Html)

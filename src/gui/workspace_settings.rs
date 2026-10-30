@@ -60,6 +60,14 @@ impl SettingsPage {
     }
 }
 
+/// Unterseite von „Video".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoTab {
+    #[default]
+    Screens,
+    Stages,
+}
+
 /// Mindestbreite des Seiteninhalts rechts der Navigation.
 const CONTENT_MIN_WIDTH: f32 = 640.0;
 
@@ -101,7 +109,18 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
                         // QLab 5: „Video → Stages/Screens" (Screen-Editor).
                         SettingsPage::Video => {
                             draw_output_mode(ui, app);
-                            super::screen_editor::draw(ui, app);
+                            theme::tab_bar(
+                                ui,
+                                &mut app.ui.video_tab,
+                                &[
+                                    (VideoTab::Screens, "Screens".to_string()),
+                                    (VideoTab::Stages, "Stages".to_string()),
+                                ],
+                            );
+                            match app.ui.video_tab {
+                                VideoTab::Screens => super::screen_editor::draw(ui, app),
+                                VideoTab::Stages => draw_stages(ui, app),
+                            }
                         }
                         SettingsPage::General => draw_general(ui, app),
                         SettingsPage::Audio => draw_audio(ui, app),
@@ -295,7 +314,7 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
 }
 
 /// Seite „Network": Remote-Konfiguration (nur Anzeige).
-fn draw_network(ui: &mut egui::Ui, app: &ShowApp) {
+fn draw_network(ui: &mut egui::Ui, app: &mut ShowApp) {
     let config = &app.remote_config;
     let enabled = |on: bool, value: String| if on { value } else { "Off".to_string() };
     let osc_out = match &config.osc_out {
@@ -335,6 +354,7 @@ fn draw_network(ui: &mut egui::Ui, app: &ShowApp) {
         ui,
         "Set at startup via KUHPLAY_REMOTE_* and KUHPLAY_OSC_* environment variables.",
     );
+    draw_web_pin(ui, app);
 }
 
 /// Seite „MIDI": Verbindungsstatus und Noten-Belegung (nur Anzeige).
@@ -417,4 +437,181 @@ fn draw_output_mode(ui: &mut egui::Ui, app: &mut ShowApp) {
             .color(theme::palette::TEXT_DIM),
     );
     ui.add_space(theme::size::SPACE_MEDIUM);
+}
+
+/// PIN der Web-Remote: anzeigen, ändern, neu würfeln.
+fn draw_web_pin(ui: &mut egui::Ui, app: &mut ShowApp) {
+    use crate::remote::web::{generate_pin, valid_pin};
+    ui.add_space(theme::size::SPACE_MEDIUM_LARGE);
+    theme::section_label(ui, "Web Remote Access");
+    let Some(pin) = app.web_pin() else {
+        config_hint(ui, "No PIN: anyone on the network can edit this show.");
+        return;
+    };
+    let edit_id = ui.id().with("web_pin_edit");
+    let mut text = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<String>(edit_id))
+        .unwrap_or_else(|| pin.clone());
+    let mut new_pin = None;
+    theme::form_grid("settings_web_pin").show(ui, |ui| {
+        theme::field_label(ui, "PIN");
+        ui.horizontal(|ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(90.0));
+            app.text_field_ids.insert(r.id);
+            let changed = text != pin;
+            if ui
+                .add_enabled(changed && valid_pin(&text), egui::Button::new("Apply"))
+                .on_disabled_hover_text("4 to 8 digits")
+                .clicked()
+            {
+                new_pin = Some(text.clone());
+            }
+            if ui.button("New PIN").clicked() {
+                new_pin = Some(generate_pin());
+            }
+        });
+        ui.end_row();
+    });
+    if let Some(pin) = new_pin {
+        text = pin.clone();
+        app.set_web_pin(pin);
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(edit_id, text));
+    config_hint(
+        ui,
+        "Browsers ask for this PIN once. Changing it signs out all browsers. \
+         The connection is not encrypted, so use a trusted network.",
+    );
+}
+
+/// Unterseite „Stages": anlegen, bearbeiten, löschen. Eine Stage ist die Bildfläche,
+/// auf der Cues spielen; ein Screen zeigt sie auf einem Ausgang.
+fn draw_stages(ui: &mut egui::Ui, app: &mut ShowApp) {
+    let stages: Vec<crate::core::Stage> = app.stages.stages().to_vec();
+    let screens: Vec<(uuid::Uuid, String, u32, u32)> = app
+        .screens
+        .screens()
+        .iter()
+        .map(|s| {
+            let (w, h) = s.rotation.rotated_size(s.width, s.height);
+            (s.id, s.name.clone(), w, h)
+        })
+        .collect();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "A stage is the picture cues play on. Assign it to a screen to show it on an output.",
+                )
+                .color(theme::palette::TEXT_DIM),
+            );
+            ui.add_space(theme::size::SPACE_MEDIUM);
+            for stage in stages {
+                let mut updated = stage.clone();
+                let screen = stage
+                    .screen
+                    .and_then(|id| screens.iter().find(|s| s.0 == id));
+                let name_id = ui.id().with(("stage_name", stage.id));
+                let mut name = ui
+                    .ctx()
+                    .data_mut(|d| d.get_temp::<String>(name_id))
+                    .unwrap_or_else(|| stage.name.clone());
+                let mut rename = false;
+                let mut delete = false;
+                let in_use = app.carts.stage_in_use(&stage.name);
+                egui::Frame::none()
+                    .fill(theme::palette::RAISED)
+                    .rounding(egui::Rounding::same(5.0))
+                    .inner_margin(egui::Margin::same(theme::size::SPACE_MEDIUM))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        theme::form_grid(&format!("stage_form_{}", stage.id)).show(ui, |ui| {
+                            theme::field_label(ui, "Name");
+                            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(220.0));
+                            app.text_field_ids.insert(r.id);
+                            rename = r.lost_focus() && name != stage.name;
+                            ui.end_row();
+
+                            theme::field_label(ui, "Canvas");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut updated.geometry.width)
+                                        .range(16.0..=16384.0)
+                                        .prefix("W "),
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut updated.geometry.height)
+                                        .range(16.0..=16384.0)
+                                        .prefix("H "),
+                                );
+                                if let Some((_, _, w, h)) = screen {
+                                    let (w, h) = (*w as f32, *h as f32);
+                                    let differs = (updated.geometry.width - w).abs() > 0.5
+                                        || (updated.geometry.height - h).abs() > 0.5;
+                                    if differs
+                                        && ui
+                                            .button("Match Screen")
+                                            .on_hover_text("Use the resolution of the screen")
+                                            .clicked()
+                                    {
+                                        updated.geometry.width = w;
+                                        updated.geometry.height = h;
+                                    }
+                                }
+                            });
+                            ui.end_row();
+
+                            theme::field_label(ui, "Screen");
+                            let current = screen.map_or("None", |s| s.1.as_str());
+                            egui::ComboBox::from_id_salt(("stage_screen", stage.id))
+                                .selected_text(current)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut updated.screen, None, "None");
+                                    for (id, name, _, _) in &screens {
+                                        ui.selectable_value(&mut updated.screen, Some(*id), name);
+                                    }
+                                });
+                            ui.end_row();
+
+                            theme::field_label(ui, "Visible");
+                            ui.checkbox(&mut updated.visible, "");
+                            ui.end_row();
+                        });
+                        if let Some((_, _, w, h)) = screen {
+                            let stage_ratio = updated.geometry.width / updated.geometry.height;
+                            if (stage_ratio - *w as f32 / *h as f32).abs() > 0.01 {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "The shape differs from the screen: the picture will be stretched.",
+                                    )
+                                    .color(theme::palette::ACCENT),
+                                );
+                            }
+                        }
+                        let delete_button = ui
+                            .add_enabled(!in_use, egui::Button::new("Delete Stage"))
+                            .on_disabled_hover_text("Cues still use this stage");
+                        delete = delete_button.clicked();
+                    });
+                ui.ctx().data_mut(|d| d.insert_temp(name_id, name.clone()));
+                ui.add_space(theme::size::SPACE_SMALL);
+                if delete {
+                    app.remove_stage(&stage.name);
+                } else if rename {
+                    app.rename_stage(&stage.name, &name);
+                    ui.ctx().data_mut(|d| d.remove_temp::<String>(name_id));
+                } else if updated != stage {
+                    app.configure_stage(updated);
+                }
+            }
+            if ui.button("+ Add Stage").clicked() {
+                let mut number = app.stages.len() + 1;
+                while app.stages.find(&format!("Stage {number}")).is_some() {
+                    number += 1;
+                }
+                app.ensure_stage(&format!("Stage {number}"));
+            }
+        });
 }

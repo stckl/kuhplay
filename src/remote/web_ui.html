@@ -103,6 +103,31 @@ body.show #foot { background: var(--showbg); }
 #msg { color: var(--error); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #conn { color: var(--dim); font-size: 11px; }
 #conn.off { color: var(--error); font-weight: 600; }
+#login { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+#login.open { display: flex; }
+#login form { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 24px; display: grid; gap: 12px; width: min(320px, 100%); }
+#login h1 { font-size: 18px; }
+#pin { font-size: 24px; letter-spacing: .2em; text-align: center; }
+#loginmsg { color: var(--error); min-height: 1.3em; }
+#ask, #menu { z-index: 8; }
+#ask { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: center; justify-content: center; padding: 16px; }
+#ask.open { display: flex; }
+#ask > div { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; width: min(380px, 100%); display: grid; gap: 12px; }
+#ask .row { display: flex; gap: 8px; justify-content: flex-end; }
+#ask .danger { border: 2px solid var(--panic); }
+#menu { position: fixed; display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px; min-width: 190px; box-shadow: 0 6px 20px rgba(0, 0, 0, .5); }
+#menu.open { display: block; }
+#menu button { display: block; width: 100%; text-align: left; background: none; padding: 5px 8px; }
+#menu button:hover:not(:disabled) { background: var(--selection); }
+#menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+#menu .swatches { display: flex; gap: 4px; padding: 5px 8px; }
+#menu .swatches button { width: 18px; height: 18px; padding: 0; flex: none; }
+#map { width: 100%; background: var(--bg); border-radius: 5px; touch-action: none; display: block; user-select: none; }
+#map text { font-size: 12px; fill: var(--text); pointer-events: none; }
+#map .display { fill: none; stroke: var(--dim); }
+#map .dname { fill: var(--dim); }
+#map .screen { cursor: move; }
+#map .handle { cursor: nwse-resize; fill: var(--text); }
 #modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 5; }
 #modal.open { display: flex; }
 #dialog { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; width: min(860px, 100%); max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -146,6 +171,9 @@ body.show #foot { background: var(--showbg); }
   <div id="insp"></div>
   <div id="foot"></div>
 </div>
+<div id="login"><form id="loginform"><h1>KuhPlay Remote</h1><label for="pin">Enter the PIN from Settings → Network in the app.</label><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8"><div id="loginmsg" role="alert"></div><button type="submit">Connect</button></form></div>
+<div id="ask"><div><div id="asktext" role="alertdialog"></div><div class="row"><button id="askno">Cancel</button><button id="askyes" class="danger">OK</button></div></div></div>
+<div id="menu" role="menu"></div>
 <div id="modal"><div id="dialog"><div id="dtitle"><span>Workspace Settings</span><button id="dclose">Close</button></div><div id="dmain"><div id="dnav"></div><div id="dbody"></div></div></div></div>
 <script>
 'use strict';
@@ -163,10 +191,34 @@ function send(action, extra = {}) {
   fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
     .then(r => { if (!r.ok) setMessage('Command failed.'); }).catch(() => setMessage('No connection to KuhPlay.'));
 }
+// Vor dem Verbinden anmelden: Ein abgelehnter WebSocket verrät dem Browser den Grund nicht.
+async function start() {
+  try {
+    const session = await (await fetch('/api/session')).json();
+    if (!session.authenticated) return showLogin();
+  } catch (e) { setTimeout(start, 2000); return; }
+  $('login').classList.remove('open');
+  connect();
+}
+function showLogin(text = '') {
+  $('login').classList.add('open');
+  $('loginmsg').textContent = text;
+  $('pin').value = '';
+  $('pin').focus();
+}
+$('loginform').addEventListener('submit', async e => {
+  e.preventDefault();
+  let response = null;
+  try {
+    response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: $('pin').value }) });
+  } catch (err) { return showLogin('No connection to KuhPlay.'); }
+  if (response.ok) return start();
+  showLogin(response.status === 429 ? 'Too many attempts. Wait 30 seconds.' : 'Wrong PIN.');
+});
 function connect() {
   ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
   ws.onopen = () => renderFoot();
-  ws.onclose = () => { renderFoot(); setTimeout(connect, 2000); };
+  ws.onclose = () => { renderFoot(); setTimeout(start, 2000); };
   ws.onmessage = e => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'status') {
@@ -188,7 +240,7 @@ function h(tag, props = {}, ...kids) {
     else if (k in el && k !== 'list') el[k] = v;
     else el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid !== null && kid !== undefined) el.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined) el.append(kid);
   return el;
 }
 function fmt(ms) {
@@ -215,6 +267,45 @@ function render() {
   if ($('modal').classList.contains('open')) renderSettings();
 }
 function renderLive() { renderMast(); renderFoot(); renderCues(); if (sideTab === 'active' || !W) renderSide(); document.body.classList.toggle('show', !!(S && S.show_mode)); }
+
+// Eigener Dialog statt des Browser-Dialogs: Browser können den still unterdrücken, und
+// dann passiert beim Klick auf Löschen gar nichts.
+function ask(text, yes, run) {
+  $('asktext').textContent = text;
+  $('askyes').textContent = yes;
+  $('ask').classList.add('open');
+  $('askyes').onclick = () => { $('ask').classList.remove('open'); run(); };
+  $('askno').onclick = () => $('ask').classList.remove('open');
+  $('askno').focus();
+}
+function deleteCues(ids) {
+  const text = ids.length === 1 ? 'Delete cue ' + (cueById(ids[0]) || { number: '' }).number + '?' : 'Delete ' + ids.length + ' cues?';
+  ask(text, 'Delete', () => { ids.forEach(id => send('delete_cue', { id })); selected = selected.filter(id => !ids.includes(id)); render(); });
+}
+function closeMenu() { $('menu').classList.remove('open'); }
+function openMenu(e, c) {
+  e.preventDefault();
+  if (!selected.includes(c.id)) { selected = [c.id]; render(); }
+  const ids = selected, on = editable(), top = W.cues.some(x => x.id === c.id);
+  const item = (label, enabled, run) => h('button', { disabled: !enabled, onclick: () => { closeMenu(); run(); } }, label);
+  $('menu').replaceChildren(
+    item('Set Playhead Here', top, () => send('set_playhead', { id: c.id })),
+    item('Play Cue', true, () => send('go_to', { cue: c.number })),
+    h('hr'),
+    item(c.is_armed ? 'Disarm' : 'Arm', on, () => ids.forEach(id => send('update_cue', { id, changes: { is_armed: !c.is_armed } }))),
+    item('Duplicate', on, () => send('duplicate_cues', { ids })),
+    item('Group', on, () => send('group_cues', { ids })),
+    h('div', { class: 'swatches' }, COLORS.map(rgb => h('button', { disabled: !on, title: 'Cue color', style: `background:rgb(${rgb})`, onclick: () => { closeMenu(); ids.forEach(id => send('update_cue', { id, changes: { color: rgb } })); } }))),
+    item('No Color', on, () => ids.forEach(id => send('update_cue', { id, changes: { color: null } }))),
+    h('hr'),
+    item(ids.length > 1 ? 'Delete ' + ids.length + ' Cues' : 'Delete Cue', on, () => deleteCues(ids)),
+  );
+  const menu = $('menu');
+  menu.classList.add('open');
+  menu.style.left = Math.min(e.clientX, innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.top = Math.min(e.clientY, innerHeight - menu.offsetHeight - 8) + 'px';
+}
+document.addEventListener('pointerdown', e => { if (!$('menu').contains(e.target)) closeMenu(); });
 
 function renderMast() {
   const c = S && S.standby, name = $('sname'), notes = $('snotes'), full = c && cueById(c.id);
@@ -244,9 +335,7 @@ function renderActions() {
     h('button', { disabled: !on || !c, onclick: () => moveSelected(1) }, 'Move Down'),
     h('button', { disabled: !c, onclick: () => send('set_playhead', { id: c.id }) }, 'Set Playhead'),
     h('button', { disabled: !c, onclick: () => send('go_to', { cue: c.number }) }, 'Play Cue'),
-    h('button', { disabled: !on || !any, onclick: () => {
-      if (confirm(selected.length + ' cue(s) delete?')) { selected.forEach(id => send('delete_cue', { id })); selected = []; }
-    } }, 'Delete'),
+    h('button', { disabled: !on || !any, onclick: () => deleteCues([...selected]) }, 'Delete'),
   );
 }
 function moveSelected(delta) {
@@ -313,7 +402,7 @@ function targetText(c) {
 }
 function cueRow(c, index, child) {
   const isCursor = !child && S && S.playhead === index;
-  const row = h('tr', { class: [isCursor ? 'cursor' : '', selected.includes(c.id) ? 'sel' : '', c.is_armed ? '' : 'disarmed'].join(' '), onclick: e => pick(e, c.id) });
+  const row = h('tr', { class: [isCursor ? 'cursor' : '', selected.includes(c.id) ? 'sel' : '', c.is_armed ? '' : 'disarmed'].join(' '), onclick: e => pick(e, c.id), oncontextmenu: e => openMenu(e, c) });
   const mark = statusMark(c), broken = W.problems[c.id];
   const stat = h('td', { class: 'stat', title: 'Click to set the playhead', onclick: e => { if (!child) { e.stopPropagation(); send('set_playhead', { id: c.id }); } } });
   if (isCursor) stat.append('› ');
@@ -520,11 +609,14 @@ function tabGeometry(c) {
   if (c.cue_type === 'Video' || c.cue_type === 'SlideShow') {
     const s = c.surface, right = h('div', { class: 'form' });
     const set = patch => up(c, { surface: { ...s, ...patch } });
-    if (!s) right.append(h('div', { class: 'wide' }, h('button', { onclick: () => up(c, { surface: { x: 0, y: 0, width: 1920, height: 1080, area_of_interest: null, hard_edge: null, opacity: 1, visible: true } }) }, 'Add Surface')));
+    if (!s) right.append(h('div', { class: 'wide' }, h('button', { onclick: () => up(c, { surface: { x: 0, y: 0, width: 1920, height: 1080, area_of_interest: null, hard_edge: null, opacity: 1, visible: true, mode: 'Fit' } }) }, 'Set Geometry')));
     else {
       right.append(
-        ...field('Position', h('div', { class: 'inline' }, 'X', number(s.x, v => set({ x: v })), 'Y', number(s.y, v => set({ y: v })))),
-        ...field('Size', h('div', { class: 'inline' }, 'W', number(s.width, v => set({ width: Math.max(1, v) })), 'H', number(s.height, v => set({ height: Math.max(1, v) })))),
+        ...field('Mode', select(W.options.geometry_mode, s.mode, v => set({ mode: v }))),
+        ...(s.mode === 'Custom' ? [
+          ...field('Position', h('div', { class: 'inline' }, 'X', number(s.x, v => set({ x: v })), 'Y', number(s.y, v => set({ y: v })))),
+          ...field('Size', h('div', { class: 'inline' }, 'W', number(s.width, v => set({ width: Math.max(1, v) })), 'H', number(s.height, v => set({ height: Math.max(1, v) })))),
+        ] : []),
         ...field('Opacity', h('div', { class: 'inline' }, h('input', { type: 'range', min: 0, max: 1, step: 0.01, value: s.opacity, onchange: e => set({ opacity: Number(e.target.value) }) }), check(s.visible, 'Visible', v => set({ visible: v })))),
         ...field('Area of Interest', check(s.area_of_interest, 'Crop source', v => set({ area_of_interest: v ? { left: 0, top: 0, right: 1, bottom: 1 } : null }))));
       if (s.area_of_interest) {
@@ -590,20 +682,27 @@ function tabData(c) {
 function renderSettings() {
   if (!W) return;
   const body = $('dbody');
+  if (mapDrag) return;
   if (body.contains(document.activeElement) && document.activeElement.matches('input:not([type=checkbox]),textarea')) return;
   const pages = { General: pageGeneral, Audio: pageAudio, Video: pageVideo, Network: () => infoRows(W.network, 'Set at startup via KUHPLAY_REMOTE_* and KUHPLAY_OSC_* environment variables.'), MIDI: () => infoRows(W.midi, 'Set at startup via KUHPLAY_MIDI, KUHPLAY_MIDI_DEVICE and KUHPLAY_MIDI_MAP.'), 'Key Map': pageKeys };
   $('dnav').replaceChildren(...Object.keys(pages).map(p => h('button', { class: 'row-btn' + (p === page ? ' on' : ''), onclick: () => { page = p; renderSettings(); } }, p)));
   const scroll = body.scrollTop;
-  body.replaceChildren(h('fieldset', { disabled: !editable() && page !== 'Key Map', style: 'border:0;min-width:0' }, [pages[page]()].flat()));
+  body.replaceChildren(h('fieldset', { disabled: !editable() && page !== 'Key Map', style: 'border:0;min-width:0' }, pages[page]()));
   body.scrollTop = scroll;
+}
+function fileAction(label, run) {
+  const input = h('input', { type: 'text', class: 'grow', placeholder: 'Full path on the KuhPlay computer, ending in .kuhplay' });
+  return h('div', { class: 'inline' }, input, h('button', { onclick: () => { if (input.value.trim()) run(input.value.trim()); } }, label));
 }
 function pageGeneral() {
   return h('div', { class: 'form' },
     field('Show Name', text(W.show_name, v => send('set_show_name', { name: v }))),
-    field('File', h('span', { class: 'dim' }, W.file || 'Not saved yet. Open and Save As are only available in the app.')),
+    field('File', h('span', { class: 'dim' }, W.file || 'Not saved yet')),
+    field('Open Show', fileAction('Open', path => ask('Discard the current show and open ' + path + '?', 'Open', () => send('open_show', { path })))),
+    field('Save As', fileAction('Save', path => send('save_show_as', { path }))),
     field('Show Mode', check(S && S.show_mode, 'Editing disabled', v => send('set_show_mode', { enabled: v }))),
     field('Audition Mode', check(W.audition_mode, 'Video cues play without a stage target', v => send('set_audition', { enabled: v }))),
-    field('New Show', h('div', {}, h('button', { onclick: () => { if (confirm('Discard the current show and start a new one?')) send('new_show'); } }, 'New Show'))));
+    field('New Show', h('div', {}, h('button', { onclick: () => ask('Discard the current show and start a new one?', 'New Show', () => send('new_show')) }, 'New Show'))));
 }
 function pageAudio() {
   const device = W.audio_output || W.default_audio_device, info = W.audio_devices.find(d => d.name === device), maxOutput = info ? info.channels : 16;
@@ -621,6 +720,86 @@ function pageAudio() {
   }));
   return [form, h('div', { class: 'label section' }, 'Channels'), rows, h('p', { class: 'note' }, 'Device, channel names and outputs are saved with the show.')];
 }
+const footprint = s => s.rotation === 'Deg90' || s.rotation === 'Deg270' ? [s.height, s.width] : [s.width, s.height];
+let mapDrag = null, mapSelected = null;
+// Karte wie in der App: Displays als Umriss, Screens als Flächen. Ziehen verschiebt,
+// der Griff unten rechts ändert die Größe, Kanten rasten an den Displays ein.
+function screenMap() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = (tag, attrs = {}) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; };
+  const rects = [...W.displays.map(d => [d.x, d.y, d.width, d.height]), ...W.screens.map(s => [s.x, s.y, ...footprint(s)])];
+  if (!rects.length) rects.push([0, 0, 1920, 1080]);
+  const x0 = Math.min(...rects.map(r => r[0])), y0 = Math.min(...rects.map(r => r[1]));
+  const x1 = Math.max(...rects.map(r => r[0] + r[2])), y1 = Math.max(...rects.map(r => r[1] + r[3]));
+  const margin = Math.max(x1 - x0, y1 - y0) * 0.02;
+  const root = svg('svg', { id: 'map', viewBox: `${x0 - margin} ${y0 - margin} ${x1 - x0 + 2 * margin} ${y1 - y0 + 2 * margin}`, style: 'max-height:280px' });
+  const unit = (x1 - x0 + 2 * margin) / 700;
+  for (const d of W.displays) {
+    root.append(svg('rect', { class: 'display', x: d.x, y: d.y, width: d.width, height: d.height, 'stroke-width': unit, 'stroke-dasharray': `${4 * unit}` }));
+    const label = svg('text', { class: 'dname', x: d.x + 4 * unit, y: d.y + d.height - 5 * unit, style: `font-size:${11 * unit}px` });
+    label.textContent = `${d.name} ${d.width}×${d.height}`;
+    root.append(label);
+  }
+  const snap = (value, size, edges) => {
+    const tolerance = 10 * unit;
+    for (const edge of edges) {
+      if (Math.abs(value - edge) < tolerance) return edge;
+      if (Math.abs(value + size - edge) < tolerance) return edge - size;
+    }
+    return Math.round(value);
+  };
+  const xEdges = W.displays.flatMap(d => [d.x, d.x + d.width]), yEdges = W.displays.flatMap(d => [d.y, d.y + d.height]);
+  const toWorld = e => {
+    const point = new DOMPoint(e.clientX, e.clientY).matrixTransform(root.getScreenCTM().inverse());
+    return [point.x, point.y];
+  };
+  for (const s of W.screens) {
+    const [fw, fh] = footprint(s), color = `rgb(${s.color})`, on = mapSelected === s.id;
+    const box = svg('rect', { class: 'screen', 'data-screen': s.id, x: s.x, y: s.y, width: fw, height: fh, fill: color, 'fill-opacity': on ? 0.35 : 0.2, stroke: color, 'stroke-width': (on ? 2 : 1) * unit });
+    const label = svg('text', { x: s.x + fw / 2, y: s.y + fh / 2, 'text-anchor': 'middle', style: `font-size:${13 * unit}px` });
+    label.textContent = s.name + (s.rotation === 'Deg0' ? '' : ' (' + s.rotation.slice(3) + '°)');
+    const size = 10 * unit;
+    const handle = svg('rect', { class: 'handle', 'data-handle': s.id, x: s.x + fw - size, y: s.y + fh - size, width: size, height: size });
+    const start = (e, mode) => {
+      e.stopPropagation();
+      if (!editable()) return;
+      mapSelected = s.id;
+      const [wx, wy] = toWorld(e);
+      mapDrag = { id: s.id, mode, wx, wy, x: s.x, y: s.y, w: fw, h: fh, box, label, handle };
+      root.setPointerCapture(e.pointerId);
+    };
+    box.addEventListener('pointerdown', e => start(e, 'move'));
+    handle.addEventListener('pointerdown', e => start(e, 'size'));
+    root.append(box, label, handle);
+  }
+  root.addEventListener('pointermove', e => {
+    if (!mapDrag) return;
+    const d = mapDrag, [wx, wy] = toWorld(e);
+    if (d.mode === 'move') {
+      d.nx = snap(d.x + wx - d.wx, d.w, xEdges); d.ny = snap(d.y + wy - d.wy, d.h, yEdges);
+      d.box.setAttribute('x', d.nx); d.box.setAttribute('y', d.ny);
+      d.handle.setAttribute('x', d.nx + d.w - 10 * unit); d.handle.setAttribute('y', d.ny + d.h - 10 * unit);
+      d.label.setAttribute('x', d.nx + d.w / 2); d.label.setAttribute('y', d.ny + d.h / 2);
+    } else {
+      d.nw = Math.max(16, snap(d.x + d.w + wx - d.wx, 0, xEdges) - d.x); d.nh = Math.max(16, snap(d.y + d.h + wy - d.wy, 0, yEdges) - d.y);
+      d.box.setAttribute('width', d.nw); d.box.setAttribute('height', d.nh);
+      d.handle.setAttribute('x', d.x + d.nw - 10 * unit); d.handle.setAttribute('y', d.y + d.nh - 10 * unit);
+    }
+  });
+  const finish = () => {
+    const d = mapDrag;
+    mapDrag = null;
+    if (!d) return;
+    const screen = W.screens.find(s => s.id === d.id);
+    const rotated = screen && (screen.rotation === 'Deg90' || screen.rotation === 'Deg270');
+    if (d.nx !== undefined) send('update_screen', { id: d.id, changes: { x: d.nx, y: d.ny } });
+    else if (d.nw !== undefined) send('update_screen', { id: d.id, changes: rotated ? { width: d.nh, height: d.nw } : { width: d.nw, height: d.nh } });
+    else renderSettings();
+  };
+  root.addEventListener('pointerup', finish);
+  root.addEventListener('pointercancel', finish);
+  return root;
+}
 function pageVideo() {
   const modes = [['off', 'Off'], ['preview', 'Preview Windows'], ['displays', 'Displays']];
   const top = h('div', { class: 'form' }, field('Output', h('div', { class: 'inline' }, modes.map(([m, label]) => h('button', { class: 'seg' + (W.output_mode === m ? ' on' : ''), onclick: () => send('set_output_mode', { mode: m }) }, label)))));
@@ -633,12 +812,12 @@ function pageVideo() {
       field('Size', h('div', { class: 'inline' }, 'W', number(s.width, v => set({ width: Math.max(1, Math.round(v)) })), 'H', number(s.height, v => set({ height: Math.max(1, Math.round(v)) })))),
       field('Rotation', select(W.options.rotation, s.rotation, v => set({ rotation: v }))),
       field('Test Pattern', h('div', { class: 'inline' }, check(s.test_pattern, 'Show', v => set({ test_pattern: v })), select(W.options.test_pattern_kind, s.test_pattern_kind, v => set({ test_pattern_kind: v })), s.test_pattern_kind === 'LedWall' ? number(s.checker_size, v => set({ checker_size: Math.max(8, Math.round(v)) })) : null)),
-      h('div', { class: 'wide' }, h('button', { onclick: () => { if (confirm('Delete screen ' + s.name + '?')) send('remove_screen', { id: s.id }); } }, 'Delete Screen'))));
+      h('div', { class: 'wide' }, h('button', { onclick: () => ask('Delete screen ' + s.name + '?', 'Delete', () => send('remove_screen', { id: s.id })) }, 'Delete Screen'))));
   });
   const screenOptions = [{ value: null, label: 'None' }, ...W.screens.map(s => ({ value: s.id, label: s.name }))];
   const stages = W.stages.map(s => h('div', { class: 'form' }, field(s.name, select(screenOptions, s.screen, v => send('update_stage', { name: s.name, changes: { screen: v } })))));
   return [top, h('div', { class: 'label section' }, 'Displays'), displays, h('p', { class: 'dim' }, 'Displays are arranged in the system settings of the KuhPlay computer.'),
-    h('div', { class: 'label section' }, 'Screens'), screens, h('button', { onclick: () => send('add_screen', { name: 'Screen ' + (W.screens.length + 1) }) }, '+ Add Screen'),
+    h('div', { class: 'label section' }, 'Screens'), screenMap(), h('p', { class: 'dim', style: 'margin:4px 0 8px' }, 'Drag to move, drag the corner to resize. Edges snap to the displays.'), screens, h('button', { onclick: () => send('add_screen', { name: 'Screen ' + (W.screens.length + 1) }) }, '+ Add Screen'),
     h('div', { class: 'label section' }, 'Stages'), stages, h('button', { onclick: () => send('add_stage', { name: 'Stage ' + (W.stages.length + 1) }) }, '+ Add Stage')];
 }
 function infoRows(rows, note) { return [h('div', { class: 'form' }, rows.flatMap(([k, v]) => field(k, h('span', {}, v)))), h('p', { class: 'note' }, note)]; }
@@ -660,12 +839,14 @@ $('reset').onclick = () => send('reset');
 $('dclose').onclick = () => $('modal').classList.remove('open');
 $('snotes').onchange = e => { if (S && S.standby) send('update_cue', { id: S.standby.id, changes: { notes: e.target.value } }); };
 document.addEventListener('keydown', e => {
-  if (e.target.matches('input,textarea,select')) return;
+  if (e.target.matches && e.target.matches('input,textarea,select')) return;
   if (e.code === 'Space') { e.preventDefault(); send('go'); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length && editable()) { e.preventDefault(); deleteCues([...selected]); }
+  if (e.key === 'Escape' && ($('menu').classList.contains('open') || $('ask').classList.contains('open'))) { closeMenu(); $('ask').classList.remove('open'); return; }
   if (e.key === 'Escape') { if ($('modal').classList.contains('open')) $('modal').classList.remove('open'); else send('panic'); }
 });
 setInterval(() => { if (S && S.running.length) { renderCues(); if (sideTab === 'active') renderSide(); } }, 100);
-connect();
+start();
 </script>
 </body>
 </html>

@@ -224,15 +224,9 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
 
         // --- Surface (QLab: Surface auf der Stage) – nur Video/Diashow ---
         if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
-            theme::section_label(right, "Surface");
-            match &mut cue.surface {
-                Some(surface) => surface_editor(right, surface),
-                None => {
-                    if right.small_button("Add Surface").clicked() {
-                        cue.surface = Some(SurfaceGeometry::full_canvas());
-                    }
-                }
-            }
+            theme::section_label(right, "Geometry");
+            let surface = cue.surface.get_or_insert_with(SurfaceGeometry::fit);
+            surface_editor(right, surface);
         }
     });
 }
@@ -243,28 +237,44 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
 fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry) {
     use crate::core::{BlendCurve, Crop, EdgeSide, HardEdge};
     theme::form_grid("surface_grid").show(ui, |ui| {
-        theme::field_label(ui, "Position");
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut surface.x).speed(1.0).prefix("X "));
-            ui.add(egui::DragValue::new(&mut surface.y).speed(1.0).prefix("Y "));
-        });
-        ui.end_row();
-        theme::field_label(ui, "Size");
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::DragValue::new(&mut surface.width)
-                    .speed(1.0)
-                    .range(1.0..=16384.0)
-                    .prefix("W "),
+        theme::field_label(ui, "Mode");
+        egui::ComboBox::from_id_salt("surface_mode")
+            .selected_text(surface.mode.label())
+            .show_ui(ui, |ui| {
+                for mode in crate::core::GeometryMode::ALL {
+                    ui.selectable_value(&mut surface.mode, mode, mode.label());
+                }
+            })
+            .response
+            .on_hover_text(
+                "Fit: whole image, not distorted. Fill: fills the stage, edges are cut off. \
+                     Stretch: fills the stage, distorted. Custom: your own position and size.",
             );
-            ui.add(
-                egui::DragValue::new(&mut surface.height)
-                    .speed(1.0)
-                    .range(1.0..=16384.0)
-                    .prefix("H "),
-            );
-        });
         ui.end_row();
+        if surface.mode == crate::core::GeometryMode::Custom {
+            theme::field_label(ui, "Position");
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut surface.x).speed(1.0).prefix("X "));
+                ui.add(egui::DragValue::new(&mut surface.y).speed(1.0).prefix("Y "));
+            });
+            ui.end_row();
+            theme::field_label(ui, "Size");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut surface.width)
+                        .speed(1.0)
+                        .range(1.0..=16384.0)
+                        .prefix("W "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut surface.height)
+                        .speed(1.0)
+                        .range(1.0..=16384.0)
+                        .prefix("H "),
+                );
+            });
+            ui.end_row();
+        }
         theme::field_label(ui, "Opacity");
         ui.horizontal(|ui| {
             ui.add(egui::Slider::new(&mut surface.opacity, 0.0..=1.0));

@@ -49,14 +49,18 @@ Wichtige Tasten: **Space** GO · **Esc** Panic · **↑/↓** Playhead ·
 Die Oberfläche läuft im Browser unter `http://<rechner>:8080`, auch am Handy:
 Cue-Liste, Inspector mit allen Tabs, Audio-Routing, Screens und Stages.
 
-Nur in der App gibt es Show öffnen, „Speichern unter", Datei-Dialoge (Pfade
-werden im Browser eingetippt), Waveforms und die Screen-Karte zum Ziehen.
+Show öffnen und „Speichern unter" gibt es dort ebenfalls, für `.kuhplay`-Dateien
+auf dem KuhPlay-Rechner (Pfad eintippen). Nur in der App gibt es die nativen
+Datei-Dialoge, Waveforms und die Screen-Karte zum Ziehen.
 
-> **Achtung: Die Web-Remote hat keine Anmeldung.** Wer Port 8080 im Netz
-> erreicht, kann die Show bearbeiten und abfahren. Companion, OSC und MIDI lösen
-> ebenfalls ohne Anmeldung Aktionen aus. KuhPlay gehört deshalb in ein
-> vertrauenswürdiges Show-Netz. Abschalten mit `KUHPLAY_REMOTE=off` und
-> `KUHPLAY_OSC=off`.
+Beim Verbinden fragt der Browser nach einem **PIN**. KuhPlay legt ihn beim ersten
+Start zufällig an, er steht unter *Settings → Network* und lässt sich dort ändern.
+
+> **Grenzen des Schutzes:** Der PIN sichert gegen Unbefugte im Netz, die Verbindung
+> ist aber unverschlüsselt (HTTP) und lässt sich mitlesen. Companion, OSC und MIDI
+> haben keine Anmeldung und dürfen deshalb nur Playback auslösen (GO, Panic, Arm,
+> Show-Mode). KuhPlay gehört also in ein vertrauenswürdiges Show-Netz. Abschalten
+> mit `KUHPLAY_REMOTE=off` und `KUHPLAY_OSC=off`.
 
 ## Konfiguration
 
@@ -68,6 +72,7 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_REMOTE` | `off` = Web-Remote und Companion aus | an |
 | `KUHPLAY_REMOTE_WEB`, `KUHPLAY_REMOTE_COMPANION` | `off` schaltet einzeln ab | an |
 | `KUHPLAY_REMOTE_WEB_PORT`, `KUHPLAY_REMOTE_COMPANION_PORT` | Ports | 8080, 9999 |
+| `KUHPLAY_REMOTE_PIN` | PIN der Web-Remote, `off` = keine Anmeldung | gespeicherter Zufalls-PIN |
 | `KUHPLAY_OSC`, `KUHPLAY_OSC_PORT` | OSC an/aus, Eingangsport | an, 9000 |
 | `KUHPLAY_OSC_OUT`, `KUHPLAY_OSC_PREFIX` | Ziel `host:port` oder `off`, Adress-Präfix | `127.0.0.1:9001`, `/kuhplay` |
 | `KUHPLAY_MIDI`, `KUHPLAY_MIDI_DEVICE` | MIDI an/aus, Gerätename (Teilstring) | an, erstes Gerät |

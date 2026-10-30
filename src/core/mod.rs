@@ -70,6 +70,7 @@ pub use screen::{
 pub use show::ShowDocument;
 pub use slideshow::{Slide, SlideNav, SlideShow};
 pub use stage::{
-    BlendCurve, Crop, EdgeSide, HardEdge, Stage, StageGeometry, StageManager, SurfaceGeometry,
+    BlendCurve, Crop, EdgeSide, GeometryMode, HardEdge, Stage, StageGeometry, StageManager,
+    SurfaceGeometry,
 };
 pub use timecode::{Fps, Timecode};

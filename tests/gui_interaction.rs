@@ -2810,3 +2810,37 @@ fn dropped_files_create_matching_cues() {
     );
     app.set_show_mode(false);
 }
+
+/// macOS: Ctrl-Klick gilt als Rechtsklick, auch wenn Ctrl vor dem Loslassen endet.
+#[test]
+fn ctrl_click_becomes_right_click() {
+    use egui::{Event, Modifiers, PointerButton};
+    let button = |pressed, modifiers| Event::PointerButton {
+        pos: egui::pos2(1.0, 1.0),
+        button: PointerButton::Primary,
+        pressed,
+        modifiers,
+    };
+    let is_secondary = |event: &Event| {
+        matches!(
+            event,
+            Event::PointerButton {
+                button: PointerButton::Secondary,
+                ..
+            }
+        )
+    };
+    let mut active = false;
+    let mut events = vec![
+        button(true, Modifiers::CTRL),
+        button(false, Modifiers::NONE),
+        button(true, Modifiers::NONE),
+        button(false, Modifiers::NONE),
+    ];
+    kuhplay::gui::app::ctrl_click_to_secondary(&mut events, &mut active);
+    assert!(is_secondary(&events[0]) && is_secondary(&events[1]));
+    assert!(
+        !is_secondary(&events[2]) && !is_secondary(&events[3]),
+        "normaler Klick bleibt"
+    );
+}

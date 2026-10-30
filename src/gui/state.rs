@@ -102,6 +102,9 @@ pub struct UiState {
     pub find: FindState,
     /// Spalten-Layout der Cue-Tabelle (Breiten + Sichtbarkeit, Phase 3).
     pub cue_columns: CueColumnLayout,
+    /// Unterseite von Settings → Video.
+    #[serde(skip)]
+    pub video_tab: super::workspace_settings::VideoTab,
 }
 
 /// Laufzeit-Zustand der Find-Leiste über der Cue-Liste (Phase 5).
@@ -126,6 +129,7 @@ impl Default for UiState {
     /// QLab-5-Default-Layout: alle Panels sichtbar, Toolbox eingeblendet.
     fn default() -> Self {
         Self {
+            video_tab: Default::default(),
             masthead_visible: true,
             toolbox_visible: true,
             sidebar_visible: true,

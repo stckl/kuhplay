@@ -133,6 +133,12 @@ impl Compositor {
         pattern: Option<&TestPatternSpec>,
         stage_frames: &StageFrameStore,
     ) {
+        // Testbild in Screen-Auflösung statt Stage-Größe: Sonst würde es beim
+        // Ausspielen auf den Screen gezogen und der Kreis schon dort verzerrt.
+        let canvas = match pattern {
+            Some(spec) => (spec.width, spec.height),
+            None => canvas,
+        };
         let (cw, ch) = (canvas.0.max(1), canvas.1.max(1));
         let mut out = vec![0u8; (cw as usize) * (ch as usize) * 4];
         // Hintergrund: undurchsichtiges Schwarz.
@@ -141,7 +147,9 @@ impl Compositor {
         }
 
         // Layer aufsteigend (niedrigste zuerst).
-        let mut ordered: Vec<&SurfaceEntry> = surfaces.iter().collect();
+        // Mit Testbild ist nichts zu komponieren, es überdeckt alles.
+        let visible_surfaces = if pattern.is_some() { &[][..] } else { surfaces };
+        let mut ordered: Vec<&SurfaceEntry> = visible_surfaces.iter().collect();
         ordered.sort_by_key(|(_, layer, _, _, _)| *layer);
 
         for (_cue_id, _layer, surface, frame, fade_opacity) in ordered {
@@ -157,16 +165,17 @@ impl Compositor {
             if alpha_base <= 0.0 {
                 continue;
             }
+            // Lage auf der Stage (Fit, Fill, Stretch oder eigene Position/Größe).
+            let ((x, y, width, height), (sx0, sy0, sx1, sy1)) =
+                surface.placement((frame.width, frame.height), (cw, ch));
             // Dest-Rechteck auf die Canvas clampen.
-            let dx0 = surface.x.max(0.0) as u32;
-            let dy0 = surface.y.max(0.0) as u32;
-            let dx1 = ((surface.x + surface.width).ceil() as u32).min(cw);
-            let dy1 = ((surface.y + surface.height).ceil() as u32).min(ch);
+            let dx0 = x.max(0.0) as u32;
+            let dy0 = y.max(0.0) as u32;
+            let dx1 = ((x + width).ceil() as u32).min(cw);
+            let dy1 = ((y + height).ceil() as u32).min(ch);
             if dx1 <= dx0 || dy1 <= dy0 {
                 continue;
             }
-            // Quell-Rechteck (Area of Interest).
-            let (sx0, sy0, sx1, sy1) = surface.source_rect(frame.width, frame.height);
             let src_w = (sx1 - sx0).max(1) as usize;
             let src_h = (sy1 - sy0).max(1) as usize;
             let dest_w = (dx1 - dx0) as usize;
@@ -225,7 +234,7 @@ impl Compositor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{BlendCurve, Crop, EdgeSide, HardEdge};
+    use crate::core::{BlendCurve, Crop, EdgeSide, GeometryMode, HardEdge};
     use std::collections::HashMap;
 
     #[test]
@@ -240,6 +249,7 @@ mod tests {
             hard_edge: None,
             opacity: 1.0,
             visible: true,
+            mode: GeometryMode::Custom,
         };
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(red), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
@@ -282,6 +292,7 @@ mod tests {
             hard_edge: None,
             opacity: 1.0,
             visible: true,
+            mode: GeometryMode::Custom,
         };
         let surfaces = vec![(Uuid::new_v4(), 0, surface, Some(frame), 1.0)];
         let store = super::super::frame::new_stage_frame_store();
@@ -309,6 +320,7 @@ mod tests {
             hard_edge: None,
             opacity: 1.0,
             visible: true,
+            mode: GeometryMode::Custom,
         };
         let right = SurfaceGeometry {
             x: 4.0,
@@ -319,6 +331,7 @@ mod tests {
             hard_edge: Some(HardEdge::new(EdgeSide::Left, 2.0, BlendCurve::Linear)),
             opacity: 1.0,
             visible: true,
+            mode: GeometryMode::Custom,
         };
         let surfaces = vec![
             (Uuid::new_v4(), 0, left, Some(blue), 1.0),
@@ -402,7 +415,7 @@ mod tests {
             "ohne Testbild: Inhalt"
         );
 
-        // Mit Testbild: Inhalt wird überdeckt (Rahmen oben weiß, Rest Schachbrett).
+        // Mit Testbild: Inhalt wird überdeckt (Rand weiß, Rest schwarzes Raster).
         let spec = TestPatternSpec {
             label: "MAIN 64X64".to_string(),
             width: 64,
@@ -414,15 +427,14 @@ mod tests {
         };
         comp.composite("S", (64, 64), &surfaces, Some(&spec), &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        // margin = max(64/20, 8) = 8; Dicke t = max(64/100, 2) = 2 → Rahmen bei y=8 weiß.
-        let i = (8 * 64 + 32) * 4;
-        assert!(
-            canvas.rgba[i] > 200,
-            "Testbild-Rahmen überdeckt Inhalt: {:?}",
-            &canvas.rgba[i..i + 4]
+        assert_eq!(&canvas.rgba[..3], &[255, 255, 255], "Rand am Bildrand");
+        let i = (10 * 64 + 10) * 4;
+        assert_eq!(canvas.rgba[i], canvas.rgba[i + 1], "kein Rot mehr sichtbar");
+        assert_eq!(
+            canvas.rgba[i + 1],
+            canvas.rgba[i + 2],
+            "kein Rot mehr sichtbar"
         );
-        // Ecke (0,0) ist Schachbrett-Grau, nicht Rot.
-        assert!(canvas.rgba[0] < 60, "kein Rot mehr sichtbar");
         // Testbild aus → wieder Inhalt.
         comp.composite("S", (64, 64), &surfaces, None, &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
@@ -449,9 +461,27 @@ mod tests {
         };
         comp.composite("S", (128, 96), &[], Some(&spec), &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        // Schachbrett auch ohne Surfaces; voll deckend.
+        // Auch ohne Surfaces; voll deckend, Rand am Bildrand.
         assert!(canvas.rgba.chunks_exact(4).all(|c| c[3] == 255));
-        assert!(canvas.rgba[0] < 60, "Schachbrett statt Schwarz");
+        assert_eq!(canvas.rgba[0], 255);
+    }
+
+    #[test]
+    fn test_pattern_uses_screen_resolution_not_stage_canvas() {
+        use crate::core::TestPatternSpec;
+        let store = super::super::frame::new_stage_frame_store();
+        let spec = TestPatternSpec {
+            label: "L".to_string(),
+            width: 1512,
+            height: 982,
+            kind: Default::default(),
+            color: [255, 255, 255],
+            index: 0,
+            checker_size: 64,
+        };
+        Compositor::new().composite("S", (1920, 1080), &[], Some(&spec), &store);
+        let canvas = store.lock().unwrap().get("S").cloned().unwrap();
+        assert_eq!((canvas.width, canvas.height), (1512, 982));
     }
 
     #[test]

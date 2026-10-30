@@ -176,12 +176,14 @@ pub struct ShowApp {
     autodemo: Option<AutodemoState>,
     /// Remote-Server (Web-Remote + Companion), falls aktiviert.
     remote: Option<RemoteServers>,
+    /// Laufender Ctrl-Klick, der als Rechtsklick gilt (macOS).
+    ctrl_click_active: bool,
     /// Zuletzt an die Web-Remote gesendete Show (nur bei Änderung neu senden).
     last_workspace_json: String,
     /// Aktuelle Video-Ausgabe.
     pub output_mode: OutputMode,
     /// Von Hand geschlossene Vorschau-Fenster (bis zum nächsten Moduswechsel).
-    pub(super) closed_previews: HashSet<Uuid>,
+    pub(super) closed_previews: std::sync::Arc<std::sync::Mutex<HashSet<Uuid>>>,
     /// macOS-Menüleiste; `None` = egui-Menüleiste (auch in Headless-Tests).
     #[cfg(target_os = "macos")]
     pub(super) native_menu: Option<super::native_menu::NativeMenu>,
@@ -249,6 +251,7 @@ pub struct RemoteServers {
     /// tokio-Runtime der Server (Worker-Threads laufen hier).
     _runtime: tokio::runtime::Runtime,
     /// Commands vom Web-Remote (HTTP/WS).
+    web_auth: crate::remote::web::WebAuth,
     web_commands: Option<tokio::sync::mpsc::Receiver<RemoteCommand>>,
     /// Commands von Companion (TCP).
     companion_commands: Option<tokio::sync::mpsc::Receiver<RemoteCommand>>,
@@ -268,6 +271,17 @@ pub struct RemoteServers {
     companion_events: Option<tokio::sync::broadcast::Sender<RemoteEvent>>,
     /// Event-Broadcast an OSC-Out.
     osc_events: Option<tokio::sync::broadcast::Sender<RemoteEvent>>,
+}
+
+/// Prüft einen Show-Pfad aus der Remote: nur `.kuhplay`-Dateien, damit sich über
+/// den Browser keine beliebigen Dateien lesen oder überschreiben lassen.
+fn remote_show_path(path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path.trim());
+    if path.extension().and_then(|e| e.to_str()) == Some("kuhplay") && path.is_absolute() {
+        Ok(path)
+    } else {
+        Err("Use a full path ending in .kuhplay.".to_string())
+    }
 }
 
 /// Überträgt die Felder aus `changes` (JSON-Objekt) auf eine Kopie von `value`.
@@ -342,8 +356,10 @@ impl RemoteServers {
         };
         // tokio::spawn in den Server-Startern braucht einen Runtime-Kontext.
         let _guard = runtime.enter();
+        let web_auth = crate::remote::web::WebAuth::new(config.web_pin.clone());
         let (web_commands, web_events) = if config.web_enabled {
-            let (rx, tx) = crate::remote::web::start_web_remote(config.web_port);
+            let (rx, tx) =
+                crate::remote::web::start_web_remote_with_auth(config.web_port, web_auth.clone());
             (Some(rx), Some(tx))
         } else {
             (None, None)
@@ -391,6 +407,7 @@ impl RemoteServers {
         );
         Some(Self {
             _runtime: runtime,
+            web_auth,
             web_commands,
             companion_commands,
             osc_commands,
@@ -463,9 +480,10 @@ impl ShowApp {
             screen_editor_selected: None,
             autodemo,
             remote: None,
+            ctrl_click_active: false,
             last_workspace_json: String::new(),
             output_mode: OutputMode::Off,
-            closed_previews: HashSet::new(),
+            closed_previews: Default::default(),
             #[cfg(target_os = "macos")]
             native_menu: None,
             audio_output: None,
@@ -590,6 +608,42 @@ impl ShowApp {
         }
     }
 
+    /// Benennt eine Stage um, auch in allen Cues. Leere oder vergebene Namen
+    /// werden ignoriert.
+    pub fn rename_stage(&mut self, old: &str, new: &str) {
+        let new = new.trim();
+        if new.is_empty() || self.stages.find(new).is_some() {
+            return;
+        }
+        let Some(stage) = self.stages.find_mut(old) else {
+            return;
+        };
+        stage.name = new.to_string();
+        let stage = stage.clone();
+        self.carts.rename_stage(old, new);
+        if self.stage_windows.remove(old) {
+            self.stage_windows.insert(new.to_string());
+        }
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            if let Some(state) = open.remove(old) {
+                open.insert(new.to_string(), state);
+            }
+        }
+        self.configure_stage(stage);
+    }
+
+    /// Löscht eine Stage, sofern kein Cue sie nutzt.
+    pub fn remove_stage(&mut self, name: &str) -> bool {
+        if self.carts.stage_in_use(name) {
+            return false;
+        }
+        if let Ok(mut open) = self.stage_screen_open.lock() {
+            open.remove(name);
+        }
+        self.stage_windows.remove(name);
+        self.stages.remove(name)
+    }
+
     /// Beim App-Start: Stages ohne Screen auf den ersten Screen legen, damit
     /// GO ein Bild zeigt; mit nur einem Display Vorschau statt Vollbild, das
     /// sonst die App selbst verdecken würde.
@@ -622,7 +676,7 @@ impl ShowApp {
     /// im Vollbild, die anderen Modi schließen sie.
     pub fn set_output_mode(&mut self, mode: OutputMode) {
         self.output_mode = mode;
-        self.closed_previews.clear();
+        self.closed_previews.lock().unwrap().clear();
         let names: Vec<String> = self
             .stages
             .stages()
@@ -1261,6 +1315,16 @@ impl ShowApp {
                     return Err(err.clone());
                 }
             }
+            RemoteCommand::OpenShow { path } => {
+                self.load_show(&remote_show_path(&path)?)
+                    .map_err(|e| format!("Could not open the show: {e}"))?;
+            }
+            RemoteCommand::SaveShowAs { path } => {
+                self.save_show(&remote_show_path(&path)?);
+                if let Some(err) = &self.last_error {
+                    return Err(err.clone());
+                }
+            }
             RemoteCommand::SetAudition { enabled } => self.set_audition_mode(enabled),
             RemoteCommand::SetAudioOutput { device } => self.set_audio_output(device),
             RemoteCommand::SetAudioPatch { patch } => self.set_audio_patch(*patch),
@@ -1476,6 +1540,10 @@ impl ShowApp {
                 (
                     "blend_curve",
                     options(&BlendCurve::ALL, |v| v.label().to_string()),
+                ),
+                (
+                    "geometry_mode",
+                    options(&crate::core::GeometryMode::ALL, |v| v.label().to_string()),
                 ),
                 (
                     "rotation",
@@ -1965,6 +2033,23 @@ impl ShowApp {
         self.remote
             .as_ref()
             .is_some_and(|remote| remote.midi_init_failed)
+    }
+
+    /// Aktueller PIN der Web-Remote (`None` = keine Anmeldung).
+    pub(super) fn web_pin(&self) -> Option<String> {
+        self.remote
+            .as_ref()
+            .and_then(|remote| remote.web_auth.pin())
+    }
+
+    /// Setzt einen neuen PIN, speichert ihn und meldet alle Browser ab.
+    pub(super) fn set_web_pin(&mut self, pin: String) {
+        if let Err(e) = crate::remote::web::save_pin(&pin) {
+            self.last_error = Some(format!("Could not save the PIN: {e}"));
+        }
+        if let Some(remote) = &self.remote {
+            remote.web_auth.set_pin(pin);
+        }
     }
 
     /// `true`, wenn ein MIDI-Input-Device verbunden ist.
@@ -2508,7 +2593,41 @@ impl ShowApp {
     }
 }
 
+/// macOS: Ctrl-Klick ist dort ein Rechtsklick, egui kennt das aber nicht. Wandelt
+/// den Klick um. `active` merkt sich das Drücken, denn beim Loslassen kann Ctrl
+/// schon wieder gelöst sein.
+pub fn ctrl_click_to_secondary(events: &mut [egui::Event], active: &mut bool) {
+    for event in events {
+        if let egui::Event::PointerButton {
+            button,
+            pressed,
+            modifiers,
+            ..
+        } = event
+        {
+            if *button != egui::PointerButton::Primary {
+                continue;
+            }
+            if *pressed {
+                *active = modifiers.ctrl;
+            }
+            if *active {
+                *button = egui::PointerButton::Secondary;
+            }
+            if !*pressed {
+                *active = false;
+            }
+        }
+    }
+}
+
 impl eframe::App for ShowApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if cfg!(target_os = "macos") {
+            ctrl_click_to_secondary(&mut raw_input.events, &mut self.ctrl_click_active);
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Theme wird einmalig in `main` (CreationContext) gesetzt – nicht
         // jeden Frame (TODO.md Phase 0b).

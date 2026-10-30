@@ -319,8 +319,7 @@ pub fn draw_screen_viewports(app: &mut ShowApp, ctx: &Context) {
         let builder = ViewportBuilder::default()
             .with_title(format!("KuhPlay – {stage_name}"))
             .with_decorations(false)
-            // Echtes Fullscreen: immer oben, kein Taskbar-Eintrag.
-            // (egui 0.30 hat kein Monitor-Handle für `with_fullscreen`.)
+            // Immer oben, kein Taskbar-Eintrag.
             .with_always_on_top()
             .with_taskbar(false)
             .with_position([sx, sy])
@@ -331,7 +330,18 @@ pub fn draw_screen_viewports(app: &mut ShowApp, ctx: &Context) {
         let flag = open_flag.clone();
         ctx.show_viewport_deferred(viewport_id, builder, move |ctx, _class| {
             // Fenster wurde geschlossen (z. B. Cmd+W / Alt+F4) → Flag zurück.
-            if ctx.input(|i| i.viewport().close_requested()) {
+            #[cfg(target_os = "macos")]
+            super::macos_output::place_output_window(
+                &format!("KuhPlay – {name}"),
+                f64::from(sx),
+                f64::from(sy),
+                f64::from(sw),
+                f64::from(sh),
+            );
+            // Esc: Das Ausgabefenster liegt über allem, auch über der App. Sonst
+            // käme man mit nur einem Display nicht mehr an sie heran.
+            let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+            if escape || ctx.input(|i| i.viewport().close_requested()) {
                 flag.lock().unwrap().insert(name.clone(), false);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
@@ -375,8 +385,8 @@ pub fn new_stage_screen_open() -> StageScreenOpen {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-/// Vorschau-Fenster pro Screen: dasselbe Bild wie die Vollbild-Ausgabe, aber
-/// als normales Fenster – für die Arbeit an einem einzelnen Display.
+/// Vorschau-Fenster pro Screen: dasselbe Bild wie die Vollbild-Ausgabe, aber als
+/// eigenes Betriebssystem-Fenster, das sich neben die App schieben lässt.
 pub fn draw_screen_previews(app: &mut ShowApp, ctx: &Context) {
     if app.output_mode != OutputMode::Preview {
         return;
@@ -391,7 +401,8 @@ pub fn draw_screen_previews(app: &mut ShowApp, ctx: &Context) {
         })
         .collect();
     for (index, (id, name, width, height, rotation)) in screens.into_iter().enumerate() {
-        if app.closed_previews.contains(&id) {
+        let closed = app.closed_previews.clone();
+        if closed.lock().unwrap().contains(&id) {
             continue;
         }
         let stages: Vec<String> = app
@@ -401,50 +412,68 @@ pub fn draw_screen_previews(app: &mut ShowApp, ctx: &Context) {
             .filter(|stage| stage.screen == Some(id) && stage.visible)
             .map(|stage| stage.name.clone())
             .collect();
-        let mut open = true;
+        let stage_frames = app.engine.stage_frames.clone();
+        let test_pattern = app.screens.find(id).is_some_and(|s| s.test_pattern);
+        let aspect = height.max(1) as f32 / width.max(1) as f32;
         let offset = index as f32 * 32.0;
-        egui::Window::new(format!("Screen: {name}"))
-            .id(egui::Id::new(("kuhplay_screen_preview", id)))
-            .open(&mut open)
-            .default_width(360.0)
-            .default_pos(
-                ctx.screen_rect().right_top() + egui::vec2(-400.0 - offset, 150.0 + offset),
-            )
-            .show(ctx, |ui| {
-                let aspect = height.max(1) as f32 / width.max(1) as f32;
-                let size = egui::vec2(ui.available_width(), ui.available_width() * aspect);
-                let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-                let mut painted = false;
-                for stage in &stages {
-                    if let Some((tex, _, _)) = stage_texture(ctx, &app.engine.stage_frames, stage) {
-                        let mesh = rotated_mesh(rect, rotation, tex.id());
-                        ui.painter().add(egui::Shape::Mesh(mesh));
-                        painted = true;
-                    }
+        let builder = ViewportBuilder::default()
+            .with_title(format!("Screen: {name}"))
+            .with_inner_size([480.0, 480.0 * aspect])
+            .with_position([80.0 + offset, 80.0 + offset]);
+        ctx.show_viewport_deferred(
+            ViewportId::from_hash_of(("kuhplay-screen-preview", id)),
+            builder,
+            move |ctx, _class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    closed.lock().unwrap().insert(id);
+                    return;
                 }
-                if !painted {
-                    let hint = if stages.is_empty() {
-                        "No stage assigned"
-                    } else {
-                        "No output"
-                    };
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        hint,
-                        egui::FontId::proportional(12.0),
-                        palette::TEXT_DIM,
-                    );
-                }
-                ui.label(
-                    RichText::new(format!("{width}×{height}"))
-                        .size(11.0)
-                        .color(palette::TEXT_DIM),
-                );
-            });
-        if !open {
-            app.closed_previews.insert(id);
-        }
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::none().fill(Color32::BLACK))
+                    .show(ctx, |ui| {
+                        // Seitenverhältnis des Screens, auch im gezogenen Fenster.
+                        let space = ui.available_rect_before_wrap();
+                        let size = if space.width() * aspect <= space.height() {
+                            egui::vec2(space.width(), space.width() * aspect)
+                        } else {
+                            egui::vec2(space.height() / aspect, space.height())
+                        };
+                        let rect = egui::Rect::from_center_size(space.center(), size);
+                        let mut painted = false;
+                        for stage in &stages {
+                            if let Some((tex, _, _)) = stage_texture(ctx, &stage_frames, stage) {
+                                let mesh = rotated_mesh(rect, rotation, tex.id());
+                                ui.painter().add(egui::Shape::Mesh(mesh));
+                                painted = true;
+                            }
+                        }
+                        // Verkleinert gingen die 1-px-Linien des Testbilds verloren.
+                        if painted && test_pattern {
+                            let stroke = egui::Stroke::new(1.0, Color32::WHITE);
+                            ui.painter().rect_stroke(rect.shrink(0.5), 0.0, stroke);
+                            ui.painter().circle_stroke(
+                                rect.center(),
+                                rect.width().min(rect.height()) / 2.0 - 1.0,
+                                stroke,
+                            );
+                        }
+                        if !painted {
+                            let hint = if stages.is_empty() {
+                                "No stage assigned"
+                            } else {
+                                "No output"
+                            };
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                hint,
+                                egui::FontId::proportional(12.0),
+                                palette::TEXT_DIM,
+                            );
+                        }
+                    });
+                ctx.request_repaint();
+            },
+        );
     }
 }

@@ -29,6 +29,8 @@ pub mod demo;
 pub mod footer;
 pub mod icons;
 pub mod inspector;
+#[cfg(target_os = "macos")]
+mod macos_output;
 pub mod masthead;
 pub mod menu_bar;
 #[cfg(target_os = "macos")]

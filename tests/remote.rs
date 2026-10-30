@@ -234,7 +234,7 @@ async fn web_remote_websocket_end_to_end() {
 
     // WebSocket-Handshake (HTTP Upgrade).
     let req = format!(
-        "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+        "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: close, Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
     );
     stream.write_all(req.as_bytes()).await.unwrap();
     let mut head = Vec::new();
@@ -560,4 +560,122 @@ fn remote_workspace_contains_full_show_and_survives_json() {
     let back: RemoteEvent = serde_json::from_str(&json).unwrap();
     assert!(matches!(back, RemoteEvent::Workspace(_)));
     assert!(json.starts_with("{\"type\":\"workspace\""));
+}
+
+// ---------------------------------------------------------------------
+// Anmeldung und Zugriffsrechte
+// ---------------------------------------------------------------------
+
+/// Minimaler HTTP-Client; Rückgabe: (Status, komplette Antwort).
+async fn http(port: u16, request: String) -> (u16, String) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    let status = response.split(' ').nth(1).unwrap().parse().unwrap();
+    (status, response)
+}
+
+fn post(path: &str, body: &str, cookie: &str) -> String {
+    format!(
+        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Type: application/json\r\n{cookie}Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+fn get(path: &str, cookie: &str) -> String {
+    format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{cookie}\r\n")
+}
+
+#[tokio::test]
+async fn web_remote_requires_pin() {
+    let port = free_port().await;
+    let auth = kuhplay::remote::web::WebAuth::new(Some("4711".to_string()));
+    let (mut cmd_rx, _events) = kuhplay::remote::web::start_web_remote_with_auth(port, auth);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let go = r#"{"action":"go"}"#;
+
+    assert_eq!(
+        http(port, get("/", "")).await.0,
+        200,
+        "Seite selbst ist offen"
+    );
+    assert_eq!(http(port, get("/api/status", "")).await.0, 401);
+    assert_eq!(http(port, get("/api/workspace", "")).await.0, 401);
+    let upgrade = "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: close, Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    assert_eq!(http(port, upgrade.to_string()).await.0, 401);
+    assert_eq!(http(port, post("/api/command", go, "")).await.0, 401);
+    assert!(cmd_rx.try_recv().is_err(), "ohne PIN kommt nichts an");
+
+    let wrong = post("/api/login", r#"{"pin":"0000"}"#, "");
+    assert_eq!(http(port, wrong).await.0, 401);
+    let (status, response) = http(port, post("/api/login", r#"{"pin":"4711"}"#, "")).await;
+    assert_eq!(status, 200);
+    let cookie = response
+        .lines()
+        .find(|line| line.to_lowercase().starts_with("set-cookie:"))
+        .unwrap();
+    assert!(cookie.contains("HttpOnly"));
+    let value = cookie.split(' ').nth(1).unwrap().trim_end_matches(';');
+    let header = format!("Cookie: {value}\r\n");
+    assert_eq!(http(port, post("/api/command", go, &header)).await.0, 200);
+    let cmd = tokio::time::timeout(Duration::from_secs(2), cmd_rx.recv()).await;
+    assert!(matches!(cmd, Ok(Some(RemoteCommand::Go))));
+}
+
+#[tokio::test]
+async fn file_commands_need_a_pin() {
+    let port = free_port().await;
+    let (mut cmd_rx, _events) = start_web_remote(port);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = r#"{"action":"open_show","path":"/tmp/a.kuhplay"}"#;
+    http(port, post("/api/command", body, "")).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(cmd_rx.try_recv().is_err(), "ohne PIN kein Dateizugriff");
+}
+
+#[tokio::test]
+async fn companion_only_accepts_playback() {
+    let port = free_port().await;
+    let (mut cmd_rx, _events) = start_companion_server(port);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    for line in [
+        r#"{"action":"open_show","path":"/tmp/a.kuhplay"}"#,
+        r#"{"action":"new_show"}"#,
+        r#"{"action":"new_cue","cue_type":"Audio"}"#,
+        r#"{"action":"go"}"#,
+    ] {
+        stream
+            .write_all(format!("{line}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+    let cmd = tokio::time::timeout(Duration::from_secs(2), cmd_rx.recv()).await;
+    assert!(matches!(cmd, Ok(Some(RemoteCommand::Go))), "{cmd:?}");
+}
+
+#[test]
+fn remote_show_files_are_limited_to_kuhplay_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = remote_app();
+    let victim = dir.path().join("wichtig.txt");
+    std::fs::write(&victim, "inhalt").unwrap();
+    app.handle_remote_command(RemoteCommand::SaveShowAs {
+        path: victim.display().to_string(),
+    });
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "inhalt");
+
+    let show = dir.path().join("show.kuhplay");
+    app.handle_remote_command(RemoteCommand::SaveShowAs {
+        path: show.display().to_string(),
+    });
+    assert!(show.exists());
+    app.handle_remote_command(RemoteCommand::SetShowName {
+        name: "Geändert".to_string(),
+    });
+    app.handle_remote_command(RemoteCommand::OpenShow {
+        path: show.display().to_string(),
+    });
+    assert_eq!(app.show_name, "Demo Show");
 }

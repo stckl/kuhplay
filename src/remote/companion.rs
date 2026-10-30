@@ -150,6 +150,9 @@ async fn handle_client(stream: TcpStream, state: CompanionState) {
                 continue;
             }
             match serde_json::from_str::<RemoteCommand>(&line) {
+                Ok(cmd) if !cmd.is_playback() => {
+                    tracing::warn!(?cmd, "companion: nur Playback-Befehle erlaubt");
+                }
                 Ok(cmd) => {
                     if cmd_tx.send(cmd).await.is_err() {
                         break;

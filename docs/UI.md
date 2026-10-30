@@ -212,7 +212,8 @@ Post-wait · Continue**.
 * **Basics dreispaltig**, damit bei Default-Höhe nichts wegscrollt:
   links Q#/Name/Target/Datei, Mitte Zeiten/Continue, rechts
   Type+Armed/Color/Notes.
-* **Geometry zweispaltig:** links Stage/Layer, rechts Surface.
+* **Geometry zweispaltig:** links Stage/Layer, rechts Lage des Cues. Mode wie in
+  QLab: Fit (Standard), Fill, Stretch, Custom (eigene Position und Größe).
 * **Slides zweispaltig:** links Slide-Liste, rechts Crossfade/Optionen.
 * Alle Felder folgen §6.4.
 * Die Höhe hängt nicht vom Inhalt ab (nur vom Ziehen): Beim Wechsel von Cue
@@ -236,12 +237,22 @@ Post-wait · Continue**.
 * Bereichs-Überschriften als kleines Label (`theme::section_label`).
 * Audio: Dropdown mit allen Ausgabegeräten, wird mit der Show gespeichert und
   ist gesperrt, solange Cues laufen oder Show Mode aktiv ist.
+* Vollbild-Ausgabe: Esc im Ausgabefenster schließt es. Es liegt über allem, auch
+  über der App und der Menüleiste.
 * Audio-Kanäle: 16 benannte Kanäle, je einer auf einem Geräte-Ausgang oder
   „Off". Der Signalweg ist Cue (Tab „Audio Levels", Matrix) → Kanal → Ausgang.
   Umlegen wirkt sofort, auch live; nur Show Mode sperrt es.
-* Video-Ausgabe: Off, Preview Windows (ein Fenster pro Screen) oder Displays
+* Network: PIN der Web-Remote anzeigen und ändern (4 bis 8 Ziffern).
+* Stages: eigener Bereich unter Video. Anlegen, umbenennen, Canvas-Größe, Screen,
+  Sichtbarkeit, löschen (nur wenn kein Cue sie nutzt). Weicht das Seitenverhältnis
+  der Stage vom Screen ab, weist ein Hinweis auf die Verzerrung hin.
+* Video-Ausgabe: Off, Preview Windows (ein eigenes Fenster pro Screen, frei verschiebbar) oder Displays
   (Vollbild). Mit nur einem Display startet die App mit Preview Windows, weil
   ein Vollbild sonst die App selbst verdeckt.
+* Testbild: entsteht in Screen-Auflösung (1 Bildpunkt = 1 Ausgangspixel), mit
+  Aufbau wie das QLab-Raster: monochrom, 1 px Linien, Skala, Diagonalen, Kreise und
+  Beschriftung im weißen Kasten. Ist der
+  Kreis auf der Leinwand eine Ellipse, verzerrt die Darstellung dahinter.
 * Die Karte im Screen-Editor zeigt alle Displays und Screens. Während eines
   Drags bleibt ihr Maßstab fest.
 

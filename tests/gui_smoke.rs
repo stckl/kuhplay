@@ -1642,7 +1642,8 @@ fn output_mode_preview_shows_window_per_screen() {
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
-    assert!(output_has_text(&out, "Screen: Beamer"));
+    // Headless wird das eigene Fenster in den Kontext eingebettet.
+    assert!(output_has_text(&out, "No output"));
 
     app.set_output_mode(OutputMode::Displays);
     assert_eq!(
@@ -1653,7 +1654,7 @@ fn output_mode_preview_shows_window_per_screen() {
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
-    assert!(!output_has_text(&out, "Screen: Beamer"));
+    assert!(!output_has_text(&out, "No output"));
     app.set_output_mode(OutputMode::Off);
     assert_eq!(
         app.stage_screen_open.lock().unwrap().get(&stage),
@@ -1689,4 +1690,46 @@ fn long_target_path_leaves_room_for_browse_button() {
         field_right + 32.0 < pre_wait.x,
         "Feld endet bei {field_right}, {pre_wait:?}"
     );
+}
+
+/// Stages: Umbenennen zieht die Cues mit, genutzte Stages bleiben.
+#[test]
+fn stages_can_be_renamed_and_removed_safely() {
+    let mut app = demo_app();
+    assert!(app.carts.stage_in_use("Stage 1"));
+    assert!(!app.remove_stage("Stage 1"), "Cues nutzen sie noch");
+    app.ensure_stage("Stage 1");
+    app.rename_stage("Stage 1", "Hauptbild");
+    assert!(app.stages.find("Hauptbild").is_some());
+    assert!(app.stages.find("Stage 1").is_none());
+    assert!(app.carts.stage_in_use("Hauptbild"));
+    assert_eq!(
+        app.carts.active().cues()[1].stage.as_deref(),
+        Some("Hauptbild")
+    );
+
+    app.ensure_stage("Frei");
+    app.rename_stage("Frei", "Hauptbild");
+    assert!(
+        app.stages.find("Frei").is_some(),
+        "vergebener Name bleibt abgelehnt"
+    );
+    assert!(app.remove_stage("Frei"));
+    assert!(app.stages.find("Frei").is_none());
+}
+
+/// Video-Einstellungen: Stages-Seite zeigt die Stage und die Aktionen.
+#[test]
+fn stages_page_renders() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    app.ui.workspace_settings_open = true;
+    app.ui.workspace_settings_page = SettingsPage::Video;
+    app.ui.video_tab = kuhplay::gui::workspace_settings::VideoTab::Stages;
+    let mut out = render_frame(&ctx, &mut app);
+    for _ in 0..2 {
+        out = render_frame(&ctx, &mut app);
+    }
+    assert!(output_has_text(&out, "+ Add Stage"));
+    assert!(output_has_text(&out, "Delete Stage"));
 }

@@ -151,6 +151,43 @@ impl HardEdge {
     }
 }
 
+/// Ziel auf der Stage: `x`, `y`, Breite, Höhe.
+pub type SurfaceRect = (f32, f32, f32, f32);
+/// Ausschnitt der Quelle: `x0`, `y0`, `x1`, `y1`.
+pub type SourceRect = (u32, u32, u32, u32);
+
+/// Wie ein Cue auf der Stage liegt (QLab: Geometry-Tab, Mode und Style).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum GeometryMode {
+    /// Ganz sichtbar, Seitenverhältnis bleibt; frei bleibende Fläche ist leer.
+    Fit,
+    /// Füllt die Stage, Seitenverhältnis bleibt; Überstehendes wird abgeschnitten.
+    Fill,
+    /// Füllt die Stage, Breite und Höhe werden getrennt skaliert.
+    Stretch,
+    /// Eigene Position und Größe. Default für ältere Shows, die nur das kannten.
+    #[default]
+    Custom,
+}
+
+impl GeometryMode {
+    pub const ALL: [GeometryMode; 4] = [
+        GeometryMode::Fit,
+        GeometryMode::Fill,
+        GeometryMode::Stretch,
+        GeometryMode::Custom,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GeometryMode::Fit => "Fit",
+            GeometryMode::Fill => "Fill",
+            GeometryMode::Stretch => "Stretch",
+            GeometryMode::Custom => "Custom",
+        }
+    }
+}
+
 /// Geometrie einer Surface (eines Video-/Diashow-Cues) auf einer Stage.
 ///
 /// QLab-Pendant: Surface-Zuweisung eines Video-Cues (Position/Größe auf der
@@ -179,6 +216,9 @@ pub struct SurfaceGeometry {
     /// Sichtbarkeit (unsichtbare Surfaces werden nicht komponiert).
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// Lage auf der Stage. `x`/`y`/`width`/`height` gelten nur bei `Custom`.
+    #[serde(default)]
+    pub mode: GeometryMode,
 }
 
 impl SurfaceGeometry {
@@ -193,6 +233,45 @@ impl SurfaceGeometry {
             hard_edge: None,
             opacity: 1.0,
             visible: true,
+            mode: GeometryMode::Custom,
+        }
+    }
+
+    /// Standard für neue Cues: ganz sichtbar, unverzerrt (QLab: Fill Stage, Fit).
+    pub fn fit() -> Self {
+        Self {
+            mode: GeometryMode::Fit,
+            ..Self::full_canvas()
+        }
+    }
+
+    /// Ziel-Rechteck auf der Stage (`x`, `y`, Breite, Höhe) und Quell-Rechteck
+    /// (`x0`, `y0`, `x1`, `y1`) für ein Bild der Größe `src` auf der Stage `canvas`.
+    pub fn placement(&self, src: (u32, u32), canvas: (u32, u32)) -> (SurfaceRect, SourceRect) {
+        let (sx0, sy0, sx1, sy1) = self.source_rect(src.0, src.1);
+        let (cw, ch) = (canvas.0 as f32, canvas.1 as f32);
+        let (src_w, src_h) = ((sx1 - sx0).max(1) as f32, (sy1 - sy0).max(1) as f32);
+        match self.mode {
+            GeometryMode::Custom => (
+                (self.x, self.y, self.width, self.height),
+                (sx0, sy0, sx1, sy1),
+            ),
+            GeometryMode::Stretch => ((0.0, 0.0, cw, ch), (sx0, sy0, sx1, sy1)),
+            GeometryMode::Fit => {
+                let scale = (cw / src_w).min(ch / src_h);
+                let (w, h) = (src_w * scale, src_h * scale);
+                (((cw - w) / 2.0, (ch - h) / 2.0, w, h), (sx0, sy0, sx1, sy1))
+            }
+            GeometryMode::Fill => {
+                // Vom Bild nur den mittigen Ausschnitt mit dem Format der Stage.
+                let scale = (cw / src_w).max(ch / src_h);
+                let (keep_w, keep_h) = (cw / scale, ch / scale);
+                let x0 = sx0 + ((src_w - keep_w) / 2.0).max(0.0) as u32;
+                let y0 = sy0 + ((src_h - keep_h) / 2.0).max(0.0) as u32;
+                let x1 = (x0 + keep_w.round().max(1.0) as u32).min(sx1);
+                let y1 = (y0 + keep_h.round().max(1.0) as u32).min(sy1);
+                ((0.0, 0.0, cw, ch), (x0, y0, x1, y1))
+            }
         }
     }
 
@@ -480,6 +559,14 @@ impl StageManager {
     }
 
     /// Alle Stage-Namen in Reihenfolge.
+    /// Entfernt eine Stage. `true`, wenn es sie gab.
+    pub fn remove(&mut self, name: &str) -> bool {
+        let before = self.stages.len();
+        self.stages.retain(|stage| stage.name != name);
+        self.stages.len() != before
+    }
+
+    /// Alle Stage-Namen.
     pub fn names(&self) -> Vec<String> {
         self.stages.iter().map(|s| s.name.clone()).collect()
     }
@@ -500,6 +587,44 @@ impl StageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_modes_follow_qlab() {
+        let surface = |mode| SurfaceGeometry {
+            mode,
+            ..SurfaceGeometry::full_canvas()
+        };
+        // 16:9-Bild auf quadratischer Stage.
+        let (src, canvas) = ((1920, 1080), (1000, 1000));
+        let (dest, source) = surface(GeometryMode::Fit).placement(src, canvas);
+        assert_eq!(source, (0, 0, 1920, 1080), "ganzes Bild");
+        assert_eq!((dest.2.round(), dest.3.round()), (1000.0, 563.0));
+        assert_eq!((dest.0.round(), dest.1.round()), (0.0, 219.0), "mittig");
+
+        let (dest, source) = surface(GeometryMode::Fill).placement(src, canvas);
+        assert_eq!(dest, (0.0, 0.0, 1000.0, 1000.0));
+        assert_eq!(source, (420, 0, 1500, 1080), "Mitte, Seiten abgeschnitten");
+
+        let (dest, source) = surface(GeometryMode::Stretch).placement(src, canvas);
+        assert_eq!(dest, (0.0, 0.0, 1000.0, 1000.0));
+        assert_eq!(source, (0, 0, 1920, 1080));
+
+        let custom = SurfaceGeometry {
+            x: 10.0,
+            y: 20.0,
+            width: 30.0,
+            height: 40.0,
+            ..SurfaceGeometry::full_canvas()
+        };
+        assert_eq!(custom.placement(src, canvas).0, (10.0, 20.0, 30.0, 40.0));
+    }
+
+    #[test]
+    fn old_surface_json_stays_custom() {
+        let json = r#"{"x":1.0,"y":2.0,"width":3.0,"height":4.0}"#;
+        let surface: SurfaceGeometry = serde_json::from_str(json).unwrap();
+        assert_eq!(surface.mode, GeometryMode::Custom);
+    }
 
     #[test]
     fn geometry_validation() {
@@ -628,6 +753,7 @@ mod tests {
             hard_edge: Some(HardEdge::new(EdgeSide::Right, 40.0, BlendCurve::Linear)),
             opacity: 1.0,
             visible: true,
+            mode: GeometryMode::Custom,
         };
         // Rechte Kante bei x = 300: 20 px innen → Faktor 0.5.
         assert_eq!(s.hard_edge_factor(280.0, 100.0), 0.5);
@@ -677,6 +803,7 @@ mod tests {
             hard_edge: Some(HardEdge::new(EdgeSide::Left, 64.0, BlendCurve::Cosine)),
             opacity: 0.75,
             visible: false,
+            mode: GeometryMode::Custom,
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: SurfaceGeometry = serde_json::from_str(&json).unwrap();

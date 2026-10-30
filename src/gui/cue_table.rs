@@ -996,6 +996,16 @@ pub fn draw(
                     }
                 }
 
+                // Show-Mode: nur der Playhead, Bearbeiten bleibt gesperrt.
+                if !editable && !is_child {
+                    response.context_menu(|ui| {
+                        if ui.button("Set Playhead Here").clicked() {
+                            cue_list.set_cursor(list_index);
+                            ui.close_menu();
+                        }
+                    });
+                }
+
                 if editable {
                     // Effektive Auswahl: Zeile Teil einer Mehrfachauswahl →
                     // Aktionen wirken auf die ganze Selektion (QLab).

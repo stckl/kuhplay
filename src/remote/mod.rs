@@ -107,6 +107,14 @@ pub enum RemoteCommand {
     NewShow,
     /// In die aktuelle Show-Datei speichern.
     SaveShow,
+    /// Show aus einer `.kuhplay`-Datei auf dem KuhPlay-Rechner laden.
+    OpenShow {
+        path: String,
+    },
+    /// Show als `.kuhplay`-Datei auf dem KuhPlay-Rechner speichern.
+    SaveShowAs {
+        path: String,
+    },
     SetAudition {
         enabled: bool,
     },
@@ -151,6 +159,31 @@ pub enum RemoteCommand {
 }
 
 impl RemoteCommand {
+    /// Playback-Befehle: alles, was Companion ohne Anmeldung darf. Bearbeiten
+    /// und Dateizugriff bleiben der Web-Remote mit PIN vorbehalten.
+    pub fn is_playback(&self) -> bool {
+        matches!(
+            self,
+            Self::Go
+                | Self::Panic
+                | Self::PauseAll
+                | Self::ResumeAll
+                | Self::Reset
+                | Self::GoTo { .. }
+                | Self::Arm { .. }
+                | Self::PauseCue { .. }
+                | Self::ResumeCue { .. }
+                | Self::StopCue { .. }
+                | Self::SetShowMode { .. }
+                | Self::GetStatus
+        )
+    }
+
+    /// Greift auf Dateien des KuhPlay-Rechners zu: nur mit aktivem PIN.
+    pub fn accesses_files(&self) -> bool {
+        matches!(self, Self::OpenShow { .. } | Self::SaveShowAs { .. })
+    }
+
     /// `true` für alles, was die Show verändert: Im Show-Mode gesperrt, wie in
     /// der App. Playback und das Umschalten des Show-Mode bleiben möglich.
     pub fn is_edit(&self) -> bool {
@@ -172,6 +205,7 @@ impl RemoteCommand {
                 | Self::SetPlayhead { .. }
                 | Self::RefreshAudioDevices
                 | Self::SaveShow
+                | Self::SaveShowAs { .. }
                 | Self::EvalJs { .. }
                 | Self::PushJson { .. }
         )
@@ -384,6 +418,8 @@ pub struct RemoteConfig {
     pub osc_out: Option<(String, u16)>,
     /// OSC-Adress-Präfix (Default: `/kuhplay`; z. B. `/qlab`).
     pub osc_prefix: String,
+    /// PIN der Web-Remote; `None` = keine Anmeldung.
+    pub web_pin: Option<String>,
     /// MIDI aktivieren (Controller-Input, siehe `midi`).
     pub midi_enabled: bool,
     /// MIDI-Input-Device (Namens-Substring); `None` = erstes Device.
@@ -403,6 +439,7 @@ impl Default for RemoteConfig {
             osc_port: 9000,
             osc_out: Some(("127.0.0.1".to_string(), 9001)),
             osc_prefix: "/kuhplay".to_string(),
+            web_pin: None,
             midi_enabled: true,
             midi_device: None,
             midi_map: MidiNoteMap::default(),
@@ -420,6 +457,8 @@ impl RemoteConfig {
     ///   `KUHPLAY_OSC_PREFIX` = Adress-Präfix (Default `/kuhplay`)
     /// * `KUHPLAY_MIDI=off`, `KUHPLAY_MIDI_DEVICE` = Namens-Substring,
     ///   `KUHPLAY_MIDI_MAP` = `go=36,panic=37,pause=38,resume=39,reset=40`
+    /// * `KUHPLAY_REMOTE_PIN` = PIN der Web-Remote (`off` = keine Anmeldung;
+    ///   ungesetzt legt `main` einen an, siehe [`web::load_or_create_pin`])
     pub fn from_env() -> Self {
         fn disabled(var: &str) -> bool {
             std::env::var_os(var).is_some_and(|v| v == "0" || v == "off" || v == "false")
@@ -440,8 +479,12 @@ impl RemoteConfig {
             let (host, port) = value.rsplit_once(':')?;
             Some(Some((host.to_string(), port.parse().ok()?)))
         }
+        let web_pin = std::env::var("KUHPLAY_REMOTE_PIN")
+            .ok()
+            .filter(|pin| !pin.is_empty() && pin != "off");
         let all_off = disabled("KUHPLAY_REMOTE");
         Self {
+            web_pin,
             web_port: port("KUHPLAY_REMOTE_WEB_PORT", 8080),
             companion_port: port("KUHPLAY_REMOTE_COMPANION_PORT", 9999),
             web_enabled: !all_off && !disabled("KUHPLAY_REMOTE_WEB"),

@@ -12,6 +12,15 @@ fn main() -> eframe::Result<()> {
         )
         .init();
 
+    // Web-Remote mit PIN: Der gespeicherte PIN wird beim ersten Start angelegt.
+    // Vor allen Threads, `set_var` ist danach nicht mehr sicher.
+    if std::env::var_os("KUHPLAY_REMOTE_PIN").is_none() {
+        std::env::set_var(
+            "KUHPLAY_REMOTE_PIN",
+            kuhplay::remote::web::load_or_create_pin(),
+        );
+    }
+
     // Engine-Thread starten (Kommunikation läuft danach über Kanäle).
     // Default: produktive RealMediaEngine (echtes Audio via cpal/symphonia,
     // Video via ffmpeg). `KUHPLAY_ENGINE=mock` erzwingt die virtuelle Engine

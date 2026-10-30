@@ -215,6 +215,31 @@ impl CartManager {
 
     /// Sucht einen Cue rekursiv über ALLE Carts (z. B. für Engine-Events,
     /// die auch Cues in nicht-aktiven Carts betreffen können).
+    /// Benennt eine Stage in allen Cues um (auch in Gruppen).
+    pub fn rename_stage(&mut self, old: &str, new: &str) {
+        fn walk(cues: &mut [Cue], old: &str, new: &str) {
+            for cue in cues {
+                if cue.stage.as_deref() == Some(old) {
+                    cue.stage = Some(new.to_string());
+                }
+                walk(&mut cue.children, old, new);
+            }
+        }
+        for cart in &mut self.carts {
+            walk(cart.cues_mut(), old, new);
+        }
+    }
+
+    /// `true`, wenn irgendein Cue die Stage nutzt (auch in Gruppen).
+    pub fn stage_in_use(&self, name: &str) -> bool {
+        fn used(cues: &[Cue], name: &str) -> bool {
+            cues.iter()
+                .any(|cue| cue.stage.as_deref() == Some(name) || used(&cue.children, name))
+        }
+        self.carts.iter().any(|cart| used(cart.cues(), name))
+    }
+
+    /// Sucht einen Cue über alle Carts, veränderbar.
     pub fn find_cue_any_mut(&mut self, id: Uuid) -> Option<&mut Cue> {
         self.carts.iter_mut().find_map(|cart| cart.find_cue_mut(id))
     }

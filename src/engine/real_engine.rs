@@ -556,7 +556,6 @@ impl RealMediaEngine {
 
     /// Sammelt die Surfaces einer Stage (laufende Video-/Diashow-Cues).
     fn surfaces_of_stage(&self, stage_name: &str) -> Vec<SurfaceEntry> {
-        let (cw, ch) = canvas_size(&self.stages, stage_name);
         let mut surfaces = Vec::new();
         for (cue_id, playback) in &self.active {
             if playback.finished_at.is_some() {
@@ -572,16 +571,7 @@ impl RealMediaEngine {
             ) {
                 continue;
             }
-            let surface = playback.surface.unwrap_or(SurfaceGeometry {
-                x: 0.0,
-                y: 0.0,
-                width: cw as f32,
-                height: ch as f32,
-                area_of_interest: None,
-                hard_edge: None,
-                opacity: 1.0,
-                visible: true,
-            });
+            let surface = playback.surface.unwrap_or_else(SurfaceGeometry::fit);
             let frame = self.frames.lock().unwrap().get(cue_id).cloned();
             let fade_opacity = self
                 .opacities

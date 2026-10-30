@@ -11,6 +11,10 @@ eframe = "0.30"
 egui = "0.30"
 egui_extras = "0.30" # TableBuilder für die Cue-Liste
 
+# Schrift der Testbilder: dieselbe, die egui mitbringt, in reinem Rust gerendert.
+ab_glyph = "0.2"
+epaint_default_fonts = "0.30"
+
 # Concurrency: thread-sichere Kanäle zwischen UI- und Engine-Thread
 crossbeam-channel = "0.5"
 
@@ -70,6 +74,9 @@ base64 = "0.22"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native Menüleiste (siehe src/gui/native_menu.rs).
 muda = "0.17"
+# Ausgabefenster exakt platzieren (siehe src/gui/macos_output.rs).
+objc2-06 = { package = "objc2", version = "0.6" }
+objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", features = ["NSGeometry", "NSString"] }
 objc2-foundation = { version = "0.2", optional = true, features = [
     "NSData",
     "NSError",

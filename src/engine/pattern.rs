@@ -1,27 +1,98 @@
 //! Testbild-Renderer (QLab „Test Pattern").
 //!
-//! Zeichnet ein Testbild in ein RGBA-Canvas (Stage-Canvas des Compositors):
+//! Das Testbild wird in der **Auflösung des Screens** gezeichnet, nicht in der
+//! der Stage (siehe [`super::compositor`]). Ein Pixel im Bild ist also ein Pixel
+//! am Ausgang, und der Kreis ist am Ausgang rund. Erscheint er auf der Leinwand
+//! als Ellipse, verzerrt die Darstellung dahinter (Display, Projektor, Scaler).
 //!
-//! * **Grid** (QLab-Standard): leichtes Schachbrettmuster, weißer Rahmen,
-//!   10×10-Raster, einbeschriebener Kreis, zentrierte Beschriftung mit
-//!   Screen-Nummer, Name und Auflösung (z. B. `„#1 MAIN 1920X1080"`).
-//! * **Solid Color**: einfarbige Fläche in der Screen-Farbe (automatisch
-//!   codiert nach Index) + Beschriftung – zum Ausrichten und
-//!   Unterscheiden von Projektoren/LED-Modulen.
-//! * **Color Bars** (SMPTE): Weiß, Gelb, Cyan, Grün, Magenta, Rot, Blau +
-//!   Beschriftung – zum Kalibrieren von Farbe/Helligkeit.
+//! Alle Arten teilen dieselben Elemente: 1 px weißer Rand exakt am Bildrand,
+//! 1 px Kreis in der Mitte und die Beschriftung im weißen Kasten.
 //!
-//! Das Testbild **überdeckt die Inhalte** (QLab-Verhalten: Screen-Test zum
-//! Einrichten von Projektoren und LED-Wänden). Es wird ungedreht in
-//! Canvas-Koordinaten gezeichnet; die Drehung des Screens
-//! ([`crate::core::ScreenRotation`]) wird beim Anzeigen im Viewport
-//! angewendet und dreht Testbild + Inhalt gleichermaßen.
+//! * **Grid** (Aufbau wie das Ausrichtungsraster in QLab 5): monochrom weiß auf
+//!   Schwarz, feines Raster mit Skala am Rand, Mittelachsen, Diagonalen und Kreise
+//!   in den Ecken. Alles 1 px breit.
+//! * **Solid Color**: Fläche in der Screen-Farbe.
+//! * **Color Bars**: SMPTE-Balken.
+//! * **LED Wall**: nummerierte Kacheln und Pixelskala.
 //!
-//! Die Beschriftung nutzt eine eingebaute 5×7-Bitmap-Schrift (Public-Domain-
-//! Stil, klassische `font5x7`), damit der Renderer keine Font-Dependency
-//! braucht und auf allen Plattformen identisch aussieht.
+//! Das Testbild **überdeckt die Inhalte**. Die Drehung des Screens wird erst beim
+//! Anzeigen angewendet. Texte nutzen die Ubuntu-Schrift, die egui mitbringt.
+
+use std::sync::OnceLock;
+
+use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 
 use crate::core::{TestPatternKind, TestPatternSpec};
+
+/// Die Schrift aller Testbild-Texte.
+fn font() -> &'static FontRef<'static> {
+    static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        FontRef::try_from_slice(epaint_default_fonts::UBUNTU_LIGHT)
+            .expect("mitgelieferte Schrift ist gültig")
+    })
+}
+
+/// Breite und Höhe eines Textes in Pixeln.
+fn measure_text(text: &str, px: f32) -> (f32, f32) {
+    let scaled = font().as_scaled(PxScale::from(px));
+    let mut width = 0.0;
+    let mut previous = None;
+    for ch in text.chars() {
+        let id = scaled.glyph_id(ch);
+        if let Some(previous) = previous {
+            width += scaled.kern(previous, id);
+        }
+        width += scaled.h_advance(id);
+        previous = Some(id);
+    }
+    (width, scaled.ascent() - scaled.descent())
+}
+
+/// Zeichnet Text kantengeglättet, `(x, y)` ist die obere linke Ecke.
+#[allow(clippy::too_many_arguments)] // Zeichen-Helfer: alle Parameter fachlich nötig
+fn draw_text(
+    rgba: &mut [u8],
+    w: usize,
+    h: usize,
+    x: f32,
+    y: f32,
+    text: &str,
+    px: f32,
+    color: (u8, u8, u8),
+) {
+    let scaled = font().as_scaled(PxScale::from(px));
+    let baseline = y + scaled.ascent();
+    let mut pen = x;
+    let mut previous = None;
+    for ch in text.chars() {
+        let id = scaled.glyph_id(ch);
+        if let Some(previous) = previous {
+            pen += scaled.kern(previous, id);
+        }
+        let glyph = id.with_scale_and_position(PxScale::from(px), ab_glyph::point(pen, baseline));
+        if let Some(outline) = font().outline_glyph(glyph) {
+            let bounds = outline.px_bounds();
+            outline.draw(|gx, gy, coverage| {
+                let px_x = bounds.min.x as i64 + i64::from(gx);
+                let px_y = bounds.min.y as i64 + i64::from(gy);
+                if px_x < 0 || px_y < 0 || px_x >= w as i64 || px_y >= h as i64 {
+                    return;
+                }
+                let i = (px_y as usize * w + px_x as usize) * 4;
+                let coverage = coverage.clamp(0.0, 1.0);
+                for (channel, target) in [color.0, color.1, color.2].into_iter().enumerate() {
+                    let current = f32::from(rgba[i + channel]);
+                    rgba[i + channel] =
+                        (current * (1.0 - coverage) + f32::from(target) * coverage) as u8;
+                }
+                rgba[i + 3] = 255;
+            });
+        }
+        pen += scaled.h_advance(id);
+        previous = Some(id);
+    }
+}
 
 /// Zeichnet das Testbild vollständig in `rgba` (Größe `width`×`height`,
 /// Row-Major, 4 Bytes/Pixel).
@@ -34,34 +105,19 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
     );
 
     match spec.kind {
-        TestPatternKind::Grid => {
-            draw_checkerboard(rgba, w, h);
-            draw_grid(rgba, w, h);
-            let margin = (w.min(h) / 20).max(8);
-            draw_frame(rgba, w, h, margin);
-            draw_circle(rgba, w, h, margin);
-            draw_label(rgba, w, h, &spec.label);
-        }
-        TestPatternKind::SolidColor => {
-            draw_solid_color(rgba, w, h, spec.color);
-            // Dezenter Rahmen + Beschriftung für Orientierung.
-            let margin = (w.min(h) / 20).max(8);
-            draw_frame(rgba, w, h, margin);
-            draw_label(rgba, w, h, &spec.label);
-        }
-        TestPatternKind::ColorBars => {
-            draw_color_bars(rgba, w, h);
-            draw_label(rgba, w, h, &spec.label);
-        }
-        TestPatternKind::LedWall => {
-            draw_led_wall(rgba, w, h, spec);
-        }
+        TestPatternKind::Grid => draw_grid(rgba, w, h),
+        TestPatternKind::SolidColor => draw_solid_color(rgba, w, h, spec.color),
+        TestPatternKind::ColorBars => draw_color_bars(rgba, w, h),
+        TestPatternKind::LedWall => draw_led_wall(rgba, w, h, spec),
     }
+    draw_circle(rgba, w, h);
+    draw_label(rgba, w, h, &spec.label);
+    // Zuletzt: Der Rand ist immer vollständig sichtbar.
+    draw_frame(rgba, w, h);
 }
 
-/// LED-Wand-Testbild: Schachbrettmuster mit durchnummerierten Kacheln,
-/// 1px-Rahmen am Rand, 1px-Kreis in der Mitte, Beschriftung zentriert.
-/// Hintergrund: Schachbrett leicht in der Screen-Farbe eingefärbt
+/// LED-Wand-Testbild: Schachbrettmuster mit durchnummerierten Kacheln und
+/// Pixelskala. Hintergrund: Schachbrett leicht in der Screen-Farbe eingefärbt
 /// (abgedunkelt – nicht grell).
 fn draw_led_wall(rgba: &mut [u8], w: usize, h: usize, spec: &TestPatternSpec) {
     let cell = (spec.checker_size.max(8) as usize).min(w.max(h));
@@ -124,14 +180,8 @@ fn draw_led_wall(rgba: &mut [u8], w: usize, h: usize, spec: &TestPatternSpec) {
         }
     }
 
-    // 1px-Rahmen ganz am Rand (weiß).
-    draw_frame_1px(rgba, w, h, (255, 255, 255));
     // Pixelskala umlaufend am Rand (Markierungen + Zahlen).
     draw_pixel_scale(rgba, w, h, cell, (255, 255, 255));
-    // 1px-Kreis in der Mitte (weiß).
-    draw_circle_1px(rgba, w, h, (255, 255, 255));
-    // Beschriftung zentriert (mit Schatten).
-    draw_label(rgba, w, h, &spec.label);
 }
 
 /// Zeichnet eine umlaufende Pixelskala am Rand des Canvas.
@@ -238,7 +288,7 @@ fn draw_pixel_scale(rgba: &mut [u8], w: usize, h: usize, step: usize, color: (u8
     }
 }
 
-/// Zeichnet Text an einer absoluten Position (kein Zentrieren).
+/// Zeichnet die kleinen Zahlen der Pixelskala an einer festen Position.
 fn draw_label_at(
     rgba: &mut [u8],
     w: usize,
@@ -248,99 +298,7 @@ fn draw_label_at(
     text: &str,
     color: (u8, u8, u8),
 ) {
-    let scale = 1usize;
-    let mut cx = x0;
-    for ch in text.chars() {
-        let glyph = glyph_for(ch);
-        for (col, bits) in glyph.iter().enumerate() {
-            for row in 0..7usize {
-                if bits & (1 << row) != 0 {
-                    fill_block(
-                        rgba,
-                        w,
-                        h,
-                        cx + col as isize * scale as isize,
-                        y0 + row as isize * scale as isize,
-                        scale,
-                        color,
-                    );
-                }
-            }
-        }
-        cx += 6 * scale as isize;
-    }
-}
-
-/// Zeichnet einen 1px-Rahmen exakt am Canvas-Rand.
-fn draw_frame_1px(rgba: &mut [u8], w: usize, h: usize, color: (u8, u8, u8)) {
-    // Oben und unten (y=0 und y=h-1).
-    for x in 0..w {
-        let i_top = x * 4;
-        rgba[i_top] = color.0;
-        rgba[i_top + 1] = color.1;
-        rgba[i_top + 2] = color.2;
-        rgba[i_top + 3] = 255;
-        let i_bot = ((h - 1) * w + x) * 4;
-        rgba[i_bot] = color.0;
-        rgba[i_bot + 1] = color.1;
-        rgba[i_bot + 2] = color.2;
-        rgba[i_bot + 3] = 255;
-    }
-    // Links und rechts (x=0 und x=w-1).
-    for y in 0..h {
-        let i_left = (y * w) * 4;
-        rgba[i_left] = color.0;
-        rgba[i_left + 1] = color.1;
-        rgba[i_left + 2] = color.2;
-        rgba[i_left + 3] = 255;
-        let i_right = (y * w + w - 1) * 4;
-        rgba[i_right] = color.0;
-        rgba[i_right + 1] = color.1;
-        rgba[i_right + 2] = color.2;
-        rgba[i_right + 3] = 255;
-    }
-}
-
-/// Zeichnet einen 1px-Kreis (einbeschrieben) in der Mitte.
-fn draw_circle_1px(rgba: &mut [u8], w: usize, h: usize, color: (u8, u8, u8)) {
-    let cx = w as f32 / 2.0;
-    let cy = h as f32 / 2.0;
-    let radius = (w.min(h) / 2) as f32 - 1.0; // 1px Abstand zum Rand
-    if radius < 4.0 {
-        return;
-    }
-    // Midpoint-Circle-Algorithmus für 1px-Linie.
-    let mut x = radius as i32;
-    let mut y = 0i32;
-    let mut err = 1 - x;
-    while x >= y {
-        let pts = [
-            (cx as i32 + x, cy as i32 + y),
-            (cx as i32 + y, cy as i32 + x),
-            (cx as i32 - y, cy as i32 + x),
-            (cx as i32 - x, cy as i32 + y),
-            (cx as i32 - x, cy as i32 - y),
-            (cx as i32 - y, cy as i32 - x),
-            (cx as i32 + y, cy as i32 - x),
-            (cx as i32 + x, cy as i32 - y),
-        ];
-        for (px, py) in pts {
-            if px >= 0 && py >= 0 && (px as usize) < w && (py as usize) < h {
-                let i = (py as usize * w + px as usize) * 4;
-                rgba[i] = color.0;
-                rgba[i + 1] = color.1;
-                rgba[i + 2] = color.2;
-                rgba[i + 3] = 255;
-            }
-        }
-        y += 1;
-        if err < 0 {
-            err += 2 * y + 1;
-        } else {
-            x -= 1;
-            err += 2 * (y - x) + 1;
-        }
-    }
+    draw_text(rgba, w, h, x0 as f32, y0 as f32 - 2.0, text, 11.0, color);
 }
 
 /// Zeichnet Text zentriert in einem Rechteck (für Kachel-Nummerierung).
@@ -361,35 +319,15 @@ fn draw_label_in_rect(
     if rect_w < 8 || rect_h < 8 {
         return; // Kachel zu klein für Text
     }
-    // Skalierung: Text muss in die Kachel passen (max. 60% der Kachel).
-    let n_chars = text.chars().count().max(1) as isize;
-    let max_scale_w = (rect_w * 6 / 10) / (n_chars * 6);
-    let max_scale_h = (rect_h * 6 / 10) / 7;
-    let scale = (max_scale_w.min(max_scale_h) as usize).clamp(1, 6);
-    let text_w = text.chars().count() * 6 * scale;
-    let text_h = 7 * scale;
-    let cx0 = x0 as isize + (rect_w - text_w as isize) / 2;
-    let cy0 = y0 as isize + (rect_h - text_h as isize) / 2;
-    let mut cx = cx0;
-    for ch in text.chars() {
-        let glyph = glyph_for(ch);
-        for (col, bits) in glyph.iter().enumerate() {
-            for row in 0..7usize {
-                if bits & (1 << row) != 0 {
-                    fill_block(
-                        rgba,
-                        w,
-                        h,
-                        cx + col as isize * scale as isize,
-                        cy0 + row as isize * scale as isize,
-                        scale,
-                        color,
-                    );
-                }
-            }
-        }
-        cx += 6 * scale as isize;
-    }
+    // Text muss in die Kachel passen (höchstens 60 % der Kachel).
+    let (unit_w, unit_h) = measure_text(text, 1.0);
+    let px = (rect_w as f32 * 0.6 / unit_w)
+        .min(rect_h as f32 * 0.6 / unit_h)
+        .clamp(8.0, 64.0);
+    let (text_w, text_h) = measure_text(text, px);
+    let x = x0 as f32 + (rect_w as f32 - text_w) / 2.0;
+    let y = y0 as f32 + (rect_h as f32 - text_h) / 2.0;
+    draw_text(rgba, w, h, x, y, text, px, color);
 }
 
 /// Füllt das gesamte Canvas mit einer einfarbigen Fläche.
@@ -434,224 +372,169 @@ fn draw_color_bars(rgba: &mut [u8], w: usize, h: usize) {
 // Elemente
 // ---------------------------------------------------------------------
 
-/// Leichtes Schachbrettmuster (zwei dezente Graustufen).
-fn draw_checkerboard(rgba: &mut [u8], w: usize, h: usize) {
-    let cell = (w.max(h) / 16).clamp(16, 128);
-    let (dark, light) = ((26u8, 26u8, 26u8), (44u8, 44u8, 44u8));
-    for y in 0..h {
-        for x in 0..w {
-            let on = ((x / cell) + (y / cell)).is_multiple_of(2);
-            let (r, g, b) = if on { dark } else { light };
-            let i = (y * w + x) * 4;
-            rgba[i] = r;
-            rgba[i + 1] = g;
-            rgba[i + 2] = b;
-            rgba[i + 3] = 255;
-        }
-    }
-}
-
-/// 10×10-Rasterlinien + hellere Mittelachsen.
+/// Ausrichtungsraster: quadratische Zellen von der Mitte aus, damit es symmetrisch
+/// sitzt; jede fünfte Linie heller, Skala am Rand, Diagonalen, Eckkreise.
 fn draw_grid(rgba: &mut [u8], w: usize, h: usize) {
-    let line = (72u8, 72u8, 72u8);
-    let axis = (96u8, 96u8, 96u8);
-    let put = |rgba: &mut [u8], x: usize, y: usize, c: (u8, u8, u8)| {
-        if x < w && y < h {
-            let i = (y * w + x) * 4;
-            rgba[i] = c.0;
-            rgba[i + 1] = c.1;
-            rgba[i + 2] = c.2;
-            rgba[i + 3] = 255;
+    draw_solid_color(rgba, w, h, [0, 0, 0]);
+    let cell = (w.min(h) / 40).max(8);
+    let major = cell * 5;
+    let (cx, cy) = (w / 2, h / 2);
+    let shade = |distance: usize| {
+        if distance.is_multiple_of(major) {
+            [90; 3]
+        } else {
+            [38; 3]
         }
     };
-    for i in 1..10 {
-        let x = w * i / 10;
-        let y = h * i / 10;
-        let c = if i == 5 { axis } else { line };
-        for yy in 0..h {
-            put(rgba, x, yy, c);
-        }
-        for xx in 0..w {
-            put(rgba, xx, y, c);
+    for x in (0..w).filter(|x| x.abs_diff(cx).is_multiple_of(cell)) {
+        for y in 0..h {
+            put(rgba, w, x, y, shade(x.abs_diff(cx)));
         }
     }
-}
-
-/// Weißer Rahmen, `margin` px eingezogen.
-fn draw_frame(rgba: &mut [u8], w: usize, h: usize, margin: usize) {
-    let t = (w.min(h) / 100).max(2);
-    let white = (240u8, 240u8, 240u8);
-    let mut fill_rect = |x0: usize, y0: usize, x1: usize, y1: usize| {
-        for y in y0..y1.min(h) {
-            for x in x0..x1.min(w) {
-                let i = (y * w + x) * 4;
-                rgba[i] = white.0;
-                rgba[i + 1] = white.1;
-                rgba[i + 2] = white.2;
-                rgba[i + 3] = 255;
-            }
-        }
-    };
-    fill_rect(margin, margin, w - margin, margin + t); // oben
-    fill_rect(margin, h - margin - t, w - margin, h - margin); // unten
-    fill_rect(margin, margin, margin + t, h - margin); // links
-    fill_rect(w - margin - t, margin, w - margin, h - margin); // rechts
-}
-
-/// Einbeschriebener Kreis (weißer Umriss) innerhalb des Rahmens.
-fn draw_circle(rgba: &mut [u8], w: usize, h: usize, margin: usize) {
-    let cx = w as f32 / 2.0;
-    let cy = h as f32 / 2.0;
-    let radius = (w.min(h) / 2 - margin) as f32;
-    if radius < 4.0 {
-        return;
-    }
-    let t = ((w.min(h) / 200).max(1)) as f32;
-    let white = (240u8, 240u8, 240u8);
-    // Pro Pixel: Distanz zum Kreisring (nur Ring zeichnen).
-    let r0 = radius - t;
-    let r1 = radius + t;
-    for y in 0..h {
+    for y in (0..h).filter(|y| y.abs_diff(cy).is_multiple_of(cell)) {
         for x in 0..w {
-            let dx = x as f32 - cx;
-            let dy = y as f32 - cy;
-            let d = (dx * dx + dy * dy).sqrt();
-            if d >= r0 && d <= r1 {
-                let i = (y * w + x) * 4;
-                rgba[i] = white.0;
-                rgba[i + 1] = white.1;
-                rgba[i + 2] = white.2;
-                rgba[i + 3] = 255;
-            }
+            put(rgba, w, x, y, shade(y.abs_diff(cy)));
+        }
+    }
+    // Diagonalen von Ecke zu Ecke.
+    let steps = w.max(h);
+    for step in 0..steps {
+        let x = step * (w - 1) / steps.max(2).saturating_sub(1).max(1);
+        let y = step * (h - 1) / steps.max(2).saturating_sub(1).max(1);
+        put(rgba, w, x.min(w - 1), y.min(h - 1), [150; 3]);
+        put(rgba, w, x.min(w - 1), (h - 1).saturating_sub(y), [150; 3]);
+    }
+    // Mittelachsen.
+    for y in 0..h {
+        put(rgba, w, cx, y, [200; 3]);
+    }
+    for x in 0..w {
+        put(rgba, w, x, cy, [200; 3]);
+    }
+    // Skala: Striche am Rand, an den hellen Linien länger.
+    let (long, short) = ((cell / 2).max(4), (cell / 4).max(2));
+    for x in (0..w).filter(|x| x.abs_diff(cx).is_multiple_of(cell)) {
+        let len = if x.abs_diff(cx).is_multiple_of(major) {
+            long
+        } else {
+            short
+        };
+        for offset in 0..len.min(h) {
+            put(rgba, w, x, offset, [255; 3]);
+            put(rgba, w, x, h - 1 - offset, [255; 3]);
+        }
+    }
+    for y in (0..h).filter(|y| y.abs_diff(cy).is_multiple_of(cell)) {
+        let len = if y.abs_diff(cy).is_multiple_of(major) {
+            long
+        } else {
+            short
+        };
+        for offset in 0..len.min(w) {
+            put(rgba, w, offset, y, [255; 3]);
+            put(rgba, w, w - 1 - offset, y, [255; 3]);
+        }
+    }
+    // Kreise in den Ecken, an beiden Rändern anliegend.
+    let radius = w.min(h) as f32 / 6.0;
+    if radius >= 4.0 {
+        let (right, bottom) = ((w - 1) as f32 - radius, (h - 1) as f32 - radius);
+        for (x, y) in [
+            (radius, radius),
+            (right, radius),
+            (radius, bottom),
+            (right, bottom),
+        ] {
+            draw_circle_at(rgba, w, h, x, y, radius);
         }
     }
 }
 
-/// Zentrierte Beschriftung (5×7-Bitmap-Schrift, weiß mit schwarzem Schatten).
+/// Setzt ein deckendes Pixel.
+fn put(rgba: &mut [u8], w: usize, x: usize, y: usize, color: [u8; 3]) {
+    let i = (y * w + x) * 4;
+    rgba[i..i + 3].copy_from_slice(&color);
+    rgba[i + 3] = 255;
+}
+
+/// 1 px breiter weißer Rand exakt am Bildrand.
+fn draw_frame(rgba: &mut [u8], w: usize, h: usize) {
+    for x in 0..w {
+        put(rgba, w, x, 0, [255; 3]);
+        put(rgba, w, x, h - 1, [255; 3]);
+    }
+    for y in 0..h {
+        put(rgba, w, 0, y, [255; 3]);
+        put(rgba, w, w - 1, y, [255; 3]);
+    }
+}
+
+/// 1 px breiter Kreis in der Mitte, kantengeglättet und immer rund.
+fn draw_circle(rgba: &mut [u8], w: usize, h: usize) {
+    // Pixelmitten: Der Mittelpunkt liegt bei gerader Größe zwischen zwei Pixeln.
+    let (cx, cy) = ((w as f32 - 1.0) / 2.0, (h as f32 - 1.0) / 2.0);
+    let radius = (w.min(h) as f32 - 1.0) / 2.0 - 1.0;
+    if radius >= 4.0 {
+        draw_circle_at(rgba, w, h, cx, cy, radius);
+    }
+}
+
+/// Kreis um (`cx`, `cy`). Der Abstand wird für jedes Pixel exakt berechnet.
+fn draw_circle_at(rgba: &mut [u8], w: usize, h: usize, cx: f32, cy: f32, radius: f32) {
+    let mut blend = |x: usize, y: usize| {
+        let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+        let coverage = (1.0 - (d - radius).abs()).clamp(0.0, 1.0);
+        let i = (y * w + x) * 4;
+        for c in &mut rgba[i..i + 3] {
+            *c = (f32::from(*c) * (1.0 - coverage) + 255.0 * coverage) as u8;
+        }
+        rgba[i + 3] = 255;
+    };
+    // Pro Zeile nur die beiden Ringstücke links und rechts der Mitte.
+    for y in 0..h {
+        let dy = y as f32 - cy;
+        let outer = (radius + 1.0).powi(2) - dy * dy;
+        if outer < 0.0 {
+            continue;
+        }
+        let inner = ((radius - 1.0).powi(2) - dy * dy).max(0.0).sqrt();
+        let outer = outer.sqrt();
+        let left =
+            ((cx - outer).floor().max(0.0) as usize)..=((cx - inner).ceil() as usize).min(w - 1);
+        let last_left = *left.end();
+        for x in left {
+            blend(x, y);
+        }
+        let right_start = (((cx + inner).floor().max(0.0)) as usize).max(last_left + 1);
+        for x in right_start..=((cx + outer).ceil() as usize).min(w - 1) {
+            blend(x, y);
+        }
+    }
+}
+
+/// Zentrierte Beschriftung: schwarze Schrift im weißen Kasten (wie in QLab), damit
+/// sie auf jedem Hintergrund lesbar bleibt. Schriftgröße folgt dem Screen.
 fn draw_label(rgba: &mut [u8], w: usize, h: usize, text: &str) {
-    let scale = (w.min(h) / 60).clamp(2, 12);
-    let text_w = text.chars().count() * 6 * scale;
-    let text_h = 7 * scale;
-    let x0 = (w as isize - text_w as isize) / 2;
-    let y0 = (h as isize - text_h as isize) / 2;
-    let mut cx = x0;
-    for ch in text.chars() {
-        let glyph = glyph_for(ch);
-        for (col, bits) in glyph.iter().enumerate() {
-            for row in 0..7usize {
-                if bits & (1 << row) != 0 {
-                    // Schatten (+1/+1, schwarz).
-                    fill_block(
-                        rgba,
-                        w,
-                        h,
-                        cx + scale as isize + 1,
-                        y0 + row as isize * scale as isize + 1,
-                        scale,
-                        (0, 0, 0),
-                    );
-                    fill_block(
-                        rgba,
-                        w,
-                        h,
-                        cx + col as isize * scale as isize,
-                        y0 + row as isize * scale as isize,
-                        scale,
-                        (245, 245, 245),
-                    );
-                }
-            }
-        }
-        cx += 6 * scale as isize;
-    }
-}
-
-/// Füllt einen `scale`×`scale`-Block (geclampt auf den Canvas).
-fn fill_block(
-    rgba: &mut [u8],
-    w: usize,
-    h: usize,
-    x0: isize,
-    y0: isize,
-    scale: usize,
-    c: (u8, u8, u8),
-) {
-    for dy in 0..scale as isize {
-        for dx in 0..scale as isize {
-            let x = x0 + dx;
-            let y = y0 + dy;
-            if x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h {
-                let i = (y as usize * w + x as usize) * 4;
-                rgba[i] = c.0;
-                rgba[i + 1] = c.1;
-                rgba[i + 2] = c.2;
-                rgba[i + 3] = 255;
-            }
+    let (unit_w, unit_h) = measure_text(text, 1.0);
+    let by_height = w.min(h) as f32 / 12.0 / unit_h;
+    let by_width = w as f32 * 0.7 / unit_w.max(0.01);
+    let px = by_height.min(by_width).max(8.0);
+    let (text_w, text_h) = measure_text(text, px);
+    let pad_x = (px * 0.6) as usize;
+    let pad_y = (px * 0.25) as usize;
+    let x0 = (w as f32 - text_w).max(0.0) / 2.0;
+    let y0 = (h as f32 - text_h).max(0.0) / 2.0;
+    let left = (x0 as usize).saturating_sub(pad_x);
+    let top = (y0 as usize).saturating_sub(pad_y);
+    let right = (x0 as usize + text_w.ceil() as usize + pad_x).min(w);
+    let bottom = (y0 as usize + text_h.ceil() as usize + pad_y).min(h);
+    for y in top..bottom {
+        for x in left..right {
+            let edge = y == top || y + 1 == bottom || x == left || x + 1 == right;
+            put(rgba, w, x, y, if edge { [0; 3] } else { [255; 3] });
         }
     }
-}
-
-// ---------------------------------------------------------------------
-// 5×7-Bitmap-Schrift (Public-Domain-Stil, klassische font5x7)
-// ---------------------------------------------------------------------
-
-/// 5×7-Glyphe für ein Zeichen (5 Spalten, Bit 0 = oberste Zeile).
-///
-/// Nur Großbuchstaben, Ziffern und wenige Zeichen – für Testbild-Labels
-/// ausreichend. Unbekannte Zeichen → „?“.
-fn glyph_for(c: char) -> [u8; 5] {
-    match c.to_ascii_uppercase() {
-        'A' => [0x7E, 0x11, 0x11, 0x11, 0x7E],
-        'B' => [0x7F, 0x49, 0x49, 0x49, 0x36],
-        'C' => [0x3E, 0x41, 0x41, 0x41, 0x22],
-        'D' => [0x7F, 0x41, 0x41, 0x22, 0x1C],
-        'E' => [0x7F, 0x49, 0x49, 0x49, 0x41],
-        'F' => [0x7F, 0x09, 0x09, 0x09, 0x01],
-        'G' => [0x3E, 0x41, 0x49, 0x49, 0x7A],
-        'H' => [0x7F, 0x08, 0x08, 0x08, 0x7F],
-        'I' => [0x00, 0x41, 0x7F, 0x41, 0x00],
-        'J' => [0x20, 0x40, 0x41, 0x3F, 0x01],
-        'K' => [0x7F, 0x08, 0x14, 0x22, 0x41],
-        'L' => [0x7F, 0x40, 0x40, 0x40, 0x40],
-        'M' => [0x7F, 0x02, 0x0C, 0x02, 0x7F],
-        'N' => [0x7F, 0x04, 0x08, 0x10, 0x7F],
-        'O' => [0x3E, 0x41, 0x41, 0x41, 0x3E],
-        'P' => [0x7F, 0x09, 0x09, 0x09, 0x06],
-        'Q' => [0x3E, 0x41, 0x51, 0x21, 0x5E],
-        'R' => [0x7F, 0x09, 0x19, 0x29, 0x46],
-        'S' => [0x46, 0x49, 0x49, 0x49, 0x31],
-        'T' => [0x01, 0x01, 0x7F, 0x01, 0x01],
-        'U' => [0x3F, 0x40, 0x40, 0x40, 0x3F],
-        'V' => [0x1F, 0x20, 0x40, 0x20, 0x1F],
-        'W' => [0x3F, 0x40, 0x38, 0x40, 0x3F],
-        'X' => [0x63, 0x14, 0x08, 0x14, 0x63],
-        'Y' => [0x07, 0x08, 0x70, 0x08, 0x07],
-        'Z' => [0x61, 0x51, 0x49, 0x45, 0x43],
-        '0' => [0x3E, 0x51, 0x49, 0x45, 0x3E],
-        '1' => [0x00, 0x42, 0x7F, 0x40, 0x00],
-        '2' => [0x42, 0x61, 0x51, 0x49, 0x46],
-        '3' => [0x21, 0x41, 0x45, 0x4B, 0x31],
-        '4' => [0x18, 0x14, 0x12, 0x7F, 0x10],
-        '5' => [0x27, 0x45, 0x45, 0x45, 0x39],
-        '6' => [0x3C, 0x4A, 0x49, 0x49, 0x30],
-        '7' => [0x01, 0x71, 0x09, 0x05, 0x03],
-        '8' => [0x36, 0x49, 0x49, 0x49, 0x36],
-        '9' => [0x06, 0x49, 0x49, 0x29, 0x1E],
-        ' ' => [0x00, 0x00, 0x00, 0x00, 0x00],
-        ':' => [0x00, 0x36, 0x36, 0x00, 0x00],
-        '.' => [0x00, 0x60, 0x60, 0x00, 0x00],
-        ',' => [0x00, 0x70, 0x18, 0x00, 0x00],
-        '-' => [0x08, 0x08, 0x08, 0x08, 0x08],
-        '/' => [0x20, 0x10, 0x08, 0x04, 0x02],
-        '#' => [0x14, 0x7F, 0x14, 0x7F, 0x14],
-        '%' => [0x23, 0x13, 0x08, 0x64, 0x62],
-        '+' => [0x08, 0x08, 0x3E, 0x08, 0x08],
-        '_' => [0x40, 0x40, 0x40, 0x40, 0x40],
-        '(' => [0x00, 0x1C, 0x22, 0x41, 0x00],
-        ')' => [0x00, 0x41, 0x22, 0x1C, 0x00],
-        '?' => [0x02, 0x01, 0x51, 0x09, 0x06],
-        _ => [0x02, 0x01, 0x51, 0x09, 0x06], // unbekannt → „?“
-    }
+    draw_text(rgba, w, h, x0, y0, text, px, (0, 0, 0));
 }
 
 #[cfg(test)]
@@ -676,52 +559,80 @@ mod tests {
     }
 
     #[test]
-    fn checkerboard_alternates() {
-        let (w, h) = (64, 64);
-        let mut rgba = vec![0u8; w * h * 4];
-        draw_test_pattern(&mut rgba, w as u32, h as u32, &spec("T 64X64", 64, 64));
-        // Zellgröße = clamp(64/16, 16..128) = 16 px → Zellgrenze bei x=16.
-        let a = px(&rgba, w, 0, 0);
-        let b = px(&rgba, w, 16, 0);
-        assert_ne!(a, b, "Schachbrett wechselt die Farbe");
-        // Beide sind die dezenten Graustufen.
-        assert!(a[0] < 60 && b[0] < 60);
-        // Diagonale Nachbarschaft wieder gleich.
-        assert_eq!(a, px(&rgba, w, 16, 16));
+    fn frame_is_exactly_one_pixel_at_the_edge() {
+        for (w, h) in [(1920usize, 1080usize), (1512, 982), (65, 41)] {
+            let mut rgba = vec![0u8; w * h * 4];
+            draw_grid(&mut rgba, w, h);
+            draw_frame(&mut rgba, w, h);
+            let row = |y: usize| (0..w).filter(|x| rgba[(y * w + x) * 4] == 255).count();
+            let col = |x: usize| (0..h).filter(|y| rgba[(y * w + x) * 4] == 255).count();
+            assert_eq!(row(0), w, "oben durchgehend bei {w}x{h}");
+            assert_eq!(row(h - 1), w, "unten durchgehend");
+            assert_eq!(col(0), h, "links durchgehend");
+            assert_eq!(col(w - 1), h, "rechts durchgehend");
+            // Direkt daneben nur noch die Striche der Skala.
+            assert!(row(1) < w / 2, "Rand oben ist 1 px breit");
+            assert!(row(h - 2) < w / 2, "Rand unten ist 1 px breit");
+            assert!(col(1) < h / 2, "Rand links ist 1 px breit");
+            assert!(col(w - 2) < h / 2, "Rand rechts ist 1 px breit");
+        }
     }
 
     #[test]
-    fn frame_is_drawn_inside() {
-        let (w, h) = (200, 100);
-        let mut rgba = vec![0u8; w * h * 4];
-        draw_test_pattern(&mut rgba, w as u32, h as u32, &spec("T", 200, 100));
-        // margin = max(min(200,100)/20, 8) = 8; Dicke t = max(100/100, 2) = 2.
-        // Rahmen oben bei y=8..10 weiß (überdeckt die Raster-Mittelachse).
-        let frame_px = px(&rgba, w, 100, 8);
-        assert!(frame_px[0] > 200, "Rahmen weiß: {frame_px:?}");
-        // Direkt außerhalb des Rahmens (y=2) keine Rahmenfarbe.
-        let outside = px(&rgba, w, 50, 2);
-        assert!(
-            outside[0] < 100,
-            "außerhalb des Rahmens dunkel: {outside:?}"
-        );
-        // Rahmen auch unten (y=90..92) und rechts (x=190..192) vorhanden.
-        assert!(px(&rgba, w, 100, 90)[0] > 200);
-        assert!(px(&rgba, w, 190, 50)[0] > 200);
+    fn circle_is_round_on_any_screen_shape() {
+        for (w, h) in [
+            (1920usize, 1080usize),
+            (5120, 1440),
+            (1512, 982),
+            (1080, 1920),
+            (801, 601),
+        ] {
+            let mut rgba = vec![0u8; w * h * 4];
+            draw_circle(&mut rgba, w, h);
+            let lit: Vec<(usize, usize)> = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|(x, y)| rgba[(y * w + x) * 4] > 127)
+                .collect();
+            let (x0, x1) = (
+                lit.iter().map(|p| p.0).min().unwrap(),
+                lit.iter().map(|p| p.0).max().unwrap(),
+            );
+            let (y0, y1) = (
+                lit.iter().map(|p| p.1).min().unwrap(),
+                lit.iter().map(|p| p.1).max().unwrap(),
+            );
+            assert_eq!(x1 - x0, y1 - y0, "gleich breit wie hoch bei {w}x{h}");
+            assert_eq!(x0, w - 1 - x1, "waagerecht mittig bei {w}x{h}");
+            assert_eq!(y0, h - 1 - y1, "senkrecht mittig bei {w}x{h}");
+            // Lückenlos: Jede Zeile des Kreises trifft Pixel.
+            for y in y0..=y1 {
+                assert!(lit.iter().any(|p| p.1 == y), "Lücke in Zeile {y}");
+            }
+            // Jedes helle Pixel liegt auf dem Radius.
+            let (cx, cy) = ((w as f32 - 1.0) / 2.0, (h as f32 - 1.0) / 2.0);
+            let r = (w.min(h) as f32 - 1.0) / 2.0 - 1.0;
+            for (x, y) in lit {
+                let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+                assert!(
+                    (d - r).abs() <= 0.6,
+                    "Pixel {x},{y} weicht ab: {d} statt {r}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn circle_is_drawn() {
-        let (w, h) = (200, 200);
-        let mut rgba = vec![0u8; w * h * 4];
-        draw_test_pattern(&mut rgba, w as u32, h as u32, &spec("T", 200, 200));
-        // Kreisring: Punkt rechts der Mitte auf Ringhöhe (cx + radius).
-        // radius = 200/2 - margin(10) = 90 → Pixel (190, 100) liegt auf dem Ring.
-        let ring = px(&rgba, w, 190, 100);
-        assert!(ring[0] > 200, "Kreisring weiß: {ring:?}");
-        // Innen (nahe Zentrum) kein Ring.
-        let inside = px(&rgba, w, 100, 100);
-        assert!(inside[0] < 100, "Kreis innen dunkel: {inside:?}");
+    fn label_sits_in_white_box_and_scales_with_screen() {
+        let (w, h) = (1920usize, 1080usize);
+        let mut rgba = vec![200u8; w * h * 4];
+        draw_label(&mut rgba, w, h, "#1 MAIN 1920X1080");
+        let row = h / 2;
+        let line: Vec<u8> = (0..w).map(|x| rgba[(row * w + x) * 4]).collect();
+        assert!(line.contains(&255), "weißer Kasten");
+        assert!(line.contains(&0), "schwarze Schrift");
+        // Lesbare Größe: mindestens 8 Pixel-Blöcke hoch sind bei 1080p drin.
+        let black_rows = (0..h).filter(|y| rgba[(y * w + w / 2) * 4] != 200).count();
+        assert!(black_rows >= 80, "Feld nur {black_rows} Zeilen hoch");
     }
 
     #[test]
@@ -730,7 +641,7 @@ mod tests {
         let mut rgba = vec![0u8; w * h * 4];
         draw_test_pattern(&mut rgba, w as u32, h as u32, &spec("T", 200, 100));
         // Vertikale Linie bei x = w/2 (Mittelachse, heller).
-        let axis = px(&rgba, w, 100, 10);
+        let axis = px(&rgba, w, 100, 15);
         assert!(axis[0] > 80, "Mittelachse hell: {axis:?}");
     }
 
@@ -771,16 +682,14 @@ mod tests {
     }
 
     #[test]
-    fn glyph_covers_charset() {
-        // Alle Label-Zeichen haben eine definierte Glyphe (kein „?“ für A-Z/0-9).
+    fn font_covers_label_characters() {
         for c in ('A'..='Z')
+            .chain('a'..='z')
             .chain('0'..='9')
-            .chain([' ', 'X', ':', '.', '-'])
+            .chain("#.-:()".chars())
         {
-            let g = glyph_for(c);
-            assert!(g.iter().any(|b| *b != 0) || c == ' ', "Glyphe für {c}");
+            assert_ne!(font().glyph_id(c).0, 0, "Glyphe für {c}");
         }
-        assert_eq!(glyph_for('?'), glyph_for('§'), "unbekannt → Fragezeichen");
     }
 
     #[test]
@@ -798,17 +707,16 @@ mod tests {
             checker_size: 64,
         };
         draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
-        // Innen (nicht am Rahmen): überall die Screen-Farbe.
-        let center = px(&rgba, w, w / 2, h / 2);
+        // Außerhalb von Rand, Kreis und Beschriftung: die Screen-Farbe.
+        let center = px(&rgba, w, 4, 4);
         assert_eq!(
             [center[0], center[1], center[2]],
             [255, 64, 64],
-            "Zentrum hat Screen-Farbe"
+            "Fläche hat Screen-Farbe"
         );
-        // Rahmen ist weiß (überdeckt die Farbe).
-        let margin = (w.min(h) / 20).max(8);
-        let frame_px = px(&rgba, w, w / 2, margin);
-        assert!(frame_px[0] > 200, "Rahmen weiß überdeckt Farbe");
+        // Rand ist weiß (überdeckt die Farbe).
+        let frame_px = px(&rgba, w, w / 2, 0);
+        assert_eq!(&frame_px[..3], &[255, 255, 255], "Rand weiß");
     }
 
     #[test]
