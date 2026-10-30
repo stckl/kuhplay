@@ -1568,7 +1568,10 @@ fn audio_routing_ui_renders() {
         out = render_frame(&ctx, &mut app);
     }
     assert!(output_has_text(&out, "CHANNELS"));
-    assert!(output_has_text(&out, "System Default"), "Matrix-Spalten fehlen");
+    assert!(
+        output_has_text(&out, "System Default"),
+        "Matrix-Spalten fehlen"
+    );
     assert!(output_has_text(&out, "Ch 1"), "Kanalzeilen fehlen");
 }
 
@@ -1752,4 +1755,49 @@ fn show_save_load_roundtrip() {
     app.load_show(&path).expect("Show muss laden");
     assert_eq!(app.carts.active().len(), cues_before);
     assert_eq!(app.show_name, "Demo Show");
+}
+
+/// viewport_window::draw rendert im Headless-Fallback (Embedded) ein Overlay
+/// mit Inhalt (ab dem zweiten Frame, wie egui::Window) und hält das open-Flag.
+#[test]
+fn viewport_window_embedded_fallback_renders() {
+    use kuhplay::gui::viewport_window::{draw, WindowSpec};
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut open = true;
+    let mut counter = 0u32;
+    let raw_input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1440.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let mut render = |ctx: &egui::Context| {
+        ctx.run(raw_input.clone(), |ctx| {
+            draw(
+                ctx,
+                &WindowSpec::new(
+                    "test-viewport",
+                    "Test Fenster",
+                    [300.0, 200.0],
+                    [200.0, 100.0],
+                ),
+                &mut open,
+                &mut counter,
+                |_, ui, counter| {
+                    ui.label("Viewport-Inhalt");
+                    *counter += 1;
+                },
+            );
+        })
+    };
+    let _ = render(&ctx);
+    let out = render(&ctx);
+    assert!(
+        output_has_text(&out, "Viewport-Inhalt"),
+        "Inhalt fehlt im Fallback"
+    );
+    assert_eq!(counter, 2, "Content läuft pro Frame einmal");
+    assert!(open, "Flag bleibt ohne Close-Request offen");
 }

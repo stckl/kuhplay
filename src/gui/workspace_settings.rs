@@ -79,23 +79,22 @@ const CONTENT_MIN_WIDTH: f32 = 640.0;
 /// Zeichnet das „Workspace Settings"-Fenster (falls in [`ShowApp::ui`]
 /// geöffnet). Ruft der Aufrufer jedes Frame (nach den Panels).
 pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
-    if !app.ui.workspace_settings_open {
+    let mut open = app.ui.workspace_settings_open;
+    if !open {
         return;
     }
-    let mut open = true;
-    let screen = ctx.screen_rect();
-    egui::Window::new("Workspace Settings")
-        .open(&mut open)
-        .default_size([820.0, 620.0])
-        .min_size([560.0, 360.0])
-        .resizable(true)
-        // Mittig und über den Panels öffnen: Ohne `max_height` begrenzt egui
-        // das Fenster auf die Fläche über dem Inspector.
-        .pivot(egui::Align2::CENTER_TOP)
-        .default_pos(screen.center_top() + egui::vec2(0.0, 60.0))
-        .constrain_to(screen)
-        .max_height(screen.height() - 100.0)
-        .show(ctx, |ui| {
+    // Echtes OS-Fenster (in Headless-Tests: Overlay-Fallback), siehe viewport_window.
+    super::viewport_window::draw(
+        ctx,
+        &super::viewport_window::WindowSpec::new(
+            "kuhplay-workspace-settings",
+            "Workspace Settings",
+            [820.0, 620.0],
+            [560.0, 360.0],
+        ),
+        &mut open,
+        app,
+        |_ctx, ui, app| {
             ui.horizontal_top(|ui| {
                 // Linke Navigation (QLab: Seitenliste, docs/UI.md §5.7).
                 ui.vertical(|ui| {
@@ -139,10 +138,9 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
                     }
                 });
             });
-        });
-    if !open {
-        app.ui.workspace_settings_open = false;
-    }
+        },
+    );
+    app.ui.workspace_settings_open = open;
 }
 
 /// Seite „General": Show-Name, Show Mode, Audition Mode.
@@ -869,11 +867,19 @@ pub fn draw_route_editor(ctx: &egui::Context, app: &mut ShowApp) {
     let mut open = true;
     let mut updated = route.clone();
     let mut set_from_device = false;
-    egui::Window::new(format!("Route Editor: {}", route.name))
-        .id(egui::Id::new(("route-editor", route_id)))
-        .default_size([420.0, 320.0])
-        .open(&mut open)
-        .show(ctx, |ui| {
+    let title = format!("Route Editor: {}", route.name);
+    // Echtes OS-Fenster (in Headless-Tests: Overlay-Fallback).
+    super::viewport_window::draw(
+        ctx,
+        &super::viewport_window::WindowSpec::new(
+            "kuhplay-route-editor",
+            &title,
+            [420.0, 320.0],
+            [320.0, 240.0],
+        ),
+        &mut open,
+        app,
+        |_ctx, ui, app| {
             theme::form_grid("route_editor").show(ui, |ui| {
                 theme::field_label(ui, "Name");
                 let r = ui.add(egui::TextEdit::singleline(&mut updated.name).desired_width(200.0));
@@ -996,7 +1002,8 @@ pub fn draw_route_editor(ctx: &egui::Context, app: &mut ShowApp) {
                 }
                 ui.end_row();
             });
-        });
+        },
+    );
     if !open {
         app.route_editor_open = None;
     }
@@ -1031,12 +1038,22 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
         return;
     };
     let mut create = false;
+    let mut cancel = false;
     let mut w = wizard.clone();
-    egui::Window::new("New Multi-Output Stage")
-        .id(egui::Id::new("multi_output_wizard"))
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let mut open = true;
+    // Echtes OS-Fenster (in Headless-Tests: Overlay-Fallback).
+    super::viewport_window::draw(
+        ctx,
+        &super::viewport_window::WindowSpec::new(
+            "kuhplay-multi-output-wizard",
+            "New Multi-Output Stage",
+            [380.0, 320.0],
+            [300.0, 240.0],
+        )
+        .resizable(false),
+        &mut open,
+        app,
+        |_ctx, ui, _app| {
             ui.label(
                 egui::RichText::new(
                     "Creates one output route per projector (left to right) and a stage \
@@ -1075,14 +1092,17 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
                     create = true;
                 }
                 if ui.button("Cancel").clicked() {
-                    app.multi_output_wizard = None;
+                    cancel = true;
                 }
             });
-        });
+        },
+    );
     if create {
         app.add_multi_output_stage(&w);
         app.multi_output_wizard = None;
-    } else {
+    } else if open && !cancel {
         app.multi_output_wizard = Some(w);
+    } else {
+        app.multi_output_wizard = None;
     }
 }

@@ -2800,20 +2800,33 @@ impl ShowApp {
                 }
             });
 
-        // About-Fenster (zentral, nicht-modal).
+        // About-Fenster (echtes OS-Fenster, in Headless-Tests Overlay-Fallback).
         if self.ui.about_open {
-            egui::Window::new("About KuhPlay")
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
+            let mut open = true;
+            super::viewport_window::draw(
+                ctx,
+                &super::viewport_window::WindowSpec::new(
+                    "kuhplay-about",
+                    "About KuhPlay",
+                    [360.0, 200.0],
+                    [280.0, 150.0],
+                )
+                .resizable(false),
+                &mut open,
+                self,
+                |_ctx, ui, app| {
                     ui.label(RichText::new("KuhPlay").size(24.0).strong());
                     ui.label("QLab-style show control & cue playback – Rust/egui.");
                     ui.separator();
                     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                     if ui.button("Close").clicked() {
-                        self.ui.about_open = false;
+                        app.ui.about_open = false;
                     }
-                });
+                },
+            );
+            if !open {
+                self.ui.about_open = false;
+            }
         }
 
         // „Keyboard Shortcuts"-Fenster (Help-Menü, TODO.md Phase 5):

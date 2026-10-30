@@ -472,25 +472,21 @@ pub fn draw_window(ctx: &egui::Context, open: &mut bool) {
     if !*open {
         return;
     }
-    let mut still_open = true;
-    egui::Window::new("Keyboard Shortcuts")
-        .collapsible(false)
-        .resizable(true)
-        .default_width(430.0)
-        // Zentriert öffnen statt in die freie Ecke unter den Panels
-        // (dort wäre die Liste unten abgeschnitten).
-        .pivot(egui::Align2::CENTER_TOP)
-        .default_pos(ctx.screen_rect().center_top() + egui::vec2(0.0, 60.0))
-        .constrain_to(ctx.screen_rect())
-        .default_height(660.0)
-        .max_height(ctx.screen_rect().height() - 100.0)
-        .open(&mut still_open)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(620.0)
-                .show(ui, draw_table);
-        });
-    *open = still_open;
+    // Echtes OS-Fenster (in Headless-Tests: Overlay-Fallback).
+    crate::gui::viewport_window::draw(
+        ctx,
+        &crate::gui::viewport_window::WindowSpec::new(
+            "kuhplay-shortcuts",
+            "Keyboard Shortcuts",
+            [430.0, 660.0],
+            [320.0, 240.0],
+        ),
+        open,
+        &mut (),
+        |_ctx, ui, _| {
+            egui::ScrollArea::vertical().show(ui, draw_table);
+        },
+    );
 }
 
 /// Tabelle aller Tastenkürzel (Help-Fenster und Workspace Settings, Key Map).

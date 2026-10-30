@@ -62,12 +62,19 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
         return;
     };
     let mut open = true;
-    egui::Window::new(format!("Stage Editor: {}", stage.name))
-        .id(egui::Id::new(("stage-editor", stage_id)))
-        .default_size([720.0, 480.0])
-        .min_size([560.0, 380.0])
-        .open(&mut open)
-        .show(ctx, |ui| {
+    let title = format!("Stage Editor: {}", stage.name);
+    // Echtes OS-Fenster (in Headless-Tests: Overlay-Fallback).
+    super::viewport_window::draw(
+        ctx,
+        &super::viewport_window::WindowSpec::new(
+            "kuhplay-stage-editor",
+            &title,
+            [720.0, 480.0],
+            [560.0, 380.0],
+        ),
+        &mut open,
+        app,
+        |_ctx, ui, app| {
             ui.columns(2, |uis| {
                 let [left, right] = uis else {
                     return;
@@ -77,7 +84,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
             });
             ui.separator();
             ui.scope(|ui| draw_canvas(ui, app, stage_id));
-        });
+        },
+    );
     if !open {
         app.stage_editor_open = None;
     }

@@ -95,36 +95,19 @@ Ausgabegeräte parallel.
 
 ---
 
-## Aufgabe 2: Workspace Settings & Popups als eigene Fenster
+## Aufgabe 2: Workspace Settings & Popups als eigene OS-Fenster — ERLEDIGT
 
-**Wunsch:** Workspace-Settings-Fenster und alle anderen Popups/Modals sollen
-**eigene OS-Fenster** sein, keine Overlays im Hauptfenster.
-
-**Betroffene egui::Windows (derzeit Overlays):**
-- `workspace_settings::draw` (Workspace Settings, mit Nav)
-- `stage_editor::draw` (Stage Editor)
-- `workspace_settings::draw_route_editor` (Route Editor)
-- `workspace_settings::draw_multi_output_wizard` (Multi-Output-Assistent)
-- `app.rs`: „About KuhPlay“-Fenster, `shortcuts::draw_window` (Keyboard Shortcuts)
-
-**Entwurf:** egui-Viewports mit `ctx.show_viewport_immediate(...)` (direkter
-Zugriff auf `&mut ShowApp` im Closure — `show_viewport_deferred` geht nicht, weil
-der Closure 'static sein muss; die Fenster brauchen aber App-Zustand). Pro Fenster:
-- `ViewportId::from_hash_of("workspace-settings")` usw., `ViewportBuilder` mit
-  `.with_title(...)`, `.with_decorations(true)`, `.with_inner_size(...)`,
-  `.with_resizable(true)`;
-- Inhalt wie bisher (gleiche ui-Funktionen wiederverwenden, nur statt
-  `egui::Window::new(...)` ein `CentralPanel` in den Viewport zeichnen);
-- Schließen: `ctx.input(|i| i.viewport().close_requested())` → Flag zurücksetzen
-  (`app.ui.workspace_settings_open = false` usw.); Esc zusätzlich.
-- Vorsicht: Die egui-Window-Extras (`.constrain_to`, Pivot, max_height) entfallen —
-  Layout in `ScrollArea` kapseln. Menüpunkt/zahnrad-Aufrufe bleiben, sie setzen nur
-  die Flags. **Pro Fenster ein eigener Commit + headless gui_smoke-Test**
-  (render_frame rendert Viewports in den Kontext eingebettet — Titel nicht findbar,
-  nur Inhalte; die bestehenden Text-Assertions weiterführen).
-- Ansatz-Reihenfolge: erst Workspace Settings (am meisten Wert), dann Stage
-  Editor/Route Editor/Wizard, dann About/Shortcuts. Wenn ein Fenster Probleme
-  macht (Fokus/Platzierung), Einzelfall dokumentieren statt die ganze Aufgabe abbrechen.
+**Umgesetzt:** Neuer Helfer `src/gui/viewport_window.rs` (`WindowSpec` +
+`draw()`): ruft jeden Frame `ctx.show_viewport_immediate` auf → auf dem
+Desktop echte OS-Fenster (Titelzeile, Close-Button, Esc schließt). Im
+Headless-Fallback (Tests/Web, `ViewportClass::Embedded`) wird ein normales
+`egui::Window` gezeichnet, damit bestehende Smoke-Tests stabil bleiben.
+Umgestellt: Workspace Settings, Stage-Editor, Route-Editor,
+Multi-Output-Assistent, About KuhPlay, Keyboard Shortcuts. Close-Request
+setzt das jeweilige `open`-Flag zurück.
+Hinweis: Das „Resize Stage"-Dialog im Stage-Editor bleibt ein Overlay IM
+Stage-Editor-Fenster (verschachtelte Immediate-Viewports sind riskant).
+Test: `viewport_window_embedded_fallback_renders` (gui_smoke).
 
 ---
 
@@ -253,3 +236,12 @@ Display-Grenzen); nach Aufgabe 3/4 nochmal mit Nutzer zusammen durchgehen.
   Breite in px, Linear/Cosine) für Übergänge zwischen Projektionen; das
   Stage-Pendant sind jetzt Stage-Edge + Region-Edge-Blends (Soft Edge = Gamma-
   Kurve, Hard Edge = linear).
+
+## Bekannte umweltbedingte Test-Flakes (Stand: aktueller Mac, kein Regressionsfehler)
+
+- `detect_displays()` liefert im Testprozess derzeit 0 Displays (WindowServer-
+  Session) → `gui_smoke::workspace_settings_video_page_renders_and_edits_stages_and_routes`
+  fällt dadurch (tritt identisch auf dem letzten Commit auf).
+- real_engine-Timing-Tests (`audio_play_started_then_finished_at_eof` u.a.)
+  flaken je nach Audio-Device-/CPU-Zustand; ebenfalls nicht durch Codeänderungen
+  verursacht (Stash-Vergleich). Auf dem Windows-PC dokumentieren, nicht schwächen.

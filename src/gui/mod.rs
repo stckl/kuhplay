@@ -43,6 +43,7 @@ pub mod stage_view;
 pub mod state;
 pub mod theme;
 pub mod toolbox;
+pub mod viewport_window;
 pub mod workspace_settings;
 
 pub use app::{InspectorTab, OutputMode, ShowApp, SidebarTab};
