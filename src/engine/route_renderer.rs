@@ -235,7 +235,7 @@ pub fn render_route(
                     letters.get(&region.id).cloned().unwrap_or_default(),
                     route.name
                 );
-                super::pattern::draw_region_grid(&mut out.rgba, rw, rh, &label);
+                super::pattern::draw_region_grid(&mut out.rgba, rw, rh, &label, route.color);
             }
         }
     }

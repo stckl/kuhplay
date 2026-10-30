@@ -80,6 +80,9 @@ pub struct EngineHandle {
     pub stage_frames: StageFrameStore,
     /// Gerendertes Route-Bild pro Route-ID (Real-Engine; Mock: leer).
     pub route_frames: RouteFrameStore,
+    /// Cue-IDs mit aktiver Audio-Voice (Real-Engine; Mock: leer). Video-Cues
+    /// legen ebenfalls eine Voice an (Tonspur des Videos).
+    pub audio_voices: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<Uuid>>>,
 }
 
 impl EngineHandle {
@@ -98,6 +101,11 @@ impl EngineHandle {
     /// Neuestes Video-Frame eines Cues (Real-Engine), falls vorhanden.
     pub fn latest_frame(&self, cue_id: Uuid) -> Option<Arc<VideoFrame>> {
         self.frames.lock().unwrap().get(&cue_id).cloned()
+    }
+
+    /// Läuft für diesen Cue eine Audio-Voice (Audio- oder Video-Cue mit Ton)?
+    pub fn has_audio_voice(&self, cue_id: Uuid) -> bool {
+        self.audio_voices.lock().unwrap().contains(&cue_id)
     }
 
     /// Aktuelle Deckkraft (Opacity) eines Cues (Default 1.0 = voll deckend).
@@ -146,6 +154,7 @@ pub fn spawn_mock_engine_with_join() -> (EngineHandle, std::thread::JoinHandle<(
             opacities: new_opacity_store(),
             stage_frames: new_stage_frame_store(),
             route_frames: new_route_frame_store(),
+            audio_voices: Default::default(),
         },
         join,
     )

@@ -1444,6 +1444,7 @@ fn audition_mode_strips_stage_from_video_commands() {
         opacities: new_opacity_store(),
         stage_frames: new_stage_frame_store(),
         route_frames: new_route_frame_store(),
+        audio_voices: Default::default(),
     };
     let mut app = ShowApp::new(handle);
     // Startup-Commands (ConfigureStage aller Stages) verwerfen.
@@ -1555,6 +1556,7 @@ fn hotkey_app() -> (
         opacities: new_opacity_store(),
         stage_frames: new_stage_frame_store(),
         route_frames: new_route_frame_store(),
+        audio_voices: Default::default(),
     };
     let app = ShowApp::new(handle);
     // Startup-Commands (ConfigureStage aller Stages) verwerfen.

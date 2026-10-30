@@ -69,21 +69,27 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
         &super::viewport_window::WindowSpec::new(
             "kuhplay-stage-editor",
             &title,
-            [720.0, 480.0],
-            [560.0, 380.0],
+            [720.0, 580.0],
+            [560.0, 420.0],
         ),
         &mut open,
         app,
         |_ctx, ui, app| {
-            ui.columns(2, |uis| {
-                let [left, right] = uis else {
-                    return;
-                };
-                draw_regions_panel(left, app, stage_id);
-                draw_properties(right, app, stage_id);
-            });
-            ui.separator();
-            ui.scope(|ui| draw_canvas(ui, app, stage_id));
+            // Scrollbar: Im OS-Fenster darf die Vorschau unten nicht
+            // abgeschnitten werden (Columns + Canvas zusammen > Fensterhoehe).
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.columns(2, |uis| {
+                        let [left, right] = uis else {
+                            return;
+                        };
+                        draw_regions_panel(left, app, stage_id);
+                        draw_properties(right, app, stage_id);
+                    });
+                    ui.separator();
+                    ui.scope(|ui| draw_canvas(ui, app, stage_id));
+                });
         },
     );
     if !open {

@@ -843,3 +843,67 @@ fn unknown_audio_output_reports_error() {
         }
     }
 }
+
+/// Video-Cue mit Tonspur: Der Engine legt zusätzlich zur Video-Wiedergabe
+/// eine Audio-Voice an (gleiche Datei, gleicher Seek) → `audio_voices`.
+#[test]
+fn video_cue_with_audio_track_registers_audio_voice() {
+    if !ffmpeg_available() {
+        eprintln!("SKIP: ffmpeg not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mp4 = dir.path().join("with-audio.mp4");
+    // testsrc (Video) + sine (Audio, aac im mp4-Container).
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1.0:size=320x240:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1.0",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ])
+        .arg(&mp4)
+        .output()
+        .expect("ffmpeg spawn");
+    assert!(
+        out.status.success(),
+        "ffmpeg: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let engine = spawn_real_engine();
+    let cue_id = Uuid::new_v4();
+    engine
+        .commands
+        .send(play_cmd(cue_id, &mp4, None))
+        .expect("send play");
+
+    let has_voice = wait_until(|| engine.has_audio_voice(cue_id), Duration::from_secs(5));
+    assert!(
+        has_voice,
+        "Video-Cue muss eine Audio-Voice bekommen (Tonspur)"
+    );
+    // Bild läuft parallel weiter.
+    let got_frame = wait_until(
+        || engine.frames.lock().unwrap().get(&cue_id).is_some(),
+        Duration::from_secs(5),
+    );
+    assert!(got_frame, "Video-Frame fehlt weiterhin");
+
+    // Stop räumt die Voice wieder auf.
+    engine.send(EngineCommand::Stop { cue_id }).expect("stop");
+    let gone = wait_until(|| !engine.has_audio_voice(cue_id), Duration::from_secs(2));
+    assert!(gone, "Stop muss die Audio-Voice austragen");
+}

@@ -750,6 +750,7 @@ fn manual_app() -> (
         opacities: new_opacity_store(),
         stage_frames: new_stage_frame_store(),
         route_frames: new_route_frame_store(),
+        audio_voices: Default::default(),
     };
     let app = ShowApp::new(handle);
     // Startup-Commands (ConfigureStage aller Stages) verwerfen.

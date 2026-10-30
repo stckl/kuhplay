@@ -35,7 +35,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
@@ -61,7 +61,9 @@ use super::{EngineCommand, EngineEvent, MediaEngine};
 use crate::core::RouteManager;
 
 /// Tick-Intervall der Engine (Real-Uhr).
-const TICK: Duration = Duration::from_millis(50);
+// 16 ms: Stage-/Routen-Re-Render mindestens mit ~60 Hz, damit Videoausgabe
+// (25/30 fps) nicht ruckelt (50 ms wären nur 20 Hz und sichtbares Judder).
+const TICK: Duration = Duration::from_millis(16);
 /// Simulierte Laufzeit für HTML5-Cues ohne `duration` (wie Mock).
 const DEFAULT_PLAYBACK: Duration = Duration::from_secs(5);
 
@@ -263,6 +265,8 @@ pub struct RealMediaEngine {
     decklink_next_push: Duration,
     /// WebView-Subprocess-Binary für HTML5-Cues (`None` = virtueller Fallback).
     webview_bin: Option<PathBuf>,
+    /// Cue-IDs mit aktiver Audio-Voice (Spiegel für [`super::EngineHandle::audio_voices`]).
+    audio_voices: Arc<Mutex<HashSet<Uuid>>>,
 }
 
 impl RealMediaEngine {
@@ -313,7 +317,15 @@ impl RealMediaEngine {
             decklink_fps: 25,
             decklink_next_push: Duration::ZERO,
             webview_bin: webview_binary(),
+            audio_voices: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    /// Setzt den Voice-Store (produktiver Pfad: `spawn_real_engine_with_join`
+    /// reicht ihn an die [`super::EngineHandle`] durch).
+    pub fn with_audio_voice_store(mut self, store: Arc<Mutex<HashSet<Uuid>>>) -> Self {
+        self.audio_voices = store;
+        self
     }
 
     /// Setzt das WebView-Subprocess-Binary für HTML5-Cues (Builder; für
@@ -497,6 +509,15 @@ impl RealMediaEngine {
                 let info = video
                     .play(cue_id, path, seek)
                     .map_err(|e| format!("video: {e}"))?;
+                // Tonspur des Videos mitlaufen lassen: symphonia dekodiert den
+                // Audio-Track aus demselben Container, gepaces gegen den cpal-
+                // Callback (Echtzeit) — Start im selben Tick wie das Video, also
+                // synchron. Videos ohne Tonspur: Fehler wird ignoriert (nur Log).
+                if let Some(audio) = audio.as_mut() {
+                    if let Err(err) = audio.add_voice(cue_id, path, seek, route) {
+                        debug!(%err, "video cue has no decodable audio track");
+                    }
+                }
                 Ok(info.duration)
             }
             _ => Ok(None),
@@ -524,6 +545,9 @@ impl RealMediaEngine {
             PlaybackKind::Video => {
                 if let Some(path) = &playback.path {
                     let _ = video.play(cue_id, path, offset);
+                }
+                if let Some(audio) = audio.as_mut() {
+                    audio.seek(cue_id, offset);
                 }
             }
             _ => {}
@@ -604,7 +628,12 @@ impl RealMediaEngine {
                     audio.stop_voice(cue_id);
                 }
             }
-            PlaybackKind::Video => video.stop(cue_id),
+            PlaybackKind::Video => {
+                video.stop(cue_id);
+                if let Some(audio) = audio.as_mut() {
+                    audio.stop_voice(cue_id);
+                }
+            }
             _ => {}
         }
     }
@@ -954,7 +983,12 @@ impl MediaEngine for RealMediaEngine {
                                         audio.pause(cue_id);
                                     }
                                 }
-                                PlaybackKind::Video => self.video.pause(cue_id),
+                                PlaybackKind::Video => {
+                                    self.video.pause(cue_id);
+                                    if let Some(audio) = self.audio.as_mut() {
+                                        audio.pause(cue_id);
+                                    }
+                                }
                                 _ => {}
                             }
                             self.emit(EngineEvent::Paused { cue_id });
@@ -973,7 +1007,12 @@ impl MediaEngine for RealMediaEngine {
                                     audio.resume(cue_id);
                                 }
                             }
-                            PlaybackKind::Video => self.video.resume(cue_id),
+                            PlaybackKind::Video => {
+                                self.video.resume(cue_id);
+                                if let Some(audio) = self.audio.as_mut() {
+                                    audio.resume(cue_id);
+                                }
+                            }
                             _ => {}
                         }
                         self.emit(EngineEvent::Resumed { cue_id });
@@ -983,6 +1022,7 @@ impl MediaEngine for RealMediaEngine {
             EngineCommand::Stop { cue_id } => {
                 if let Some(playback) = self.active.remove(&cue_id) {
                     Self::stop_backend(&mut self.audio, &mut self.video, cue_id, &playback);
+                    self.audio_voices.lock().unwrap().remove(&cue_id);
                     self.chasing.remove(&cue_id);
                     self.html.remove(&cue_id);
                     self.fades.remove(&cue_id);
@@ -1064,6 +1104,9 @@ impl MediaEngine for RealMediaEngine {
                                 if was_paused {
                                     self.video.pause(cue_id);
                                 }
+                            }
+                            if let Some(audio) = self.audio.as_mut() {
+                                audio.seek(cue_id, position);
                             }
                         }
                         _ => {}
@@ -1555,6 +1598,7 @@ impl MediaEngine for RealMediaEngine {
                                     if playback.media_duration.is_none() {
                                         playback.media_duration = media_duration;
                                     }
+                                    self.audio_voices.lock().unwrap().insert(cue_id);
                                 }
                                 // Fehler: nach dem Loop melden + Playback entfernen.
                                 Err(message) => start_errors.push((cue_id, message)),
@@ -1765,9 +1809,13 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
         }
-        // Natürliches Ende: Video-Backend stoppen (Audio ist eh fertig).
+        // Natürliches Ende: Backends stoppen (Video-Bild + Audio-Voice).
         for cue_id in &finished_now {
             self.video.stop(*cue_id);
+            if let Some(audio) = self.audio.as_mut() {
+                audio.stop_voice(*cue_id);
+            }
+            self.audio_voices.lock().unwrap().remove(cue_id);
         }
         for cue_id in finished_now {
             out.push(EngineEvent::Finished { cue_id });
@@ -1777,6 +1825,7 @@ impl MediaEngine for RealMediaEngine {
             self.active.remove(&cue_id);
             self.chasing.remove(&cue_id);
             self.html.remove(&cue_id);
+            self.audio_voices.lock().unwrap().remove(&cue_id);
         }
 
         // Compositor: geänderte Stages neu aufbauen.
@@ -1826,6 +1875,8 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
     let opacities_e = opacities.clone();
     let stage_frames_e = stage_frames.clone();
     let route_frames_e = route_frames.clone();
+    let audio_voices = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let audio_voices_e = audio_voices.clone();
 
     let join = std::thread::Builder::new()
         .name("real-playback-engine".to_string())
@@ -1836,7 +1887,8 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
                 stage_frames_e,
                 route_frames_e,
                 evt_tx,
-            );
+            )
+            .with_audio_voice_store(audio_voices_e);
             // Decklink-Hardware-Ausgabe starten, falls konfiguriert
             // (KUHPLAY_DECKLINK_* – siehe DecklinkConfig::from_env).
             engine.start_decklink_from_env();
@@ -1868,6 +1920,7 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
             opacities,
             stage_frames,
             route_frames,
+            audio_voices,
         },
         join,
     )

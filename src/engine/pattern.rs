@@ -98,16 +98,16 @@ fn draw_text(
 /// feines Raster + Beschriftung, nur über dem Bereich dieser Region – die
 /// Region füllt den Route-Raster, also über das ganze Bild. Andere Regionen
 /// auf anderen Routen bleiben unberührt.
-pub fn draw_region_grid(rgba: &mut [u8], width: u32, height: u32, label: &str) {
+pub fn draw_region_grid(rgba: &mut [u8], width: u32, height: u32, label: &str, color: [u8; 3]) {
     let (w, h) = (width.max(1) as usize, height.max(1) as usize);
     assert_eq!(
         rgba.len(),
         w * h * 4,
         "rgba buffer must match width*height*4"
     );
-    draw_grid(rgba, w, h);
+    draw_grid_tinted(rgba, w, h, color);
     draw_label(rgba, w, h, label);
-    draw_frame(rgba, w, h);
+    draw_frame(rgba, w, h, color);
 }
 
 /// Zeichnet das Testbild vollständig in `rgba` (Größe `width`×`height`,
@@ -129,7 +129,7 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
     draw_circle(rgba, w, h);
     draw_label(rgba, w, h, &spec.label);
     // Zuletzt: Der Rand ist immer vollständig sichtbar.
-    draw_frame(rgba, w, h);
+    draw_frame(rgba, w, h, [255; 3]);
 }
 
 /// LED-Wand-Testbild: Schachbrettmuster mit durchnummerierten Kacheln und
@@ -391,15 +391,42 @@ fn draw_color_bars(rgba: &mut [u8], w: usize, h: usize) {
 /// Ausrichtungsraster: quadratische Zellen von der Mitte aus, damit es symmetrisch
 /// sitzt; jede fünfte Linie heller, Skala am Rand, Diagonalen, Eckkreise.
 fn draw_grid(rgba: &mut [u8], w: usize, h: usize) {
+    draw_grid_shades(rgba, w, h, [38; 3], [90; 3], [150; 3], [200; 3], [255; 3]);
+}
+
+/// Regions-Raster in der Routenfarbe: Linien und Rahmen eingefärbt, damit man
+/// auf jedem Ausgabeschirm sieht, welche Route/Region dort liegt.
+fn draw_grid_tinted(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
+    let dim = [color[0] / 3, color[1] / 3, color[2] / 3];
+    let diag = [
+        (color[0] / 2).max(60),
+        (color[1] / 2).max(60),
+        (color[2] / 2).max(60),
+    ];
+    let axis = color;
+    draw_grid_shades(rgba, w, h, dim, color, diag, axis, color);
+}
+
+#[allow(clippy::too_many_arguments)] // Zeichen-Helfer: Shades fachlich nötig
+fn draw_grid_shades(
+    rgba: &mut [u8],
+    w: usize,
+    h: usize,
+    minor: [u8; 3],
+    major: [u8; 3],
+    diagonal: [u8; 3],
+    axis: [u8; 3],
+    scale: [u8; 3],
+) {
     draw_solid_color(rgba, w, h, [0, 0, 0]);
     let cell = (w.min(h) / 40).max(8);
-    let major = cell * 5;
+    let major_cell = cell * 5;
     let (cx, cy) = (w / 2, h / 2);
     let shade = |distance: usize| {
-        if distance.is_multiple_of(major) {
-            [90; 3]
+        if distance.is_multiple_of(major_cell) {
+            major
         } else {
-            [38; 3]
+            minor
         }
     };
     for x in (0..w).filter(|x| x.abs_diff(cx).is_multiple_of(cell)) {
@@ -417,38 +444,38 @@ fn draw_grid(rgba: &mut [u8], w: usize, h: usize) {
     for step in 0..steps {
         let x = step * (w - 1) / steps.max(2).saturating_sub(1).max(1);
         let y = step * (h - 1) / steps.max(2).saturating_sub(1).max(1);
-        put(rgba, w, x.min(w - 1), y.min(h - 1), [150; 3]);
-        put(rgba, w, x.min(w - 1), (h - 1).saturating_sub(y), [150; 3]);
+        put(rgba, w, x.min(w - 1), y.min(h - 1), diagonal);
+        put(rgba, w, x.min(w - 1), (h - 1).saturating_sub(y), diagonal);
     }
     // Mittelachsen.
     for y in 0..h {
-        put(rgba, w, cx, y, [200; 3]);
+        put(rgba, w, cx, y, axis);
     }
     for x in 0..w {
-        put(rgba, w, x, cy, [200; 3]);
+        put(rgba, w, x, cy, axis);
     }
     // Skala: Striche am Rand, an den hellen Linien länger.
     let (long, short) = ((cell / 2).max(4), (cell / 4).max(2));
     for x in (0..w).filter(|x| x.abs_diff(cx).is_multiple_of(cell)) {
-        let len = if x.abs_diff(cx).is_multiple_of(major) {
+        let len = if x.abs_diff(cx).is_multiple_of(major_cell) {
             long
         } else {
             short
         };
         for offset in 0..len.min(h) {
-            put(rgba, w, x, offset, [255; 3]);
-            put(rgba, w, x, h - 1 - offset, [255; 3]);
+            put(rgba, w, x, offset, scale);
+            put(rgba, w, x, h - 1 - offset, scale);
         }
     }
     for y in (0..h).filter(|y| y.abs_diff(cy).is_multiple_of(cell)) {
-        let len = if y.abs_diff(cy).is_multiple_of(major) {
+        let len = if y.abs_diff(cy).is_multiple_of(major_cell) {
             long
         } else {
             short
         };
         for offset in 0..len.min(w) {
-            put(rgba, w, offset, y, [255; 3]);
-            put(rgba, w, w - 1 - offset, y, [255; 3]);
+            put(rgba, w, offset, y, scale);
+            put(rgba, w, w - 1 - offset, y, scale);
         }
     }
     // Kreise in den Ecken, an beiden Rändern anliegend.
@@ -474,14 +501,14 @@ fn put(rgba: &mut [u8], w: usize, x: usize, y: usize, color: [u8; 3]) {
 }
 
 /// 1 px breiter weißer Rand exakt am Bildrand.
-fn draw_frame(rgba: &mut [u8], w: usize, h: usize) {
+fn draw_frame(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
     for x in 0..w {
-        put(rgba, w, x, 0, [255; 3]);
-        put(rgba, w, x, h - 1, [255; 3]);
+        put(rgba, w, x, 0, color);
+        put(rgba, w, x, h - 1, color);
     }
     for y in 0..h {
-        put(rgba, w, 0, y, [255; 3]);
-        put(rgba, w, w - 1, y, [255; 3]);
+        put(rgba, w, 0, y, color);
+        put(rgba, w, w - 1, y, color);
     }
 }
 
@@ -579,7 +606,7 @@ mod tests {
         for (w, h) in [(1920usize, 1080usize), (1512, 982), (65, 41)] {
             let mut rgba = vec![0u8; w * h * 4];
             draw_grid(&mut rgba, w, h);
-            draw_frame(&mut rgba, w, h);
+            draw_frame(&mut rgba, w, h, [255; 3]);
             let row = |y: usize| (0..w).filter(|x| rgba[(y * w + x) * 4] == 255).count();
             let col = |x: usize| (0..h).filter(|y| rgba[(y * w + x) * 4] == 255).count();
             assert_eq!(row(0), w, "oben durchgehend bei {w}x{h}");
@@ -927,6 +954,38 @@ mod tests {
         assert!(
             tick_right[2] > 200,
             "Pixelskala rechts bei y=128 weiß: {tick_right:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod region_grid_color_tests {
+    use super::draw_region_grid;
+
+    fn px(rgba: &[u8], w: usize, x: usize, y: usize) -> [u8; 3] {
+        let i = (y * w + x) * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    }
+
+    #[test]
+    fn region_grid_uses_route_color_for_frame_and_axes() {
+        let (w, h) = (200usize, 100usize);
+        let mut rgba = vec![0u8; w * h * 4];
+        draw_region_grid(&mut rgba, w as u32, h as u32, "A: Route X", [255, 0, 0]);
+        // Rahmen oben links in Routenfarbe.
+        assert_eq!(px(&rgba, w, 0, 0), [255, 0, 0], "Ecke = Routenfarbe");
+        // Mittelachse (x = w/2, außerhalb des Labels) eingefärbt: dominant rot.
+        let axis = px(&rgba, w, w / 2, h / 4);
+        assert!(
+            axis[0] > 120 && axis[1] < 60 && axis[2] < 60,
+            "Achse rot: {axis:?}"
+        );
+        // Nebenlinie gedimmt, aber rötlich (nicht grau).
+        let cell = (w.min(h) / 40).max(8);
+        let minor = px(&rgba, w, w / 2 + cell, 10);
+        assert!(
+            minor[0] > minor[1] && minor[0] > minor[2],
+            "Nebenlinie rötlich: {minor:?}"
         );
     }
 }

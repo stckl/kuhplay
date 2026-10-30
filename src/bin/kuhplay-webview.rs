@@ -57,9 +57,14 @@ fn main() {
     });
 
     let event_loop = EventLoop::new();
+    // Unsichtbares Fenster: Die WebView rendert offscreen, der Snapshot geht
+    // per WKWebView takeSnapshot in die Stage — es soll kein eigenes Fenster
+    // auf dem Desktop erscheinen.
     let window = WindowBuilder::new()
         .with_title("KuhPlay WebView")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 720.0))
+        .with_visible(false)
+        .with_decorations(false)
         .build(&event_loop)
         .expect("webview window must build");
     let webview = WebViewBuilder::new()
