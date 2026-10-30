@@ -49,6 +49,23 @@ der Live-Bug `50f6d1b`: Engine hatte Stage ohne Regionen).
 
 ---
 
+## ERLEDIGT nach dem Uebergabe-Dokument (Commits nach 14dfe4c)
+
+- **Hardware-Dekodierung:** ffmpeg-Dekoder bekommt -hwaccel auto
+  (VideoToolBox/NVDEC/VAAPI/DXVA je nach Plattform, automatischer Fallback auf
+  Software; Frames werden fuer die rgba-Ausgabe automatisch vom GPU geholt,
+  CPU-Compositing unveraendert). Abschaltbar mit KUHPLAY_HWACCEL=off.
+  ffmpeg_decode_args() testbar; real_engine-Tests (echte Dekodierung) gruen.
+  GPU-Compositing (wgpu o.ae.) ist NICHT umgesetzt - CPU-Renderer reicht gemessen
+  (1080p ca. 226 fps), bei Bedarf eigener Auftrag.
+- **Stabile Stage->Device-Bindung:** RouteManager::resolve_device_refs() loest
+  Display-IDs per Name+Aufloesung (Punkte) neu auf, wenn ein Screen wegfaellt;
+  bleibt es (missing), bleibt die UUID-Verknuepfung Region->Route stabil - das
+  restliche Patching verschiebt sich nicht. Wird bei refresh_displays(),
+  load_show() und setup_default_routes() aufgerufen. Tests in video_routing.rs.
+
+---
+
 ## Aufgabe 1 (angefangen, nur Analyse): Audio-Routing-Matrix
 
 **Wunsch des Nutzers:** In den Audio-Einstellungen eine Matrix, in der die 16

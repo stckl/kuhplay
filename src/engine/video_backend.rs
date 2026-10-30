@@ -136,21 +136,9 @@ impl VideoBackend {
         child_slot: Arc<Mutex<Option<Child>>>,
     ) {
         let mut cmd = Command::new("ffmpeg");
-        cmd.arg("-nostdin")
-            .arg("-loglevel")
-            .arg("error")
-            .args(["-ss", &format!("{:.6}", seek.as_secs_f64())])
-            .arg("-i")
-            .arg(path)
-            .arg("-an")
-            .arg("-f")
-            .arg("rawvideo")
-            .arg("-pix_fmt")
-            .arg("rgba")
-            // Frames mit Original-Timing durchreichen.
-            .arg("-fps_mode")
-            .arg("passthrough")
-            .arg("-");
+        for arg in ffmpeg_decode_args(seek, path, hwaccel_enabled()) {
+            cmd.arg(arg);
+        }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::null());
         let stdout = match cmd.spawn() {
@@ -378,6 +366,49 @@ fn reader_loop(
     state.lock().unwrap().eof = true;
 }
 
+/// Argumente für den ffmpeg-Dekodierprozess (rawvideo/rgba auf stdout).
+///
+/// `hwaccel`: Hardware-Dekodierung versuchen (`-hwaccel auto` — je nach
+/// Plattform VideoToolBox/NVDEC/VAAPI/DXVA, automatischer Fallback auf
+/// Software). Die Frames werden für die rgba-Ausgabe automatisch vom GPU
+/// heruntergeholt; das CPU-Compositing bleibt davon unberührt.
+pub fn ffmpeg_decode_args(seek: Duration, path: &str, hwaccel: bool) -> Vec<String> {
+    let mut args = vec![
+        "-nostdin".to_string(),
+        "-loglevel".to_string(),
+        "error".to_string(),
+    ];
+    if hwaccel {
+        // hwaccel als Input-Option, damit auch der Seek hw-beschleunigt ist.
+        args.push("-hwaccel".to_string());
+        args.push("auto".to_string());
+    }
+    args.extend([
+        "-ss".to_string(),
+        format!("{:.6}", seek.as_secs_f64()),
+        "-i".to_string(),
+        path.to_string(),
+        "-an".to_string(),
+        "-f".to_string(),
+        "rawvideo".to_string(),
+        "-pix_fmt".to_string(),
+        "rgba".to_string(),
+        // Frames mit Original-Timing durchreichen.
+        "-fps_mode".to_string(),
+        "passthrough".to_string(),
+        "-".to_string(),
+    ]);
+    args
+}
+
+/// `KUHPLAY_HWACCEL=off` schaltet die Hardware-Dekodierung ab (Default: an,
+/// ffmpeg fällt bei fehlender Hardware automatisch auf Software zurück).
+pub fn hwaccel_enabled() -> bool {
+    std::env::var("KUHPLAY_HWACCEL")
+        .map(|v| !matches!(v.as_str(), "0" | "off" | "false"))
+        .unwrap_or(true)
+}
+
 /// Tötet den Kind-Prozess (falls noch laufend).
 fn kill_child(child_slot: &Arc<Mutex<Option<Child>>>) {
     if let Some(mut child) = child_slot.lock().unwrap().take() {
@@ -441,5 +472,31 @@ fn parse_fps(s: &str) -> f64 {
         0.0
     } else {
         s.parse().unwrap_or(0.0)
+    }
+}
+
+#[cfg(test)]
+mod hwaccel_tests {
+    use super::*;
+
+    #[test]
+    fn decode_args_contain_hwaccel_when_enabled() {
+        let args = ffmpeg_decode_args(Duration::from_secs(2), "/tmp/x.mp4", true);
+        let pos = args.iter().position(|a| a == "-hwaccel").unwrap();
+        assert_eq!(args[pos + 1], "auto");
+        // hwaccel ist Input-Option: vor -i stehen.
+        let i_pos = args.iter().position(|a| a == "-i").unwrap();
+        assert!(pos < i_pos);
+        // Ausgabe bleibt rawvideo/rgba auf stdout.
+        assert!(args.contains(&"rawvideo".to_string()));
+        assert!(args.contains(&"rgba".to_string()));
+        assert_eq!(args.last().unwrap(), "-");
+    }
+
+    #[test]
+    fn decode_args_without_hwaccel() {
+        let args = ffmpeg_decode_args(Duration::ZERO, "/tmp/x.mp4", false);
+        assert!(!args.contains(&"-hwaccel".to_string()));
+        assert!(args.contains(&"-ss".to_string()));
     }
 }

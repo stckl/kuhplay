@@ -626,6 +626,7 @@ impl ShowApp {
             stage.regions = vec![region];
             self.stages.add(stage);
         }
+        self.resolve_device_refs();
         // Stages mit den neuen Regionen erneut an die Engine melden: Die
         // Startupschleife in new() laeuft VOR dieser Methode, die Engine
         // kennt die Regionen sonst nicht (Route-Bild bliebe schwarz).
@@ -880,9 +881,24 @@ impl ShowApp {
         self.closed_device_outputs.lock().unwrap().clear();
     }
 
-    /// Liest die verfügbaren Displays neu ein (für Screen-Mapping).
+    /// Liest die verfügbaren Displays neu ein und löst die Display-Referenzen
+    /// der Routen auf (ID weg → per Name+Auflösung neu finden). Bleibt etwas
+    /// „(missing)“, bleibt die UUID-Verknüpfung Region→Route stabil — das
+    /// restliche Video-Patching verschiebt sich nicht.
     pub fn refresh_displays(&mut self) {
         self.displays = stage_view::detect_displays();
+        self.resolve_device_refs();
+    }
+
+    /// Löst alle Display-Referenzen der Routen gegen die erkannten Displays
+    /// auf (siehe []) und
+    /// meldet geänderte Routen an die Engine.
+    pub fn resolve_device_refs(&mut self) {
+        let displays: Vec<DisplayRefInfo> =
+            self.displays.iter().map(DisplayRefInfo::from).collect();
+        if self.routes.resolve_device_refs(&displays) > 0 {
+            self.configure_routes();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -2026,6 +2042,9 @@ impl ShowApp {
         let displays: Vec<DisplayRefInfo> =
             self.displays.iter().map(DisplayRefInfo::from).collect();
         doc.migrate_legacy_screens(&displays);
+        // Device-Referenzen gegen die Displays DIESES Rechners auflösen
+        // (alte IDs können sich geändert haben).
+        let _ = doc.routes.resolve_device_refs(&displays);
         self.show_name = doc.name;
         self.carts = doc.carts;
         // Stages + Screens übernehmen; bei leeren Defaults neu aufbauen.

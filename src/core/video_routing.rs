@@ -471,6 +471,44 @@ impl RouteManager {
         self.routes.iter().find(|r| r.name == name)
     }
 
+    /// Alle Routen mutable (z. B. Device-Referenzen auflösen).
+    pub fn routes_mut(&mut self) -> &mut [OutputRoute] {
+        &mut self.routes
+    }
+
+    /// Löst Display-Referenzen gegen die aktuell erkannten Displays auf:
+    /// Ist die gespeicherte ID nicht mehr da (z. B. abgesteckter Screen),
+    /// wird über Name + Auflösung (Punkte) das passende Display wiedergefunden
+    /// und die ID aktualisiert. Gibt es keinen Treffer, bleibt die Referenz
+    /// als „(missing)“ stehen — die UUID-Verknüpfung Region→Route bleibt davon
+    /// unberührt und das restliche Patching verschiebt sich nicht.
+    /// Rückgabe: Anzahl aktualisierter Routen.
+    pub fn resolve_device_refs(&mut self, displays: &[DisplayRefInfo]) -> usize {
+        let mut changed = 0;
+        for route in &mut self.routes {
+            if let Some(DeviceRef::Display {
+                id,
+                name,
+                width,
+                height,
+            }) = &mut route.device
+            {
+                if displays.iter().any(|d| d.id == *id) {
+                    continue; // ID noch gültig
+                }
+                // Rückfall: gleiches Gerät anhand Name + Auflösung finden.
+                if let Some(found) = displays
+                    .iter()
+                    .find(|d| d.name == *name && d.width == *width && d.height == *height)
+                {
+                    *id = found.id;
+                    changed += 1;
+                }
+            }
+        }
+        changed
+    }
+
     /// Alle Route-Namen in Reihenfolge.
     pub fn names(&self) -> Vec<String> {
         self.routes.iter().map(|r| r.name.clone()).collect()
@@ -878,5 +916,88 @@ mod tests {
         // Regionen füllen die Stage vollständig.
         let covered: f32 = regions.iter().map(|r| r.width).sum();
         assert!((covered - 2880.0).abs() < 0.5);
+    }
+}
+
+#[cfg(test)]
+mod resolve_device_refs_tests {
+    use super::*;
+
+    fn display(id: u32, name: &str, w: u32, h: u32) -> DisplayRefInfo {
+        DisplayRefInfo {
+            id,
+            name: name.to_string(),
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+            scale_factor: 1.0,
+            frequency: 60.0,
+        }
+    }
+
+    #[test]
+    fn device_ref_resolves_by_name_and_size_when_id_is_gone() {
+        let mut routes = RouteManager::new();
+        let mut route = OutputRoute::new("Beamer", 1920, 1080);
+        route.device = Some(DeviceRef::Display {
+            id: 42,
+            name: "Beamer".to_string(),
+            width: 1920,
+            height: 1080,
+        });
+        let route_id = route.id;
+        routes.add(route).unwrap();
+        // Display mit ID 42 ist weg; gleiches Gerät kommt mit neuer ID 7 zurück.
+        let displays = vec![display(7, "Beamer", 1920, 1080)];
+        let changed = routes.resolve_device_refs(&displays);
+        assert_eq!(changed, 1);
+        match &routes.find(route_id).unwrap().device {
+            Some(DeviceRef::Display { id, .. }) => assert_eq!(*id, 7),
+            other => panic!("Device-Ref verloren: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_ref_stays_missing_when_nothing_matches() {
+        let mut routes = RouteManager::new();
+        let mut route = OutputRoute::new("Weg", 1920, 1080);
+        route.device = Some(DeviceRef::Display {
+            id: 42,
+            name: "Beamer".to_string(),
+            width: 1920,
+            height: 1080,
+        });
+        let route_id = route.id;
+        routes.add(route).unwrap();
+        // Anderer Rechner: nur ein 1512×982-Display, anderer Name.
+        let displays = vec![display(1, "MacBook", 1512, 982)];
+        let changed = routes.resolve_device_refs(&displays);
+        assert_eq!(changed, 0, "nichts verschoben");
+        match &routes.find(route_id).unwrap().device {
+            Some(DeviceRef::Display { id, .. }) => assert_eq!(*id, 42, "alte ID bleibt (missing)"),
+            other => panic!("Device-Ref verloren: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn same_name_but_other_size_is_not_matched() {
+        let mut routes = RouteManager::new();
+        let mut route = OutputRoute::new("Beamer", 1920, 1080);
+        route.device = Some(DeviceRef::Display {
+            id: 42,
+            name: "Beamer".to_string(),
+            width: 1920,
+            height: 1080,
+        });
+        let route_id = route.id;
+        routes.add(route).unwrap();
+        // Gleicher Name, aber andere Auflösung (anderes Gerät/Modus).
+        let displays = vec![display(9, "Beamer", 3840, 2160)];
+        assert_eq!(routes.resolve_device_refs(&displays), 0);
+        match &routes.find(route_id).unwrap().device {
+            Some(DeviceRef::Display { id, .. }) => assert_eq!(*id, 42),
+            other => panic!("{other:?}"),
+        }
     }
 }
