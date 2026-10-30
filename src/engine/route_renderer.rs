@@ -1,0 +1,760 @@
+//! Reine Render-Funktionen für das Video-Routing (QLab 5):
+//! Stage → Region → Output Route → Device.
+//!
+//! Alles läuft auf der CPU in reinen Funktionen – ohne GPU testbar, und
+//! Decklink braucht die Pixel ohnehin (Arbeitsauftrag Abschnitt 3.1).
+//!
+//! * [`render_region_into`]: malt den Ausschnitt einer Region aus dem
+//!   Stage-Frame in den Raster einer Route (Region füllt die Route,
+//!   Abschnitt 3.5) inkl. Edge-Blend mit Blend-Gamma.
+//! * [`render_route`]: schwarzer Raster; alle Stages (unten zuerst) malen
+//!   ihre Regionen auf die Route; Route-Testbild überdeckt alles,
+//!   Region-Grid liegt über der einzelnen Region.
+//! * [`present_on_device`]: Drehung, Spiegelung (Rückprojektion), dann
+//!   Skalierung (Center/Fit/Stretch/Fill) auf das Device.
+//! * [`auto_blends`]: Blendbreiten aus der Überlappung benachbarter
+//!   Regionen.
+//!
+//! Interne Koordinaten: Pixel, Ursprung oben links. Nearest-Neighbor-
+//! Sampling wie im Compositor (1-Pixel-Linien des Testbilds bleiben
+//! erhalten).
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::core::video_routing::{
+    edge_factor, region_letter, regions_in_reading_order, EdgeBlend, OutputRoute, Region,
+    RouteScaling,
+};
+
+/// `f32::from(u32)` gibt es nicht – zentraler Helper.
+fn f(v: u32) -> f32 {
+    v as f32
+}
+use crate::core::{ScreenRotation, Stage};
+use crate::engine::frame::VideoFrame;
+
+/// Zeichnet den Ausschnitt `region` aus `stage_frame` in den Route-Raster
+/// `target` (`route_w`×`route_h`, muss zur Ziel-Route passen).
+///
+/// Die Region wird auf den **vollen Raster** der Route abgebildet
+/// (Arbeitsauftrag 3.5): Region und Route mit gleichem Format verzerren
+/// nicht. `blend` sind die wirksamen Blendbreiten (Stage-Pixel, siehe
+/// [`auto_blends`]); der Faktorverlauf folgt `(x/breite)^(1/gamma)`, damit
+/// die Summe beider Projektoren im Überlapp konstant hell bleibt.
+pub fn render_region_into(
+    target: &mut VideoFrame,
+    route_w: u32,
+    route_h: u32,
+    stage_frame: &VideoFrame,
+    region: &Region,
+    blend: &EdgeBlend,
+    blend_gamma: f32,
+) {
+    debug_assert_eq!((target.width, target.height), (route_w, route_h));
+    let (tw, th) = (route_w.max(1), route_h.max(1));
+    let (sw, sh) = (
+        stage_frame.width.max(1) as f32,
+        stage_frame.height.max(1) as f32,
+    );
+    let stride = stage_frame.width.max(1) as usize;
+    // Regions-Rechteck auf die Stage-Frame-Grenzen clamen (Region liegt
+    // laut Validierung in der Stage; der Frame kann minimal kleiner sein).
+    let rx = region.x.max(0.0).min(sw - 1.0);
+    let ry = region.y.max(0.0).min(sh - 1.0);
+    let rw = (region.x + region.width).clamp(rx + 1.0, sw) - rx;
+    let rh = (region.y + region.height).clamp(ry + 1.0, sh) - ry;
+    if rw <= 0.0 || rh <= 0.0 {
+        return;
+    }
+
+    for py in 0..th {
+        // Quell-Koordinate in Stage-Pixeln (Pixelmitten).
+        let v = ry + (f(py) + 0.5) * rh / f(th);
+        let sy = (v.floor().max(0.0) as u32).min(stage_frame.height.saturating_sub(1)) as usize;
+        for px in 0..tw {
+            let u = rx + (f(px) + 0.5) * rw / f(tw);
+            let sx = (u.floor().max(0.0) as u32).min(stage_frame.width.saturating_sub(1)) as usize;
+            // Edge-Blend-Faktoren an den vier Kanten (Stage-Raum).
+            let mut factor = 1.0f32;
+            if blend.left > 0.0 {
+                factor *= edge_factor((u - rx) / blend.left, blend_gamma);
+            }
+            if blend.right > 0.0 {
+                factor *= edge_factor((rx + rw - u) / blend.right, blend_gamma);
+            }
+            if blend.top > 0.0 {
+                factor *= edge_factor((v - ry) / blend.top, blend_gamma);
+            }
+            if blend.bottom > 0.0 {
+                factor *= edge_factor((ry + rh - v) / blend.bottom, blend_gamma);
+            }
+            let src = &stage_frame.rgba[(sy * stride + sx) * 4..][..4];
+            let dst = &mut target.rgba[(py as usize * tw as usize + px as usize) * 4..][..4];
+            let a = factor.clamp(0.0, 1.0);
+            if a >= 1.0 {
+                dst.copy_from_slice(src);
+            } else {
+                for c in 0..3 {
+                    let s = f32::from(src[c]);
+                    let d = f32::from(dst[c]);
+                    dst[c] = (s * a + d * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                }
+                dst[3] = 255;
+            }
+        }
+    }
+}
+
+/// Komponiert das Bild einer Route: schwarzer Raster, dann alle Stages
+/// von unten nach oben (Layer, bei gleichem Layer alphabetisch späterer
+/// Name zuerst – der frühere liegt oben), je Region der Ausschnitt auf
+/// den vollen Raster.
+///
+/// `stage_frames`: Stage-Name → komponiertes Stage-Canvas (Compositor).
+/// Route-Testbild überdeckt den Inhalt; `Region::grid` legt ein Raster
+/// nur über den Bereich dieser Region (Beschriftung „B: Route“, Pfeil-
+/// Zeichen fehlen im Testbild-Font).
+pub fn render_route(
+    route: &OutputRoute,
+    stages: &[Stage],
+    stage_frames: &HashMap<String, Arc<VideoFrame>>,
+) -> VideoFrame {
+    let (rw, rh) = (route.width.max(1), route.height.max(1));
+    let mut out = VideoFrame::black(rw, rh);
+    // Unten zuerst malen (Layer-Regel aus Abschnitt 4).
+    let mut ordered: Vec<&Stage> = stages.iter().collect();
+    ordered.sort_by(|a, b| a.layer.cmp(&b.layer).then_with(|| b.name.cmp(&a.name)));
+
+    for stage in ordered {
+        if !stage.visible || stage.regions.is_empty() {
+            continue;
+        }
+        let Some(frame) = stage_frames.get(&stage.name) else {
+            continue;
+        };
+        // Buchstaben der Regionen (Lesefolge) für das Region-Grid.
+        let letters: std::collections::HashMap<uuid::Uuid, String> =
+            regions_in_reading_order(stage.regions.iter())
+                .iter()
+                .enumerate()
+                .map(|(i, region)| (region.id, region_letter(i)))
+                .collect();
+        let auto = auto_blends(&stage.regions);
+        for (index, region) in stage.regions.iter().enumerate() {
+            if region.route != Some(route.id) {
+                continue;
+            }
+            let effective = if region.auto_blend {
+                auto[index]
+            } else {
+                region.blend
+            };
+            render_region_into(
+                &mut out,
+                rw,
+                rh,
+                frame,
+                region,
+                &effective,
+                stage.blend_gamma,
+            );
+            if region.grid {
+                let label = format!(
+                    "{}: {}",
+                    letters.get(&region.id).cloned().unwrap_or_default(),
+                    route.name
+                );
+                super::pattern::draw_region_grid(&mut out.rgba, rw, rh, &label);
+            }
+        }
+    }
+
+    // Route-Testbild überdeckt den Inhalt (QLab „Test Pattern“).
+    if route.test_pattern {
+        let spec = crate::core::TestPatternSpec {
+            label: route.label(),
+            width: rw,
+            height: rh,
+            kind: route.test_pattern_kind,
+            color: route.color,
+            index: 0,
+            checker_size: route.checker_size,
+        };
+        super::pattern::draw_test_pattern(&mut out.rgba, rw, rh, &spec);
+    }
+    out
+}
+
+/// Bildet ein Route-Bild auf das Device ab: **Drehung**, dann
+/// **Spiegelung** (Rückprojektion), dann **Skalierung** (Center/Fit/
+/// Stretch/Fill, Arbeitsauftrag Phase 2). Hintergrund außerhalb der
+/// Skalierung bleibt schwarz.
+pub fn present_on_device(
+    route_frame: &VideoFrame,
+    route: &OutputRoute,
+    device_w: u32,
+    device_h: u32,
+) -> VideoFrame {
+    let (dw, dh) = (device_w.max(1), device_h.max(1));
+    // 1) Drehung (90° im Uhrzeigersinn usw.).
+    let rotated = rotate(route_frame, route.rotation);
+    // 2) Rückprojektion: horizontal spiegeln.
+    let oriented: VideoFrame = if route.rear_projection {
+        mirror_horizontal(&rotated)
+    } else {
+        rotated
+    };
+    // 3) Skalierung.
+    let (sw, sh) = (oriented.width.max(1) as f32, oriented.height.max(1) as f32);
+    let (dwf, dhf) = (f(dw), f(dh));
+    let (scale, ox, oy) = match route.scaling {
+        RouteScaling::Stretch => (1.0f32, 0.0f32, 0.0f32), // eigenes Mapping unten
+        RouteScaling::Center => (1.0, (dwf - sw) / 2.0, (dhf - sh) / 2.0),
+        RouteScaling::Fit => {
+            let scale = (dwf / sw).min(dhf / sh);
+            let (w, h) = (sw * scale, sh * scale);
+            (scale, (dwf - w) / 2.0, (dhf - h) / 2.0)
+        }
+        RouteScaling::Fill => {
+            let scale = (dwf / sw).max(dhf / sh);
+            let (w, h) = (sw * scale, sh * scale);
+            (scale, (dwf - w) / 2.0, (dhf - h) / 2.0)
+        }
+    };
+    let mut out = VideoFrame::black(dw, dh);
+    if route.scaling == RouteScaling::Stretch {
+        // Breite und Höhe getrennt auf das Device ziehen.
+        for y in 0..dh {
+            let sy = (f(y) * sh / dhf).floor() as u32 % oriented.height;
+            for x in 0..dw {
+                let sx = (f(x) * sw / dwf).floor() as u32 % oriented.width;
+                copy_pixel(&oriented, sx, sy, &mut out, x, y);
+            }
+        }
+        return out;
+    }
+    for y in 0..dh {
+        for x in 0..dw {
+            // Gerätepixel-Mitte zurück in die Quelle.
+            let u = (f(x) + 0.5 - ox) / scale - 0.5;
+            let v = (f(y) + 0.5 - oy) / scale - 0.5;
+            let sx = u.round().floor() as i64;
+            let sy = v.round().floor() as i64;
+            if sx < 0 || sy < 0 || sx >= oriented.width as i64 || sy >= oriented.height as i64 {
+                continue; // Überstand abschneiden / Balken bleiben schwarz.
+            }
+            copy_pixel(&oriented, sx as u32, sy as u32, &mut out, x, y);
+        }
+    }
+    out
+}
+
+/// Kopiert ein Pixel (RGBA, deckend).
+fn copy_pixel(src: &VideoFrame, sx: u32, sy: u32, dst: &mut VideoFrame, x: u32, y: u32) {
+    let s = (sy as usize * src.width as usize + sx as usize) * 4;
+    let d = (y as usize * dst.width as usize + x as usize) * 4;
+    dst.rgba[d..d + 4].copy_from_slice(&src.rgba[s..s + 4]);
+}
+
+/// Dreht ein Frame um 90°-Schritte im Uhrzeigersinn (obere Kante
+/// erscheint bei 90° an der rechten Kante).
+pub fn rotate(frame: &VideoFrame, rotation: ScreenRotation) -> VideoFrame {
+    match rotation {
+        ScreenRotation::Deg0 => VideoFrame::new(frame.width, frame.height, frame.rgba.clone()),
+        ScreenRotation::Deg90 => {
+            let (w, h) = (frame.height, frame.width);
+            let mut out = VideoFrame::black(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    // CW: (sx, sy) -> (h_src-1-sy, sx)
+                    let sx = y;
+                    let sy = frame.height - 1 - x;
+                    copy_pixel(frame, sx, sy, &mut out, x, y);
+                }
+            }
+            out
+        }
+        ScreenRotation::Deg180 => {
+            let mut out = VideoFrame::black(frame.width, frame.height);
+            for y in 0..frame.height {
+                for x in 0..frame.width {
+                    let sx = frame.width - 1 - x;
+                    let sy = frame.height - 1 - y;
+                    copy_pixel(frame, sx, sy, &mut out, x, y);
+                }
+            }
+            out
+        }
+        ScreenRotation::Deg270 => {
+            let (w, h) = (frame.height, frame.width);
+            let mut out = VideoFrame::black(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    // CCW: (sx, sy) -> (sy, w_src-1-sx)
+                    let sx = frame.width - 1 - y;
+                    let sy = x;
+                    copy_pixel(frame, sx, sy, &mut out, x, y);
+                }
+            }
+            out
+        }
+    }
+}
+
+/// Spiegelt ein Frame horizontal (Rückprojektion).
+pub fn mirror_horizontal(frame: &VideoFrame) -> VideoFrame {
+    let mut out = VideoFrame::black(frame.width, frame.height);
+    for y in 0..frame.height {
+        for x in 0..frame.width {
+            let sx = frame.width - 1 - x;
+            copy_pixel(frame, sx, y, &mut out, x, y);
+        }
+    }
+    out
+}
+
+/// Auto-Edge-Blend: Überlappt Region A die Region B auf derselben Stage,
+/// ist die Überlappbreite die Blendbreite beider zugewandten Kanten
+/// (mehrere Überlappungen: die breiteste gewinnt). Rückgabe parallel zur
+/// Eingabe.
+pub fn auto_blends(regions: &[Region]) -> Vec<EdgeBlend> {
+    let mut out = vec![EdgeBlend::ZERO; regions.len()];
+    for (i, a) in regions.iter().enumerate() {
+        for (j, b) in regions.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let overlap_w = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
+            let overlap_h = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);
+            if overlap_w <= 0.0 || overlap_h <= 0.0 {
+                continue;
+            }
+            // Blende nur bei *teilweiser* Überlappung je Achse:
+            // Deckt die x-Überlappung die volle Breite einer Region (z. B.
+            // übereinander gestapelt, gleiche Spalte), gibt es keine
+            // links/rechts-Blende – und umgekehrt. Voll ineinander
+            // geschachtelte Regionen bekommen so automatisch keine Blende.
+            let side_left = a.x <= b.x;
+            let above = a.y <= b.y;
+            let w = if overlap_w < a.width.min(b.width) {
+                overlap_w
+            } else {
+                0.0
+            };
+            let h = if overlap_h < a.height.min(b.height) {
+                overlap_h
+            } else {
+                0.0
+            };
+            // Horizontal: zugewandte Seiten (links/rechts).
+            if w > 0.0 {
+                if side_left {
+                    out[i].right = out[i].right.max(w);
+                    out[j].left = out[j].left.max(w);
+                } else {
+                    out[i].left = out[i].left.max(w);
+                    out[j].right = out[j].right.max(w);
+                }
+            }
+            // Vertikal: oben/unten.
+            if h > 0.0 {
+                if above {
+                    out[i].bottom = out[i].bottom.max(h);
+                    out[j].top = out[j].top.max(h);
+                } else {
+                    out[i].top = out[i].top.max(h);
+                    out[j].bottom = out[j].bottom.max(h);
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::video_routing::Region;
+    use crate::core::{ScreenRotation, StageGeometry};
+
+    /// Frame mit einheitlicher Farbe.
+    fn solid(w: u32, h: u32, color: [u8; 3]) -> Arc<VideoFrame> {
+        let [r, g, b] = color;
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..w * h {
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+        Arc::new(VideoFrame::new(w, h, rgba))
+    }
+
+    /// Stage-Frame mit Farbverlauf: x < split → links, sonst rechts.
+    fn split_frame(w: u32, h: u32, split: u32, left: [u8; 3], right: [u8; 3]) -> Arc<VideoFrame> {
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..h {
+            for x in 0..w {
+                let c = if x < split { left } else { right };
+                rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+        }
+        Arc::new(VideoFrame::new(w, h, rgba))
+    }
+
+    fn make_stage(name: &str, layer: i32, regions: Vec<Region>) -> Stage {
+        let mut stage = Stage::new(name, StageGeometry::new(1920.0, 1080.0));
+        stage.layer = layer;
+        stage.regions = regions;
+        stage
+    }
+
+    fn pixel(frame: &VideoFrame, x: u32, y: u32) -> [u8; 3] {
+        let i = (y as usize * frame.width as usize + x as usize) * 4;
+        [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2]]
+    }
+
+    /// Zwei Regionen nebeneinander (mit Überlappung `overlap` px).
+    fn two_regions(overlap: f32) -> (Region, Region) {
+        let width = 1200.0;
+        let a = Region::new(0.0, 0.0, width, 1080.0);
+        let b = Region::new(width - overlap, 0.0, width, 1080.0);
+        (a, b)
+    }
+
+    #[test]
+    fn two_regions_side_by_side_show_their_half() {
+        // Stage 2400 breit: Region A links (0..1200), B rechts (1200..2400),
+        // je eigene Route mit der Breite der Region.
+        let (mut a, mut b) = two_regions(0.0);
+        let mut stage = Stage::new("S", StageGeometry::new(2400.0, 1080.0));
+        let route_a = OutputRoute::new("L", 1200, 1080);
+        let route_b = OutputRoute::new("R", 1200, 1080);
+        a.route = Some(route_a.id);
+        b.route = Some(route_b.id);
+        stage.regions = vec![a, b];
+        // Stage-Frame: linke Hälfte rot, rechte blau.
+        let frames: HashMap<String, Arc<VideoFrame>> = std::iter::once((
+            "S".to_string(),
+            split_frame(2400, 1080, 1200, [255, 0, 0], [0, 0, 255]),
+        ))
+        .collect();
+
+        let left = render_route(&route_a, std::slice::from_ref(&stage), &frames);
+        let right = render_route(&route_b, std::slice::from_ref(&stage), &frames);
+        assert_eq!((left.width, left.height), (1200, 1080));
+        // Linke Route zeigt nur linke Stage-Hälfte (rot) …
+        assert_eq!(pixel(&left, 10, 10), [255, 0, 0]);
+        assert_eq!(pixel(&left, 1190, 540), [255, 0, 0]);
+        // … rechte nur die rechte (blau).
+        assert_eq!(pixel(&right, 10, 10), [0, 0, 255]);
+        assert_eq!(pixel(&right, 1190, 540), [0, 0, 255]);
+    }
+
+    #[test]
+    fn edge_blend_overlap_keeps_constant_brightness() {
+        // 200 px Überlappung: Region A 0..1200, B 1000..2200. Weiße
+        // Stage; in der Mitte des Blends muss die Summe beider Routen
+        // (im linearen Licht) der Ausgangshelligkeit entsprechen.
+        let (mut a, mut b) = two_regions(200.0);
+        let mut stage = Stage::new("S", StageGeometry::new(2200.0, 1080.0));
+        let route_a = OutputRoute::new("L", 1200, 1080);
+        let route_b = OutputRoute::new("R", 1200, 1080);
+        a.route = Some(route_a.id);
+        b.route = Some(route_b.id);
+        stage.regions = vec![a.clone(), b.clone()];
+        stage.blend_gamma = 2.2;
+        let frames: HashMap<String, Arc<VideoFrame>> =
+            std::iter::once(("S".to_string(), solid(2200, 1080, [255, 255, 255]))).collect();
+
+        let left = render_route(&route_a, std::slice::from_ref(&stage), &frames);
+        let right = render_route(&route_b, std::slice::from_ref(&stage), &frames);
+
+        // Auto-Blend: Überlappbreite 200 an den zugewandten Kanten.
+        let blends = auto_blends(&stage.regions);
+        assert_eq!(blends[0].right, 200.0);
+        assert_eq!(blends[1].left, 200.0);
+        assert_eq!(blends[0].left, 0.0);
+        assert_eq!(blends[1].right, 0.0);
+        assert_eq!(
+            blends[0].bottom, 0.0,
+            "volle Höhenüberlappung: keine Vertikalblende"
+        );
+        assert_eq!(blends[1].bottom, 0.0);
+
+        // Mitte des Blends: Stage x = 1100 → Route A Pixel 1100,
+        // Route B Pixel 100 (Stage 1100 - 1000).
+        let (pa, pb) = (pixel(&left, 1100, 540), pixel(&right, 100, 540));
+        // Projektoren addieren Licht: c^gamma. Die Summe muss der
+        // vollen Helligkeit (255) entsprechen (±2 von 255).
+        let gamma = 2.2f32;
+        let la = (f32::from(pa[0]) / 255.0).powf(gamma);
+        let lb = (f32::from(pb[0]) / 255.0).powf(gamma);
+        let sum = (la + lb).powf(1.0 / gamma) * 255.0;
+        assert!(
+            (sum - 255.0).abs() <= 2.0,
+            "Summe im Überlapp muss 255 sein, ist {sum} ({pa:?} + {pb:?})"
+        );
+        // Kern der Routen bleibt voll hell.
+        assert_eq!(pixel(&left, 10, 540), [255, 255, 255]);
+        assert_eq!(pixel(&right, 1190, 540), [255, 255, 255]);
+    }
+
+    #[test]
+    fn scaling_center_fit_stretch_fill_follow_qlab() {
+        // 1920×1080 auf 1000×1000, wie `placement_modes_follow_qlab`.
+        // Quelle: links von 960 rot, rechts blau.
+        let frame = split_frame(1920, 1080, 960, [255, 0, 0], [0, 0, 255]);
+        let mut route = OutputRoute::new("D", 1920, 1080);
+        route.device = Some(crate::core::video_routing::DeviceRef::Display {
+            id: 1,
+            name: "D".to_string(),
+            width: 1000,
+            height: 1000,
+        });
+
+        // Fit: 1000×563 zentriert, Balken oben/unten.
+        route.scaling = RouteScaling::Fit;
+        let out = present_on_device(&frame, &route, 1000, 1000);
+        assert_eq!(pixel(&out, 500, 100), [0, 0, 0], "Balken oben schwarz");
+        assert_eq!(pixel(&out, 500, 900), [0, 0, 0], "Balken unten schwarz");
+        assert_eq!(pixel(&out, 250, 400), [255, 0, 0], "links rot");
+        assert_eq!(pixel(&out, 750, 400), [0, 0, 255], "rechts blau");
+
+        // Fill: voll gefüllt, Mitte der Quelle 420..1500 sichtbar.
+        route.scaling = RouteScaling::Fill;
+        let out = present_on_device(&frame, &route, 1000, 1000);
+        assert_eq!(pixel(&out, 250, 500), [255, 0, 0], "Quelle x≈690 rot");
+        assert_eq!(pixel(&out, 750, 500), [0, 0, 255], "Quelle x≈1230 blau");
+        assert_eq!(pixel(&out, 500, 500), [0, 0, 255]);
+
+        // Stretch: 1920 auf 1000 → Grenze bei x=500.
+        route.scaling = RouteScaling::Stretch;
+        let out = present_on_device(&frame, &route, 1000, 1000);
+        assert_eq!(pixel(&out, 250, 500), [255, 0, 0]);
+        assert_eq!(pixel(&out, 750, 500), [0, 0, 255]);
+
+        // Center: unskaliert zentriert, Überstand abgeschnitten
+        // (Quelle 460..1460 sichtbar).
+        route.scaling = RouteScaling::Center;
+        let out = present_on_device(&frame, &route, 1000, 1000);
+        assert_eq!(pixel(&out, 250, 500), [255, 0, 0], "Quelle x≈710 rot");
+        assert_eq!(pixel(&out, 750, 500), [0, 0, 255], "Quelle x≈1210 blau");
+    }
+
+    #[test]
+    fn rotation_and_mirror_map_known_pixels() {
+        // 4×2-Bild mit eindeutigen Farben pro Spalte.
+        let mut rgba = Vec::new();
+        for y in 0..2 {
+            for x in 0..4 {
+                rgba.extend_from_slice(&[(x * 40) as u8, (y * 80) as u8, 7, 255]);
+            }
+        }
+        let frame = VideoFrame::new(4, 2, rgba);
+        let mut route = OutputRoute::new("D", 4, 2);
+
+        // 90° im Uhrzeigersinn: Quelle (sx, sy) -> Ziel (1-sy, sx);
+        // die obere Quellkante erscheint an der rechten Zielkante.
+        route.rotation = ScreenRotation::Deg90;
+        let out = rotate(&frame, ScreenRotation::Deg90);
+        assert_eq!((out.width, out.height), (2, 4));
+        assert_eq!(
+            pixel(&out, 1, 0),
+            pixel(&frame, 0, 0),
+            "oben links -> oben rechts"
+        );
+        assert_eq!(
+            pixel(&out, 0, 0),
+            pixel(&frame, 0, 1),
+            "unten links -> oben links"
+        );
+        assert_eq!(
+            pixel(&out, 0, 3),
+            pixel(&frame, 3, 1),
+            "unten rechts -> unten links"
+        );
+        assert_eq!(
+            pixel(&out, 1, 3),
+            pixel(&frame, 3, 0),
+            "oben rechts -> unten rechts"
+        );
+
+        // 180°: komplett gedreht.
+        let out = rotate(&frame, ScreenRotation::Deg180);
+        assert_eq!(pixel(&out, 0, 0), pixel(&frame, 3, 1));
+
+        // Spiegelung (Rückprojektion): horizontal.
+        let mirrored = mirror_horizontal(&frame);
+        assert_eq!(pixel(&mirrored, 0, 0), pixel(&frame, 3, 0));
+        assert_eq!(pixel(&mirrored, 3, 0), pixel(&frame, 0, 0));
+
+        // present_on_device kombiniert beides (2×4-Device, Stretch).
+        route.rear_projection = true;
+        route.scaling = RouteScaling::Stretch;
+        let out = present_on_device(&frame, &route, 2, 4);
+        assert_eq!((out.width, out.height), (2, 4));
+        // Erst gedreht, dann gespiegelt.
+        let rotated = rotate(&frame, ScreenRotation::Deg90);
+        let mirrored = mirror_horizontal(&rotated);
+        assert_eq!(pixel(&out, 0, 0), pixel(&mirrored, 0, 0));
+        assert_eq!(pixel(&out, 1, 3), pixel(&mirrored, 1, 3));
+    }
+
+    #[test]
+    fn two_stages_stack_by_layer_then_name() {
+        // Zwei Stages auf derselben Route: Beta Layer 0 (blau, unten),
+        // Alpha Layer 1 (rot, oben). Reihenfolge egal – render_route sortiert.
+        let route = OutputRoute::new("R", 100, 100);
+        let mut alpha_region = Region::full_stage(1920.0, 1080.0);
+        alpha_region.route = Some(route.id);
+        let mut beta_region = Region::full_stage(1920.0, 1080.0);
+        beta_region.route = Some(route.id);
+        let alpha = make_stage("Alpha", 1, vec![alpha_region.clone()]);
+        let beta = make_stage("Beta", 0, vec![beta_region.clone()]);
+        let frames: HashMap<String, Arc<VideoFrame>> = [
+            ("Alpha".to_string(), solid(1920, 1080, [255, 0, 0])),
+            ("Beta".to_string(), solid(1920, 1080, [0, 0, 255])),
+        ]
+        .into_iter()
+        .collect();
+        // Absichtlich falsch sortiert übergeben.
+        let out = render_route(&route, &[alpha.clone(), beta.clone()], &frames);
+        assert_eq!(pixel(&out, 50, 50), [255, 0, 0], "höherer Layer oben");
+
+        // Gleicher Layer: alphabetisch früherer Name oben (Alpha über Beta).
+        let alpha0 = make_stage("Alpha", 0, vec![alpha_region.clone()]);
+        let beta0 = make_stage("Beta", 0, vec![beta_region.clone()]);
+        let frames2: HashMap<String, Arc<VideoFrame>> = [
+            ("Alpha".to_string(), solid(1920, 1080, [255, 0, 0])),
+            ("Beta".to_string(), solid(1920, 1080, [0, 0, 255])),
+        ]
+        .into_iter()
+        .collect();
+        let out = render_route(&route, &[beta0, alpha0], &frames2);
+        assert_eq!(pixel(&out, 50, 50), [255, 0, 0], "Alpha über Beta");
+
+        // Unsichtbare Stage wird nicht gemalt.
+        let mut hidden = make_stage("Hidden", 5, vec![alpha_region]);
+        hidden.visible = false;
+        let out = render_route(&route, &[hidden], &frames2);
+        assert_eq!(pixel(&out, 50, 50), [0, 0, 0], "unsichtbar = schwarz");
+    }
+
+    #[test]
+    fn route_test_pattern_stays_round_on_differently_shaped_stage() {
+        // Route 800×600 (4:3), Stage 1920×1080 (16:9): Das Testbild wird
+        // im Raster der Route gezeichnet, der Kreis bleibt rund.
+        let mut route = OutputRoute::new("T", 800, 600);
+        route.test_pattern = true;
+        let mut region = Region::full_stage(1920.0, 1080.0);
+        region.route = Some(route.id);
+        let stage = make_stage("S", 0, vec![region]);
+        let frames: HashMap<String, Arc<VideoFrame>> =
+            std::iter::once(("S".to_string(), solid(1920, 1080, [255, 0, 0]))).collect();
+        let out = render_route(&route, std::slice::from_ref(&stage), &frames);
+        assert_eq!((out.width, out.height), (800, 600));
+        assert!(
+            !out.rgba
+                .chunks_exact(4)
+                .any(|c| c[0] == 255 && c[1] == 0 && c[2] == 0 && c[3] == 255),
+            "Testbild überdeckt den Inhalt (kein reines Rot)"
+        );
+
+        // Kreis: Mittelpunkt (399.5, 299.5), Radius 298.5. Der am weitesten
+        // rechts bzw. unten liegende helle Kreis-Pixel muss von der Mitte
+        // gleich weit entfernt sein (±2 px) – rund, nicht oval.
+        let bright = |x: u32, y: u32| {
+            let i = (y as usize * 800 + x as usize) * 4;
+            out.rgba[i] > 240 && out.rgba[i + 1] > 240
+        };
+        // Zeile 299 (nicht auf einer Rasterlinie): hellster Kreis-Punkt.
+        // Bildrand (immer weiß) und Skalenstriche ausschließen: bis
+        // wenige Pixel vor dem Rand scannen.
+        let mut right_edge = 0u32;
+        for x in (400..=794).rev() {
+            if bright(x, 299) {
+                right_edge = x;
+                break;
+            }
+        }
+        let mut bottom_edge = 0u32;
+        for y in (300..=598).rev() {
+            if bright(401, y) {
+                bottom_edge = y;
+                break;
+            }
+        }
+        assert!(right_edge > 600, "Kreis gefunden (rechts), x={right_edge}");
+        assert!(bottom_edge > 500, "Kreis gefunden (unten), y={bottom_edge}");
+        let dx = f(right_edge) - 399.5;
+        let dy = f(bottom_edge) - 299.5;
+        assert!((dx - dy).abs() <= 2.0, "Kreis ist rund: dx={dx}, dy={dy}");
+    }
+
+    #[test]
+    fn region_grid_overlays_only_that_region() {
+        // Region mit Grid auf einer Route von zwei Regionen der Stage:
+        // nur die eigene Route bekommt das Raster (andere bleibt Inhalt).
+        let (mut a, mut b) = two_regions(0.0);
+        let route_a = OutputRoute::new("L", 1200, 1080);
+        let route_b = OutputRoute::new("R", 1200, 1080);
+        a.route = Some(route_a.id);
+        a.grid = true;
+        b.route = Some(route_b.id);
+        let mut stage = Stage::new("S", StageGeometry::new(2400.0, 1080.0));
+        stage.regions = vec![a, b];
+        let frames: HashMap<String, Arc<VideoFrame>> =
+            std::iter::once(("S".to_string(), solid(2400, 1080, [10, 20, 30]))).collect();
+        let left = render_route(&route_a, std::slice::from_ref(&stage), &frames);
+        let right = render_route(&route_b, std::slice::from_ref(&stage), &frames);
+        // Linke Route: Raster (weißer Rahmen am Rand).
+        assert!(pixel(&left, 0, 0)[0] > 200, "Grid-Rahmen links oben");
+        // Rechte Route: unveränderter Inhalt.
+        assert_eq!(pixel(&right, 5, 5), [10, 20, 30]);
+    }
+
+    #[test]
+    fn auto_blends_vertical_and_multiple_overlaps() {
+        // Vertikale Überlappung (oben/unten).
+        let a = Region::new(0.0, 0.0, 100.0, 150.0);
+        let b = Region::new(0.0, 100.0, 100.0, 150.0);
+        let blends = auto_blends(&[a, b]);
+        assert_eq!(blends[0].bottom, 50.0);
+        assert_eq!(blends[1].top, 50.0);
+        assert_eq!(blends[0].right, 0.0, "keine horizontale Überlappung");
+        // Drei Regionen nebeneinander: A-B überlappen 100, A-C nur 20,
+        // B-C überlappen 120 → je Kante gewinnt die breiteste Überlappung.
+        let a = Region::new(0.0, 0.0, 300.0, 100.0);
+        let b = Region::new(200.0, 0.0, 200.0, 100.0);
+        let c = Region::new(280.0, 0.0, 220.0, 100.0);
+        let blends = auto_blends(&[a.clone(), b, c]);
+        assert_eq!(
+            blends[0].right, 100.0,
+            "breiteste Überlappung gewinnt (100 > 20)"
+        );
+        assert_eq!(blends[1].left, 100.0);
+        assert_eq!(blends[1].right, 120.0);
+        assert_eq!(blends[2].left, 120.0);
+        // Voll ineinander geschachtelte Region: keine Blende.
+        let outer = Region::new(0.0, 0.0, 400.0, 300.0);
+        let inner = Region::new(100.0, 50.0, 100.0, 100.0);
+        let blends = auto_blends(&[outer, inner]);
+        assert_eq!(blends[0], EdgeBlend::ZERO);
+        assert_eq!(blends[1], EdgeBlend::ZERO);
+        // Keine Überlappung → keine Blende.
+        let a = Region::new(0.0, 0.0, 100.0, 100.0);
+        let b = Region::new(100.0, 0.0, 100.0, 100.0);
+        let blends = auto_blends(&[a, b]);
+        assert_eq!(blends[0], EdgeBlend::ZERO);
+        assert_eq!(blends[1], EdgeBlend::ZERO);
+    }
+
+    #[test]
+    fn render_region_into_maps_one_to_one_without_distortion() {
+        // Region-Größe == Route-Größe: Pixel-identisch (keine Verzerrung).
+        let frame = solid(100, 50, [1, 2, 3]);
+        let region = Region::new(0.0, 0.0, 100.0, 50.0);
+        let mut target = VideoFrame::black(100, 50);
+        render_region_into(&mut target, 100, 50, &frame, &region, &EdgeBlend::ZERO, 2.2);
+        assert_eq!(target.rgba, frame.rgba);
+    }
+}

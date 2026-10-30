@@ -72,6 +72,7 @@ pub mod media_engine;
 pub mod mock_engine;
 pub mod pattern;
 pub mod real_engine;
+pub mod route_renderer;
 pub mod video_backend;
 pub mod waveform;
 pub mod webview_backend;

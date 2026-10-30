@@ -94,6 +94,22 @@ fn draw_text(
     }
 }
 
+/// Raster-Overlay für **eine Region** im Route-Bild (QLab „Region Grid“):
+/// feines Raster + Beschriftung, nur über dem Bereich dieser Region – die
+/// Region füllt den Route-Raster, also über das ganze Bild. Andere Regionen
+/// auf anderen Routen bleiben unberührt.
+pub fn draw_region_grid(rgba: &mut [u8], width: u32, height: u32, label: &str) {
+    let (w, h) = (width.max(1) as usize, height.max(1) as usize);
+    assert_eq!(
+        rgba.len(),
+        w * h * 4,
+        "rgba buffer must match width*height*4"
+    );
+    draw_grid(rgba, w, h);
+    draw_label(rgba, w, h, label);
+    draw_frame(rgba, w, h);
+}
+
 /// Zeichnet das Testbild vollständig in `rgba` (Größe `width`×`height`,
 /// Row-Major, 4 Bytes/Pixel).
 pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPatternSpec) {
