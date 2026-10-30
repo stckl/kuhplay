@@ -349,18 +349,10 @@ fn workspace_settings_video_page_renders_and_edits_screens() {
     assert!(app.screens.screens().iter().all(|s| !s.test_pattern));
     render_frame(&ctx, &mut app);
 
-    // Stage dem Screen zuordnen (wie der Inspector) + Screen-Ausgabe öffnen.
+    // Stage dem Screen zuordnen (Legacy-Zuweisung wie der Inspector).
     app.ensure_stage("Stage 1");
     app.assign_stage_to_screen("Stage 1", Some(id));
     assert_eq!(app.stages.find("Stage 1").unwrap().screen, Some(id));
-    app.open_stage_screen("Stage 1");
-    assert!(app
-        .stage_screen_open
-        .lock()
-        .unwrap()
-        .get("Stage 1")
-        .copied()
-        .unwrap_or(false));
     render_frame(&ctx, &mut app);
 
     // Screen löschen → Stage-Zuordnung wird entfernt (Editor-Logik).
@@ -806,7 +798,8 @@ fn manual_app() -> (
     crossbeam_channel::Sender<EngineEvent>,
 ) {
     use kuhplay::engine::{
-        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, EngineHandle,
+        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
+        EngineHandle,
     };
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (evt_tx, evt_rx) = crossbeam_channel::unbounded();
@@ -1626,41 +1619,45 @@ fn audio_routing_ui_renders() {
     assert!(output_has_text(&out, "Output 1"));
 }
 
-/// Vorschau-Modus: ein Fenster pro Screen, kein Vollbild; Displays öffnet es.
+/// Vorschau-Modus: ein Fenster pro Route; Displays öffnet die Device-Ausgabe.
 #[test]
-fn output_mode_preview_shows_window_per_screen() {
+fn output_mode_preview_shows_window_per_route() {
+    use kuhplay::core::{OutputRoute, Region, RouteManager};
     use kuhplay::gui::OutputMode;
     let ctx = egui::Context::default();
     let mut app = demo_app();
-    let screen = kuhplay::core::Screen::new("Beamer", 0, 0, 1920, 1080);
-    app.screens.add(screen).unwrap();
-    app.assign_unassigned_stages();
+    // Route mit Full-Canvas-Region der Stage 1 (wie das Default-Setup).
+    let route = OutputRoute::new("Beamer", 1920, 1080);
+    let mut manager = RouteManager::new();
+    manager.add(route.clone()).unwrap();
+    app.routes = manager;
     let stage = app.stages.stages()[0].name.clone();
-    assert!(app.stages.stages()[0].screen.is_some());
+    if let Some(s) = app.stages.find_mut(&stage) {
+        let mut region = Region::full_stage(s.geometry.width, s.geometry.height);
+        region.route = Some(route.id);
+        s.regions = vec![region];
+    }
+    app.configure_routes();
 
+    // Vorschau: ein Fenster pro Route (Headless: Inhalt, nicht Titel).
     app.set_output_mode(OutputMode::Preview);
     let mut out = render_frame(&ctx, &mut app);
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
-    // Headless wird das eigene Fenster in den Kontext eingebettet.
     assert!(output_has_text(&out, "No output"));
 
+    // Displays: randlose Fenster auf den belegten Displays (Route ohne
+    // passendes Device zeigt nichts) – kein "No output"-Platzhalter mehr.
     app.set_output_mode(OutputMode::Displays);
-    assert_eq!(
-        app.stage_screen_open.lock().unwrap().get(&stage),
-        Some(&true)
-    );
     let mut out = render_frame(&ctx, &mut app);
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
     assert!(!output_has_text(&out, "No output"));
     app.set_output_mode(OutputMode::Off);
-    assert_eq!(
-        app.stage_screen_open.lock().unwrap().get(&stage),
-        Some(&false)
-    );
+    let out = render_frame(&ctx, &mut app);
+    assert!(!output_has_text(&out, "No output"));
 }
 
 /// Langer Dateipfad: Das Feld lässt in der linken Spalte Platz für den Button.

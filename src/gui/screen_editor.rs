@@ -69,7 +69,6 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     let displays = &mut app.displays;
     let stages = &mut app.stages;
     let engine = &app.engine;
-    let stage_screen_open = app.stage_screen_open.clone();
     let selected = &mut app.screen_editor_selected;
     let text_fields = &mut app.text_field_ids;
 
@@ -185,16 +184,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                     // Screen wurde gelöscht → Auswahl zurücksetzen.
                     *selected = None;
                 } else {
-                    draw_properties(
-                        ui,
-                        screens,
-                        stages,
-                        engine,
-                        &stage_screen_open,
-                        selected,
-                        sel_id,
-                        text_fields,
-                    );
+                    draw_properties(ui, screens, stages, engine, selected, sel_id, text_fields);
                 }
             }
 
@@ -527,7 +517,6 @@ fn draw_properties(
     screens: &mut ScreenManager,
     stages: &mut crate::core::StageManager,
     engine: &EngineHandle,
-    stage_screen_open: &stage_view::StageScreenOpen,
     selected: &mut Option<Uuid>,
     sel_id: Uuid,
     text_fields: &mut std::collections::HashSet<egui::Id>,
@@ -683,53 +672,6 @@ fn draw_properties(
                 .small(),
         );
     });
-
-    // --- Stages auf diesem Screen (Ausgabe öffnen/schließen) ---
-    ui.add_space(size::SPACE_MEDIUM_LARGE);
-    theme::section_label(ui, "Stages on this screen");
-    let assigned: Vec<String> = stages
-        .stages()
-        .iter()
-        .filter(|st| st.screen == Some(sel_id))
-        .map(|st| st.name.clone())
-        .collect();
-    if assigned.is_empty() {
-        ui.label(RichText::new("no stage assigned").weak());
-        ui.label(
-            RichText::new("Assign one in the Inspector: video cue, Geometry tab, Stage Settings.")
-                .weak()
-                .small(),
-        );
-    } else {
-        for name in assigned {
-            ui.horizontal(|ui| {
-                ui.label(&name);
-                let is_open = stage_screen_open
-                    .lock()
-                    .unwrap()
-                    .get(&name)
-                    .copied()
-                    .unwrap_or(false);
-                let color = ui.visuals().text_color();
-                if !is_open {
-                    if icons::button(ui, Icon::Globe, color, egui::vec2(20.0, 20.0), true)
-                        .on_hover_text("Open screen output (fullscreen on this screen)")
-                        .clicked()
-                    {
-                        stage_screen_open.lock().unwrap().insert(name.clone(), true);
-                    }
-                } else if icons::button(ui, Icon::Close, color, egui::vec2(20.0, 20.0), true)
-                    .on_hover_text("Close screen output")
-                    .clicked()
-                {
-                    stage_screen_open
-                        .lock()
-                        .unwrap()
-                        .insert(name.clone(), false);
-                }
-            });
-        }
-    }
 }
 
 /// Testbild eines Screens an/aus schalten (Screen-Modell ist Legacy; das

@@ -170,8 +170,10 @@ pub struct ShowApp {
     pub routes: RouteManager,
     /// Offen gehaltene Stage-Vorschau-Fenster (QLab „Stage Window").
     pub stage_windows: HashSet<String>,
-    /// Flags: welche Screens gerade als Vollbild-Ausgabe auf einem Display laufen.
-    pub stage_screen_open: stage_view::StageScreenOpen,
+    /// Per Esc von Hand geschlossene Device-Ausgaben (bis zum naechsten
+    /// Moduswechsel; Display-ID).
+    pub(super) closed_device_outputs:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
     /// Erkannte Displays (für Screen-Mapping in der UI).
     pub displays: Vec<display_info::DisplayInfo>,
     /// Im Screen-Editor ausgewählter Screen (für Eigenschaften-Panel).
@@ -480,7 +482,7 @@ impl ShowApp {
             screens,
             routes: RouteManager::new(),
             stage_windows: HashSet::new(),
-            stage_screen_open: stage_view::new_stage_screen_open(),
+            closed_device_outputs: Default::default(),
             displays,
             screen_editor_selected: None,
             autodemo,
@@ -510,15 +512,12 @@ impl ShowApp {
         // Testbild aktivieren (KUHPLAY_AUTOTESTPATTERN=1 – zum Screen-Setup).
         if app.autodemo.is_some() {
             app.stage_windows = app.stages.names().into_iter().collect();
-            if let Some(first_screen) = app.screens.screens().first().map(|s| s.id) {
-                app.assign_stage_to_screen("Stage 1", Some(first_screen));
-                app.open_stage_screen("Stage 1");
-            }
             let autotest = std::env::var_os("KUHPLAY_AUTOTESTPATTERN")
                 .is_some_and(|v| v == "1" || v == "true");
             if autotest {
-                if let Some(id) = app.screens.screens().first().map(|s| s.id) {
-                    app.set_screen_test_pattern(id, true);
+                if let Some(route) = app.routes.routes().first().cloned() {
+                    app.routes.find_mut(route.id).unwrap().test_pattern = true;
+                    app.configure_routes();
                 }
             }
         }
@@ -664,11 +663,6 @@ impl ShowApp {
         if self.stage_windows.remove(old) {
             self.stage_windows.insert(new.to_string());
         }
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            if let Some(state) = open.remove(old) {
-                open.insert(new.to_string(), state);
-            }
-        }
         self.configure_stage(stage);
     }
 
@@ -677,72 +671,30 @@ impl ShowApp {
         if self.carts.stage_in_use(name) {
             return false;
         }
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            open.remove(name);
-        }
         self.stage_windows.remove(name);
         self.stages.remove(name)
     }
 
     /// Beim App-Start: Stages ohne Screen auf den ersten Screen legen, damit
     /// GO ein Bild zeigt; mit nur einem Display Vorschau statt Vollbild, das
-    /// sonst die App selbst verdecken würde.
+    /// Beim App-Start: Mit nur einem Display Vorschau statt Vollbild, das
+    /// sonst die App selbst verdecken wuerde. Das Default-Routing (pro
+    /// Display eine Route, Stage 1 mit Region auf dem ersten Display)
+    /// liefert bereits ein Bild.
     pub fn apply_startup_output(&mut self) {
         if self.displays.len() <= 1 {
             self.set_output_mode(OutputMode::Preview);
         }
-        self.assign_unassigned_stages();
-    }
-
-    /// Legt Stages ohne Screen auf den ersten Screen.
-    pub fn assign_unassigned_stages(&mut self) {
-        let Some(first) = self.screens.screens().first().map(|s| s.id) else {
-            return;
-        };
-        let unassigned: Vec<Stage> = self
-            .stages
-            .stages()
-            .iter()
-            .filter(|stage| stage.screen.is_none())
-            .cloned()
-            .collect();
-        for mut stage in unassigned {
-            stage.screen = Some(first);
-            self.configure_stage(stage);
-        }
     }
 
     /// Wechselt die Video-Ausgabe. „Displays" öffnet alle zugeordneten Stages
-    /// im Vollbild, die anderen Modi schließen sie.
+    /// Wechselt die Video-Ausgabe: `Displays` oeffnet randlose Fenster auf
+    /// allen belegten Displays, `Preview` ein Vorschau-Fenster pro Route.
+    /// Ein Wechsel schliesst von Hand geschlossene Fenster wieder auf.
     pub fn set_output_mode(&mut self, mode: OutputMode) {
         self.output_mode = mode;
         self.closed_previews.lock().unwrap().clear();
-        let names: Vec<String> = self
-            .stages
-            .stages()
-            .iter()
-            .filter(|stage| stage.screen.is_some())
-            .map(|stage| stage.name.clone())
-            .collect();
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            for name in names {
-                open.insert(name, mode == OutputMode::Displays);
-            }
-        }
-    }
-
-    /// Öffnet die Vollbild-Ausgabe einer Stage auf ihrem zugeordneten Screen.
-    pub fn open_stage_screen(&mut self, name: &str) {
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            open.insert(name.to_string(), true);
-        }
-    }
-
-    /// Schließt die Vollbild-Ausgabe einer Stage.
-    pub fn close_stage_screen(&mut self, name: &str) {
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            open.insert(name.to_string(), false);
-        }
+        self.closed_device_outputs.lock().unwrap().clear();
     }
 
     /// Liest die verfügbaren Displays neu ein (für Screen-Mapping).
@@ -1877,9 +1829,6 @@ impl ShowApp {
         self.set_audio_patch(doc.audio_patch);
         self.screen_editor_selected = None;
         self.stage_windows.clear();
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            open.clear();
-        }
         // Alle Stages an die Engine melden.
         for stage in self.stages.stages().to_vec() {
             self.configure_stage(stage);
@@ -1901,9 +1850,6 @@ impl ShowApp {
         self.setup_default_routes();
         self.screen_editor_selected = None;
         self.stage_windows.clear();
-        if let Ok(mut open) = self.stage_screen_open.lock() {
-            open.clear();
-        }
         // Default-Stages an die Engine melden.
         for stage in self.stages.stages().to_vec() {
             self.configure_stage(stage);
@@ -2628,7 +2574,7 @@ impl ShowApp {
         // rendert dieselbe zentrale Tabelle wie Menüs und Hotkeys.
         shortcuts::draw_window(ctx, &mut self.ui.shortcuts_open);
 
-        stage_view::draw_screen_previews(self, ctx);
+        stage_view::draw_route_previews(self, ctx);
 
         // Workspace-Settings-Fenster (QLab: Workspace → Workspace Settings;
         // Screens/Stages auf der Seite „Video").
@@ -2702,7 +2648,7 @@ impl eframe::App for ShowApp {
         // Stage-Vorschau-Fenster (QLab „Stage Window") und Vollbild-Screen-
         // Ausgaben (borderless auf dem zugeordneten Display).
         stage_view::draw_stage_windows(self, ctx);
-        stage_view::draw_screen_viewports(self, ctx);
+        stage_view::draw_device_outputs(self, ctx);
 
         // Optionaler Auto-Demo-Modus: automatische GO-Abfolge für Screen-Tests.
         if let Some(demo) = &mut self.autodemo {

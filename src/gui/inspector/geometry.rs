@@ -17,7 +17,6 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     let stages = &mut app.stages;
     let screens = &mut app.screens;
     let stage_windows = &mut app.stage_windows;
-    let stage_screen_open = app.stage_screen_open.clone();
     let Some(cue) = app.carts.selected_mut() else {
         ui.label(RichText::new("No cue selected").weak());
         return;
@@ -102,15 +101,6 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
                             .clicked()
                     {
                         stage_windows.insert(name.clone());
-                    }
-                    if ui
-                        .small_button("Open on Screen")
-                        .on_hover_text("Fullscreen output on the assigned display")
-                        .clicked()
-                    {
-                        if let Ok(mut open) = stage_screen_open.lock() {
-                            open.insert(name, true);
-                        }
                     }
                 }
             });

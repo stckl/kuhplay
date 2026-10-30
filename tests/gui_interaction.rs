@@ -1427,7 +1427,8 @@ fn waveform_preview_fuer_audio_cue() {
 fn audition_mode_strips_stage_from_video_commands() {
     use kuhplay::core::{HtmlSource, LoopMode, SlideShow};
     use kuhplay::engine::{
-        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, EngineCommand, EngineHandle,
+        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
+        EngineCommand, EngineHandle,
     };
     use kuhplay::gui::ShowApp;
     use std::time::Duration;
@@ -1541,7 +1542,8 @@ fn hotkey_app() -> (
     crossbeam_channel::Sender<EngineEvent>,
 ) {
     use kuhplay::engine::{
-        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, EngineHandle,
+        new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
+        EngineHandle,
     };
 
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
