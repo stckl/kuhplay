@@ -2081,3 +2081,36 @@ fn test_grid_toggle_and_show_mode_forces_off() {
         .all(|r| !r.grid));
     app.set_show_mode(false);
 }
+
+/// Copy/Paste Cue Properties: Properties des selektierten Cues landen in der
+/// Zwischenablage und werden per Paste auf andere Cues gemergt (ID/Nummer bleiben).
+#[test]
+fn copy_paste_cue_properties() {
+    let (mut app, _cmd_rx, _evt_tx) = manual_app();
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let before: std::collections::HashSet<_> =
+            app.carts.active().cues().iter().map(|c| c.id).collect();
+        app.add_cue(CueType::Audio);
+        let after: std::collections::HashSet<_> =
+            app.carts.active().cues().iter().map(|c| c.id).collect();
+        ids.push(*after.difference(&before).next().unwrap());
+    }
+    // Cue 1: Properties setzen (Name, Pre-Wait) und selektieren → kopieren.
+    {
+        let cue = app.carts.active_mut().cues_mut().iter_mut().find(|c| c.id == ids[0]).unwrap();
+        cue.name = "Quelle".to_string();
+        cue.pre_wait = Duration::from_secs(2);
+        app.carts.active_mut().select_id(Some(ids[0]));
+    }
+    app.copy_cue_properties();
+    assert!(app.has_properties_clipboard());
+    // Cue 2 selektieren → pasten.
+    app.carts.active_mut().select_id(Some(ids[1]));
+    let applied = app.paste_cue_properties();
+    assert_eq!(applied, 1);
+    let pasted = app.carts.active().cues().iter().find(|c| c.id == ids[1]).unwrap();
+    assert_eq!(pasted.name, "Quelle");
+    assert_eq!(pasted.pre_wait, Duration::from_secs(2));
+    assert_ne!(pasted.id, ids[0], "ID darf nicht übernommen werden");
+}

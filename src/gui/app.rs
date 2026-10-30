@@ -156,6 +156,8 @@ pub struct ShowApp {
     started_at: HashMap<Uuid, Instant>,
     /// Medien-Dauer pro Cue (aus `EngineEvent::Started`), Basis fürs Spulen.
     media_durations: HashMap<Uuid, Duration>,
+    /// Zwischenablage für „Copy/Paste Cue Properties" (JSON der Cue-Felder).
+    properties_clipboard: Option<serde_json::Value>,
     /// Akkumulierte aktive Zeit pausierter Cues.
     banked: HashMap<Uuid, Duration>,
     /// Startzeitpunkte von Cues in Pre-Wait (Countdown in der Pre-Wait-
@@ -515,6 +517,7 @@ impl ShowApp {
             text_field_active: false,
             started_at: HashMap::new(),
             media_durations: HashMap::new(),
+            properties_clipboard: None,
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
             stages,
@@ -1112,6 +1115,50 @@ impl ShowApp {
     /// Rückgabe: IDs der Kopien.
     pub fn duplicate_cues(&mut self, ids: &[Uuid]) -> Vec<Uuid> {
         self.carts.active_mut().duplicate_ids(ids)
+    }
+
+    /// Zwischenablage für Cue-Properties gefüllt?
+    pub fn has_properties_clipboard(&self) -> bool {
+        self.properties_clipboard.is_some()
+    }
+
+    /// „Copy Cue Properties" (QLab Edit-Menü): serialisiert die Properties des
+    /// selektierten Cues (ohne ID/Nummer/Status/Kinder) in die Zwischenablage.
+    pub fn copy_cue_properties(&mut self) {
+        const PROTECTED: &[&str] = &[
+            "id",
+            "number",
+            "status",
+            "children",
+            "parent_group",
+            "group_iterations_done",
+        ];
+        if let Some(cue) = self.carts.selected() {
+            if let Ok(mut json) = serde_json::to_value(cue) {
+                if let Some(obj) = json.as_object_mut() {
+                    for key in PROTECTED {
+                        obj.remove(*key);
+                    }
+                }
+                self.properties_clipboard = Some(json);
+            }
+        }
+    }
+
+    /// „Paste Cue Properties": Properties aus der Zwischenablage auf alle
+    /// selektierten Cues mergen (ID/Nummer/Status bleiben).
+    pub fn paste_cue_properties(&mut self) -> usize {
+        let Some(props) = self.properties_clipboard.clone() else {
+            return 0;
+        };
+        let ids = self.carts.active().selection().to_vec();
+        let mut applied = 0;
+        for id in ids {
+            if self.remote_update_cue(id, props.clone()).is_ok() {
+                applied += 1;
+            }
+        }
+        applied
     }
 
     /// Gruppiert Cues per ID zu einem neuen Group-Cue (Kontextmenü

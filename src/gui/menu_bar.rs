@@ -127,6 +127,26 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             if ui
                 .add_enabled(
                     editable && has_selection,
+                    egui::Button::new("Copy Cue Properties"),
+                )
+                .clicked()
+            {
+                app.copy_cue_properties();
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(
+                    editable && has_selection && app.has_properties_clipboard(),
+                    egui::Button::new("Paste Cue Properties"),
+                )
+                .clicked()
+            {
+                app.paste_cue_properties();
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(
+                    editable && has_selection,
                     egui::Button::new(sc("Group Cues", ShortcutAction::GroupCues)),
                 )
                 .clicked()

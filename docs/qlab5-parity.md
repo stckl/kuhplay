@@ -67,14 +67,14 @@ jedem Feature-Schritt aktualisiert.
 | Kapitel | Status | Anmerkung |
 |---------|--------|-----------|
 | Tools Menu | ⬜ | — |
-| Find | ⬜ | Cue-Suche geplant |
-| Paste Cue Properties | ⬜ | — |
+| Find | ✅ | Find-Leiste über der Cue-Liste (⌘F, matcht Q#/Name/Notes, Enter/⌘G nächster Treffer, Treffer-Highlight + Playhead springt mit) |
+| Paste Cue Properties | ✅ | Edit-Menü „Copy/Paste Cue Properties": Properties (ohne ID/Nummer/Status) in Zwischenablage, Paste merged auf alle selektierten Cues |
 | Launcher Window | ⬜ | — |
 | Workspace Status Window | ⬜ | — |
 | File Target Search Tool | ⬜ | — |
 | Monitor Windows | ⬜ | — |
 | Timecode Status Window | ⬜ | — |
-| Auditioning Cues | ⬜ | Cue-Vorschau (Audition) geplant |
+| Auditioning Cues | 🟡 | Audition Mode (Masthead-Pill + Workspace Settings): Video-Cues ohne Stage spielen trotzdem (Preview); noch kein separates Audition-Fenster |
 | Override Controls | ⬜ | — |
 
 ## Audio
