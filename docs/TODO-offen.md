@@ -218,6 +218,37 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 
 ---
 
+## Key/Fill-Ausgabe mit Alpha-Layer — Feature für später (Auftraggeber)
+
+Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
+- **Bevorzugt Hardware:** Blackmagic (z. B. Ultrastudio) macht Key/Fill
+  **framesynchron** in Hardware — dafür zwei SDI-Outputs (Fill + Key mit
+  Alpha) über unsere bestehende Decklink/ffmpeg-Ausgabe (`src/engine/decklink.rs`).
+  Alpha-Transport z. B. ProRes 4444 / ffmpeg-rawvideo rgba → Decklink.
+- **Fallback ohne Blackmagic:** zwei Ausgänge am PC/Notebook (Fill auf
+  Ausgang A, Key mit Alpha auf Ausgang B) — framesync nur bestmöglich
+  (zwei Prozesse/Fenster), für statische Overlays ausreichend.
+- Modell-Vorschlag: Stage/Route bekommt `key_fill: Option<...>` (Fill-Route +
+  Key-Route mit Alpha), Renderer rendert Alpha in den Key-Stream.
+- Status: ⬜ TODO — nicht begonnen.
+
+---
+
+## Stage-Placement direkt auf Displays (umgesetzt, Commit siehe Git-Log)
+
+- `Stage.placements: Vec<StagePlacement>` (Display-ID + x/y/w/h in
+  **Gerätepixeln** des Displays; x/y negativ = Überstand). Display bleibt
+  voll/native; Überstand wird am Displayrand abgeschnitten
+  (`StagePlacement::clip_to_display`). Z-Order mehrerer Stages auf einem
+  Display über `Stage.layer` (niedriger zuerst, gleicher Layer alphabetisch
+  früher oben) — Ausgabe in `stage_view::draw_device_outputs` (1:1, NEAREST).
+- Stage-Editor: Section „Displays“ pro Stage — Display-Picker, X/Y/W/H in
+  Gerätepixeln, Mini-Map (gesamtes Display + gesamte Stagefläche inkl.
+  gestricheltem Überstand + alle anderen Stages auf dem Display + Z-Order-
+  Liste), Drag auf der Map verschiebt die Stage.
+
+---
+
 ## Sonstiges Kleinvolumen (nicht vergessen)
 
 - **docs/TODO-video-routing.md** als „abgearbeitet“ markieren oder ins Archiv

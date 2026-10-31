@@ -23,7 +23,7 @@ use egui::{
 };
 
 use super::app::OutputMode;
-use super::theme::palette;
+use super::theme::{self, palette};
 use crate::core::video_routing::{DeviceArea, DeviceRef};
 use std::sync::Arc;
 
@@ -286,6 +286,8 @@ pub fn draw_device_outputs(app: &mut ShowApp, ctx: &Context) {
             .with_min_inner_size([sw, sh])
             .with_max_inner_size([sw, sh]);
         let route_frames = app.engine.route_frames.clone();
+        let stage_frames = app.engine.stage_frames.clone();
+        let stages: Vec<crate::core::Stage> = app.stages.stages().to_vec();
         let scale = display.scale_factor;
         let display_id = display.id;
         ctx.show_viewport_deferred(viewport_id, builder, move |ctx, _class| {
@@ -343,8 +345,11 @@ pub fn draw_device_outputs(app: &mut ShowApp, ctx: &Context) {
                             egui::Sense::click(),
                         );
                         if hovered {
-                            ui.painter()
-                                .rect_filled(btn, 4.0, with_alpha(palette::ACCENT, 40));
+                            ui.painter().rect_filled(
+                                btn,
+                                4.0,
+                                theme::with_alpha(palette::ACCENT, 40),
+                            );
                             ui.painter().text(
                                 btn.center(),
                                 egui::Align2::CENTER_CENTER,
@@ -414,6 +419,92 @@ pub fn draw_device_outputs(app: &mut ShowApp, ctx: &Context) {
                             ScreenRotation::Deg0,
                             tex.id(),
                         )));
+                    }
+                    // Stage-Placements direkt auf dem Display (1:1 Gerätepixel,
+                    // Clipping am Displayrand). Z-Reihenfolge: Stage-Layer
+                    // (niedriger zuerst), gleicher Layer = alphabetisch
+                    // früherer Name oben (male später).
+                    let mut placements: Vec<(
+                        i32,
+                        String,
+                        uuid::Uuid,
+                        crate::core::StagePlacement,
+                    )> = Vec::new();
+                    for stage in &stages {
+                        if !stage.visible {
+                            continue;
+                        }
+                        for placement in &stage.placements {
+                            if placement.display == display_id {
+                                placements.push((
+                                    stage.layer,
+                                    stage.name.clone(),
+                                    stage.id,
+                                    placement.clone(),
+                                ));
+                            }
+                        }
+                    }
+                    placements.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+                    for (_layer, name, sid, placement) in placements {
+                        // Sichtbarer Teil = Schnitt Placement ∩ Display.
+                        let Some((cx, cy, cw, ch)) = placement.clip_to_display(px_w, px_h) else {
+                            continue; // liegt komplett außerhalb → nichts zeigen
+                        };
+                        // Stage-Frame (komponiertes Canvas) auf das Placement-Rechteck.
+                        let Some(frame) = stage_frames.lock().unwrap().get(&name).cloned() else {
+                            continue;
+                        };
+                        let image = ColorImage::from_rgba_unmultiplied(
+                            [frame.width as usize, frame.height as usize],
+                            &frame.rgba,
+                        );
+                        let tex = ui.ctx().load_texture(
+                            format!("kuhplay-device-placement-{sid}"),
+                            image,
+                            TextureOptions::LINEAR,
+                        );
+                        // Sichtbarer Ausschnitt in der Textur (UV relativ zum
+                        // Placement-Rechteck, das die ganze Stage zeigt).
+                        let uv = egui::Rect::from_min_size(
+                            egui::pos2(
+                                (cx - placement.x) as f32 / placement.width as f32,
+                                (cy - placement.y) as f32 / placement.height as f32,
+                            ),
+                            egui::vec2(
+                                cw as f32 / placement.width as f32,
+                                ch as f32 / placement.height as f32,
+                            ),
+                        );
+                        let vis_rect = egui::Rect::from_min_size(
+                            egui::pos2(
+                                window_rect.min.x + cx as f32 / scale,
+                                window_rect.min.y + cy as f32 / scale,
+                            ),
+                            egui::vec2(cw as f32 / scale, ch as f32 / scale),
+                        );
+                        let mut mesh = egui::Mesh::with_texture(tex.id());
+                        let corners = [
+                            vis_rect.min,
+                            egui::pos2(vis_rect.max.x, vis_rect.min.y),
+                            vis_rect.max,
+                            egui::pos2(vis_rect.min.x, vis_rect.max.y),
+                        ];
+                        let uvs = [
+                            uv.min,
+                            egui::pos2(uv.max.x, uv.min.y),
+                            uv.max,
+                            egui::pos2(uv.min.x, uv.max.y),
+                        ];
+                        for (corner, uv) in corners.iter().zip(uvs.iter()) {
+                            mesh.vertices.push(egui::epaint::Vertex {
+                                pos: *corner,
+                                uv: *uv,
+                                color: Color32::WHITE,
+                            });
+                        }
+                        mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+                        ui.painter().add(egui::Shape::Mesh(mesh));
                     }
                 });
             ctx.request_repaint();
@@ -517,9 +608,4 @@ pub fn draw_route_previews(app: &mut ShowApp, ctx: &Context) {
             },
         );
     }
-}
-
-/// Farbe mit Alpha (gamma-korrigiert, siehe docs/TODO-video-routing.md §7).
-fn with_alpha(c: Color32, a: u8) -> Color32 {
-    c.gamma_multiply(f32::from(a) / 255.0)
 }

@@ -2312,3 +2312,42 @@ fn demo_show_contains_timetable_html_and_data_cues() {
     assert!(!blocks.is_empty());
     assert!(blocks[0].get("speakers").is_some());
 }
+
+#[test]
+fn stage_editor_shows_display_placements_section() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    // Stage-Editor für Stage 1 öffnen.
+    let stage_id = app.stages.stages()[0].id;
+    app.stage_editor_open = Some(stage_id);
+    // Placement anlegen (Display-ID 1 – im Testprozess ohne echte Displays
+    // rendert die Map den „No displays"-Hinweis, die Section selbst aber da).
+    {
+        let st = app
+            .stages
+            .stages_mut()
+            .iter_mut()
+            .find(|s| s.id == stage_id)
+            .unwrap();
+        st.placements.push(kuhplay::core::StagePlacement {
+            display: 1,
+            x: -100,
+            y: 20,
+            width: 2000,
+            height: 1080,
+        });
+    }
+    let mut out = render_frame(&ctx, &mut app);
+    for _ in 0..2 {
+        out = render_frame(&ctx, &mut app);
+    }
+    // section_label rendert in Großbuchstaben.
+    assert!(
+        output_has_text(&out, "DISPLAYS (STAGE 1:1"),
+        "Placement-Section fehlt im Stage-Editor"
+    );
+    assert!(
+        output_has_text(&out, "No displays detected") || output_has_text(&out, "Place stage"),
+        "Display-Hinweis/Button fehlt"
+    );
+}

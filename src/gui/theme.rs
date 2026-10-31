@@ -132,6 +132,12 @@ pub mod size {
 /// QLab „kaputt / Problem" (siehe [`palette::ERROR`]). Die Status-Pille in
 /// der Cue-Liste und die Fortschrittsbalken nutzen ausschließlich diese
 /// Funktion.
+/// Farbe mit Alpha (0–255, gamma-korrigiert wie bisher, siehe
+/// docs/TODO-video-routing.md §7) – für dezente Füllungen.
+pub fn with_alpha(c: Color32, a: u8) -> Color32 {
+    c.gamma_multiply(f32::from(a) / 255.0)
+}
+
 pub fn status_color(status: CueStatus) -> Color32 {
     match status {
         CueStatus::Standby => palette::TEXT,

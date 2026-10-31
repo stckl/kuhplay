@@ -593,6 +593,64 @@ pub struct Stage {
     /// Edge (linearer Rampe).
     #[serde(default = "default_true")]
     pub soft_edge: bool,
+    /// Direkte Platzierung der Stage auf Displays (in Gerätepixeln des
+    /// jeweiligen Displays, 1:1 – das Display bleibt immer voll/native).
+    /// Was über den Displayrand hinausragt, wird abgeschnitten (Clipping).
+    /// Z-Reihenfolge über mehreren Stages auf demselben Display: `layer`.
+    /// Unabhängig von den Region→Route-Mappings (additiv bei der Ausgabe).
+    #[serde(default)]
+    pub placements: Vec<StagePlacement>,
+}
+
+/// Platzierung einer Stage auf einem Display.
+///
+/// Koordinaten sind **Gerätepixel des Displays** (Ursprung oben links);
+/// `x`/`y` dürfen negativ sein (Stage ragt dann links/oben hinaus und wird
+/// am Displayrand abgeschnitten). `width`/`height` = Größe, auf die die
+/// Stage auf dem Display abgebildet wird (bei Stage-Größe = 1:1 Pixel).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StagePlacement {
+    /// OS-ID des Displays (siehe [`crate::core::DeviceRef::Display`]).
+    pub display: u32,
+    /// X-Position auf dem Display in Gerätepixeln (negativ = Überstand links).
+    pub x: i32,
+    /// Y-Position auf dem Display in Gerätepixeln (negativ = Überstand oben).
+    pub y: i32,
+    /// Breite der Stage-Abbildung auf dem Display in Gerätepixeln (> 0).
+    pub width: u32,
+    /// Höhe der Stage-Abbildung auf dem Display in Gerätepixeln (> 0).
+    pub height: u32,
+}
+
+impl StagePlacement {
+    /// Prüft die Platzierung (Breite/Höhe > 0).
+    pub fn validate(&self) -> ShowResult<()> {
+        if self.width == 0 || self.height == 0 {
+            return Err(ShowError::InvalidParameter(
+                "stage placement: width/height must be > 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rechteck der Platzierung in Gerätepixeln: `(x, y, w, h)`.
+    pub fn rect(&self) -> (i32, i32, u32, u32) {
+        (self.x, self.y, self.width, self.height)
+    }
+
+    /// Schnitt mit dem Display `(0, 0, disp_w, disp_h)`: `(x, y, w, h)` des
+    /// sichtbaren Teils; `None`, wenn die Stage das Display komplett
+    /// verfehlt. Der Überstand bleibt in `self` sichtbar (Visualisierung).
+    pub fn clip_to_display(&self, disp_w: u32, disp_h: u32) -> Option<(i32, i32, u32, u32)> {
+        let x0 = self.x.max(0);
+        let y0 = self.y.max(0);
+        let x1 = (self.x + self.width as i32).min(disp_w as i32);
+        let y1 = (self.y + self.height as i32).min(disp_h as i32);
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        Some((x0, y0, (x1 - x0) as u32, (y1 - y0) as u32))
+    }
 }
 
 impl Stage {
@@ -612,6 +670,7 @@ impl Stage {
             crop: None,
             edge: EdgeBlend::ZERO,
             soft_edge: true,
+            placements: Vec::new(),
         }
     }
 
@@ -630,6 +689,9 @@ impl Stage {
             crop.validate()?;
         }
         self.edge.validate()?;
+        for placement in &self.placements {
+            placement.validate()?;
+        }
         if !self.blend_gamma.is_finite() || !(0.1..=10.0).contains(&self.blend_gamma) {
             return Err(ShowError::InvalidParameter(format!(
                 "stage blend_gamma must be within 0.1-10.0, got {}",
@@ -1033,5 +1095,100 @@ mod tests {
         let back: StageManager = serde_json::from_str(&json).unwrap();
         assert_eq!(back.len(), 2);
         assert_eq!(back.find("Beamer").unwrap().geometry.width, 1280.0);
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+
+    #[test]
+    fn placement_clip_to_display_inside_outside_and_full_miss() {
+        // Komplett innen.
+        let p = StagePlacement {
+            display: 1,
+            x: 100,
+            y: 50,
+            width: 800,
+            height: 600,
+        };
+        assert_eq!(p.clip_to_display(1920, 1080), Some((100, 50, 800, 600)));
+        // Teils links/oben hinaus → nur der innen liegende Teil.
+        let p = StagePlacement {
+            display: 1,
+            x: -200,
+            y: -100,
+            width: 800,
+            height: 600,
+        };
+        assert_eq!(p.clip_to_display(1920, 1080), Some((0, 0, 600, 500)));
+        // Teils rechts/unten hinaus.
+        let p = StagePlacement {
+            display: 1,
+            x: 1820,
+            y: 1030,
+            width: 800,
+            height: 600,
+        };
+        assert_eq!(p.clip_to_display(1920, 1080), Some((1820, 1030, 100, 50)));
+        // Komplett außerhalb → None (nichts sichtbar).
+        let p = StagePlacement {
+            display: 1,
+            x: 5000,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        assert_eq!(p.clip_to_display(1920, 1080), None);
+        // Genau am Rand → leer.
+        let p = StagePlacement {
+            display: 1,
+            x: 1920,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        assert_eq!(p.clip_to_display(1920, 1080), None);
+    }
+
+    #[test]
+    fn placement_validate_and_stage_serde_legacy() {
+        let bad = StagePlacement {
+            display: 1,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 10,
+        };
+        assert!(bad.validate().is_err());
+        let ok = StagePlacement {
+            display: 1,
+            x: -5,
+            y: 0,
+            width: 100,
+            height: 100,
+        };
+        assert!(ok.validate().is_ok());
+
+        // Stage mit Placement roundtrip; alte Stage ohne placements → leer.
+        let mut stage = Stage::new("Main", StageGeometry::new(1920.0, 1080.0));
+        stage.placements.push(StagePlacement {
+            display: 7,
+            x: -100,
+            y: 20,
+            width: 2000,
+            height: 1080,
+        });
+        let json = serde_json::to_string(&stage).unwrap();
+        let back: Stage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.placements.len(), 1);
+        assert_eq!(back.placements[0].x, -100);
+        assert!(back.validate().is_ok());
+        let old_json = json.replace(
+            ",\"placements\":[{\"display\":7,\"x\":-100,\"y\":20,\"width\":2000,\"height\":1080}]",
+            "",
+        );
+        let back_old: Stage = serde_json::from_str(&old_json).unwrap();
+        assert!(back_old.placements.is_empty(), "fehlendes Feld → Default");
     }
 }
