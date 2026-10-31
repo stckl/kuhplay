@@ -67,6 +67,8 @@ pub mod clock;
 pub mod command;
 pub mod compositor;
 pub mod decklink;
+#[cfg(target_os = "windows")]
+pub mod decklink_com;
 pub mod frame;
 pub mod media_engine;
 pub mod midi_out;

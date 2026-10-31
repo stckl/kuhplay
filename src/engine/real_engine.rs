@@ -50,7 +50,7 @@ use crate::core::{
 
 use super::audio_backend::AudioBackend;
 use super::compositor::{canvas_size, Compositor, SurfaceEntry};
-use super::decklink::{scale_nearest, DecklinkConfig, DecklinkOutput};
+use super::decklink::{scale_nearest, DecklinkConfig, DecklinkOutput, DecklinkSink};
 use super::frame::{
     new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, FrameStore,
     OpacityStore, RouteFrameStore, StageFrameStore, VideoFrame,
@@ -270,10 +270,10 @@ pub struct RealMediaEngine {
     /// Zuletzt angewendeter Audio-Patch (überlebt Gerätewechsel des Primären).
     audio_patch: crate::core::AudioPatch,
     /// Decklink-Hardware-Ausgabe (optional, siehe [`Self::start_decklink_from_env`]).
-    decklink: Option<DecklinkOutput>,
+    decklink: Option<DecklinkSink>,
     /// Zweiter Decklink-Ausgang für den Key-SDI (Key/Fill, 2-Kabel):
     /// `KUHPLAY_DECKLINK_KEY_DEVICE`. Push: Alpha der Key-Route als Luma.
-    decklink_key: Option<DecklinkOutput>,
+    decklink_key: Option<DecklinkSink>,
     /// Stage, deren Compositor-Frames auf die Decklink-Karte gehen.
     decklink_stage: String,
     /// Decklink-Framerate (Pacing der Frame-Pushes).
@@ -377,7 +377,7 @@ impl RealMediaEngine {
                     device: key_device.clone(),
                     ..config.clone()
                 };
-                match DecklinkOutput::start(&key_config) {
+                match DecklinkSink::start(&key_config) {
                     Ok(out) => {
                         info!(device = %key_device, "decklink key output gestartet");
                         self.decklink_key = Some(out);
@@ -386,7 +386,7 @@ impl RealMediaEngine {
                 }
             }
         }
-        match DecklinkOutput::start(&config) {
+        match DecklinkSink::start(&config) {
             Ok(output) => {
                 info!(
                     device = %config.device,
@@ -409,7 +409,7 @@ impl RealMediaEngine {
     /// Hängt eine Decklink-Ausgabe programmatisch an (für Tests: beliebiger
     /// Subprocess-Sink via [`DecklinkOutput::spawn`]).
     pub fn with_decklink(mut self, output: DecklinkOutput, stage: String, fps: u32) -> Self {
-        self.decklink = Some(output);
+        self.decklink = Some(DecklinkSink::Ffmpeg(output));
         self.decklink_stage = stage;
         self.decklink_fps = fps.max(1);
         self

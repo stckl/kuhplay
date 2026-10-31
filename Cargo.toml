@@ -113,6 +113,12 @@ name = "kuhplay-webview"
 path = "src/bin/kuhplay-webview.rs"
 required-features = ["webview"]
 
+# Windows: native DeckLink-COM-API (DeckLinkAPI64.dll, via regsvr32 registriert)
+# für Hardware-Ausgabe ohne ffmpeg-decklink-Muxer (siehe src/engine/decklink_com.rs).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com"] }
+windows-core = "0.62"
+
 [dev-dependencies]
 hound = "3.5.1"
 # Test-Suite: echte Temp-Dateien für Resilienz-Tests

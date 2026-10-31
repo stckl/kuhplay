@@ -21,3 +21,9 @@ impl OutputSink for super::decklink::DecklinkOutput {
         self.push_frame(frame)
     }
 }
+
+impl OutputSink for super::decklink::DecklinkSink {
+    fn push(&mut self, frame: &VideoFrame) -> ShowResult<()> {
+        self.push_frame(frame)
+    }
+}

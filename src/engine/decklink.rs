@@ -250,6 +250,160 @@ impl Drop for DecklinkOutput {
     }
 }
 
+/// BMD-DisplayMode-FourCC für gängige Auflösungen/Frameraten
+/// (Werte aus Blackmagic DeckLinkAPIModes.idl). `None` = unbekannt.
+pub fn bmd_display_mode(width: u32, height: u32, fps: u32) -> Option<u32> {
+    let m = match (width, height) {
+        (1920, 1080) => match fps {
+            24 => 0x32347073,        // '24ps'
+            25 => 0x48703235,        // 'Hp25'
+            30 => 0x48703330,        // 'Hp30'
+            50 => 0x48703530,        // 'Hp50' (progressive 50)
+            60 => 0x48703630,        // 'Hp60'
+            2997 | 29 => 0x48703239, // 'Hp29' (29.97)
+            5994 | 59 => 0x48703539, // 'Hp59' (59.94)
+            2398 | 23 => 0x32337073, // '23ps' (23.98)
+            _ => return None,
+        },
+        (1280, 720) => match fps {
+            50 => 0x68703530,        // 'hp50'
+            60 => 0x68703630,        // 'hp60'
+            5994 | 59 => 0x68703539, // 'hp59'
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(m)
+}
+
+/// BMD-Pixelformat FourCC: 8-Bit-YUV (UYVY, '2vuy') – das Standardformat der
+/// SDI-Decklink-Karten.
+pub const BMD_FORMAT_8BIT_YUV: u32 = 0x32767579;
+
+/// Konvertiert ein RGBA-Frame in UYVY 4:2:2 (BT.601 Studio-Range).
+/// `dst` muss `width*height*2` Bytes haben. Alpha wird ignoriert (Fill opaque);
+/// für den Key-Ausgang vorher [`alpha_to_luma`] anwenden (Y = Alpha).
+pub fn rgba_to_uyvy422(src: &VideoFrame, dst: &mut [u8]) {
+    let w = src.width as usize;
+    let h = src.height as usize;
+    assert!(dst.len() >= w * h * 2, "UYVY-Zielpuffer zu klein");
+    for y in 0..h {
+        for x in (0..w).step_by(2) {
+            let i0 = (y * w + x) * 4;
+            let i1 = (y * w + x + 1) * 4;
+            let (r0, g0, b0) = (
+                f32::from(src.rgba[i0]),
+                f32::from(src.rgba[i0 + 1]),
+                f32::from(src.rgba[i0 + 2]),
+            );
+            let (r1, g1, b1) = (
+                f32::from(src.rgba[i1]),
+                f32::from(src.rgba[i1 + 1]),
+                f32::from(src.rgba[i1 + 2]),
+            );
+            // BT.601 Studio: Y in [16,235], U/V in [16,240]; U/V gemittelt über
+            // das Pixelpaar (4:2:2), Y pro Pixel.
+            let lum = |r: f32, g: f32, b: f32| {
+                16.0 + (65.481 * r + 128.553 * g + 24.966 * b) * (219.0 / 255.0)
+            };
+            let lum0 = lum(r0, g0, b0);
+            let lum1 = lum(r1, g1, b1);
+            let r = (r0 + r1) / 2.0;
+            let g = (g0 + g1) / 2.0;
+            let b = (b0 + b1) / 2.0;
+            let u = 128.0 + (-37.797 * r - 74.203 * g + 112.0 * b) * (224.0 / 255.0);
+            let v = 128.0 + (112.0 * r - 93.786 * g - 18.214 * b) * (224.0 / 255.0);
+            let o = (y * w + x) * 2;
+            dst[o] = u.clamp(16.0, 240.0) as u8;
+            dst[o + 1] = lum0.clamp(16.0, 235.0) as u8;
+            dst[o + 2] = v.clamp(16.0, 240.0) as u8;
+            dst[o + 3] = lum1.clamp(16.0, 235.0) as u8;
+        }
+    }
+}
+
+/// Aktive Decklink-Senke: nativ per COM (Windows, bevorzugt) oder per
+/// ffmpeg-Subprocess mit `decklink`-Muxer. Auswahl über
+/// `KUHPLAY_DECKLINK_BACKEND` = `auto` (Default; Windows: COM zuerst) | `com` | `ffmpeg`.
+pub enum DecklinkSink {
+    /// ffmpeg-Subprocess mit `-f decklink` (Fallback / Nicht-Windows).
+    Ffmpeg(DecklinkOutput),
+    /// Native COM-Ausgabe direkt auf die Karte (nur Windows).
+    #[cfg(target_os = "windows")]
+    Com(crate::engine::decklink_com::ComDeckLinkOutput),
+}
+
+impl DecklinkSink {
+    /// Startet die Senke passend zur Plattform/Konfiguration.
+    pub fn start(config: &DecklinkConfig) -> ShowResult<Self> {
+        #[cfg(target_os = "windows")]
+        {
+            let backend =
+                std::env::var("KUHPLAY_DECKLINK_BACKEND").unwrap_or_else(|_| "auto".into());
+            if backend == "auto" || backend == "com" {
+                match crate::engine::decklink_com::ComDeckLinkOutput::start(config) {
+                    Ok(out) => {
+                        tracing::info!(device = %config.device, "decklink: nativ per COM geöffnet");
+                        return Ok(Self::Com(out));
+                    }
+                    Err(err) => {
+                        if backend == "com" {
+                            return Err(err);
+                        }
+                        tracing::warn!(%err, "decklink COM nicht verfügbar – Fallback ffmpeg");
+                    }
+                }
+            }
+        }
+        Ok(Self::Ffmpeg(DecklinkOutput::start(config)?))
+    }
+
+    /// Schreibt ein RGBA-Frame in die Senke.
+    pub fn push_frame(&mut self, frame: &VideoFrame) -> ShowResult<()> {
+        match self {
+            Self::Ffmpeg(out) => out.push_frame(frame),
+            #[cfg(target_os = "windows")]
+            Self::Com(out) => out.push_frame(frame),
+        }
+    }
+
+    /// Anzahl geschriebener Frames.
+    pub fn frames_pushed(&self) -> u64 {
+        match self {
+            Self::Ffmpeg(out) => out.frames_pushed(),
+            #[cfg(target_os = "windows")]
+            Self::Com(out) => out.frames_pushed(),
+        }
+    }
+
+    /// Konfigurierte Frame-Breite.
+    pub fn width(&self) -> u32 {
+        match self {
+            Self::Ffmpeg(out) => out.width(),
+            #[cfg(target_os = "windows")]
+            Self::Com(out) => out.width(),
+        }
+    }
+
+    /// Konfigurierte Frame-Höhe.
+    pub fn height(&self) -> u32 {
+        match self {
+            Self::Ffmpeg(out) => out.height(),
+            #[cfg(target_os = "windows")]
+            Self::Com(out) => out.height(),
+        }
+    }
+
+    /// Läuft die Senke noch?
+    pub fn is_running(&mut self) -> bool {
+        match self {
+            Self::Ffmpeg(out) => out.is_running(),
+            #[cfg(target_os = "windows")]
+            Self::Com(out) => out.is_running(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +434,39 @@ mod tests {
     fn default_config_ist_1080p25() {
         let config = DecklinkConfig::default();
         assert_eq!((config.width, config.height, config.fps), (1920, 1080, 25));
+    }
+
+    #[test]
+    fn bmd_display_mode_gängige_modi() {
+        assert_eq!(bmd_display_mode(1920, 1080, 25), Some(0x48703235)); // 'Hp25'
+        assert_eq!(bmd_display_mode(1920, 1080, 50), Some(0x48703530)); // 'Hp50'
+        assert_eq!(bmd_display_mode(1920, 1080, 60), Some(0x48703630)); // 'Hp60'
+        assert_eq!(bmd_display_mode(1920, 1080, 2997), Some(0x48703239)); // 'Hp29'
+        assert_eq!(bmd_display_mode(1280, 720, 50), Some(0x68703530)); // 'hp50'
+        assert_eq!(bmd_display_mode(640, 480, 25), None);
+        assert_eq!(bmd_display_mode(1920, 1080, 100), None);
+    }
+
+    #[test]
+    fn rgba_to_uyvy422_schwarz_weiss_und_grau() {
+        // 2×1: links schwarz, rechts weiß → U/V ≈ 128, Y ≈ 16 bzw. 235.
+        let rgba = vec![
+            0, 0, 0, 255, 255, 255, 255, 255, // Pixel 0 schwarz, Pixel 1 weiß
+        ];
+        let frame = VideoFrame::new(2, 1, rgba);
+        let mut dst = vec![0u8; 4];
+        rgba_to_uyvy422(&frame, &mut dst);
+        let avg_y = (f32::from(dst[1]) + f32::from(dst[3])) / 2.0;
+        let u = f32::from(dst[0]);
+        let v = f32::from(dst[2]);
+        // Schwarz-Weiß-Mittel = Grau: Y ≈ (16+235)/2 ≈ 125.5, U/V ≈ 128.
+        assert!((avg_y - 125.5).abs() < 2.0, "Y-Mittel {avg_y}");
+        assert!((u - 128.0).abs() < 2.0, "U {u}");
+        assert!((v - 128.0).abs() < 2.0, "V {v}");
+        // Reines Weiß allein: Y ≈ 235, U/V ≈ 128.
+        let white = VideoFrame::new(2, 1, vec![255, 255, 255, 255, 255, 255, 255, 255]);
+        rgba_to_uyvy422(&white, &mut dst);
+        assert!((f32::from(dst[1]) - 235.0).abs() < 2.0, "weiß Y {}", dst[1]);
     }
 
     #[test]

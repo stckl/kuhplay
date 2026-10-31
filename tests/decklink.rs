@@ -276,3 +276,48 @@ fn engine_pusht_route_bild_mit_decklink() {
         "erwartet >=2 Route-Bilder auf Decklink, got {pushed}"
     );
 }
+
+/// Live-Test gegen echte Blackmagic-Hardware (nur Windows, nur mit
+/// `KUHPLAY_DECKLINK_LIVE=1` und `-- --ignored`): pusht 5 s Testbild
+/// (bewegter Balken) auf den ersten DeckLink-Ausgang.
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "braucht echte DeckLink-Hardware + KUHPLAY_DECKLINK_LIVE=1"]
+fn live_com_output_test_pattern() {
+    if std::env::var("KUHPLAY_DECKLINK_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    use kuhplay::engine::decklink_com::{list_devices, ComDeckLinkOutput};
+    let devices = list_devices().expect("DeckLink-Geräte enumerieren");
+    println!("devices: {devices:?}");
+    assert!(!devices.is_empty(), "keine DeckLink-Geräte gefunden");
+    let config = DecklinkConfig {
+        device: std::env::var("KUHPLAY_DECKLINK_DEVICE").unwrap_or_default(),
+        width: 1920,
+        height: 1080,
+        fps: 25,
+        pix_fmt: "uyvy422".to_string(),
+    };
+    let mut out = ComDeckLinkOutput::start(&config).expect("COM-Output öffnen");
+    println!("geöffnet: {}", out.device_name());
+    let frames = 125; // 5 s @ 25 fps
+    for i in 0..frames {
+        let mut rgba = vec![0u8; (1920 * 1080 * 4) as usize];
+        // bewegter weißer Balken auf schwarz
+        let bar_x = (i * 16) % 1920;
+        for y in 0..1080 {
+            for x in bar_x..(bar_x + 100).min(1920) {
+                let o = ((y * 1920 + x) * 4) as usize;
+                rgba[o] = 235;
+                rgba[o + 1] = 235;
+                rgba[o + 2] = 235;
+                rgba[o + 3] = 255;
+            }
+        }
+        let frame = VideoFrame::new(1920, 1080, rgba);
+        out.push_frame(&frame).expect("push_frame");
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    assert_eq!(out.frames_pushed(), frames as u64);
+    println!("OK: {frames} Frames auf {} ausgegeben", out.device_name());
+}
