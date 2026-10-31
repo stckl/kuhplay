@@ -25,15 +25,13 @@ fn main() -> eframe::Result<()> {
     // Default: produktive RealMediaEngine (echtes Audio via cpal/symphonia,
     // Video via ffmpeg). `KUHPLAY_ENGINE=mock` erzwingt die virtuelle Engine
     // (für Entwicklung ohne Audio-Hardware/Medien).
-    let engine: EngineHandle = match std::env::var("KUHPLAY_ENGINE").as_deref() {
-        Ok("mock") => {
-            tracing::info!("using mock engine (KUHPLAY_ENGINE=mock)");
-            spawn_mock_engine()
-        }
-        _ => {
-            tracing::info!("using real media engine (cpal/symphonia + ffmpeg)");
-            spawn_real_engine()
-        }
+    let engine_is_mock = std::env::var("KUHPLAY_ENGINE").as_deref() == Ok("mock");
+    let engine: EngineHandle = if engine_is_mock {
+        tracing::info!("using mock engine (KUHPLAY_ENGINE=mock)");
+        spawn_mock_engine()
+    } else {
+        tracing::info!("using real media engine (cpal/symphonia + ffmpeg)");
+        spawn_real_engine()
     };
 
     // Programm-Icon (icon.png aus dem Projekt-Root, eingebettet).
@@ -61,6 +59,11 @@ fn main() -> eframe::Result<()> {
             let mut app = match cc.storage {
                 Some(storage) => ShowApp::new_with_storage(engine, storage),
                 None => ShowApp::new(engine),
+            };
+            app.engine_label = if engine_is_mock {
+                "mock (virtual)".to_string()
+            } else {
+                "real (cpal/ffmpeg)".to_string()
             };
             app.apply_startup_output();
             #[cfg(target_os = "macos")]

@@ -70,7 +70,7 @@ jedem Feature-Schritt aktualisiert.
 | Find | ✅ | Find-Leiste über der Cue-Liste (⌘F, matcht Q#/Name/Notes, Enter/⌘G nächster Treffer, Treffer-Highlight + Playhead springt mit) |
 | Paste Cue Properties | ✅ | Edit-Menü „Copy/Paste Cue Properties": Properties (ohne ID/Nummer/Status) in Zwischenablage, Paste merged auf alle selektierten Cues |
 | Launcher Window | ⬜ | — |
-| Workspace Status Window | ⬜ | — |
+| Workspace Status Window | ✅ | Tools → „Workspace Status…": Show-Name, Edit/Show-Mode + Engine, aktiver Cart, Playhead, Standby, laufende Cues mit Restzeit, Broken-Cues-Zähler (`src/gui/status_window.rs`) |
 | File Target Search Tool | ✅ | Tools → „File Target Search…": Fenster listet alle Datei-Ziele über alle Carts inkl. Gruppen-Kinder (Audio/Video/HTML-Datei/Slides), Filter auf Pfad/Q#/Name, Klick springt zum Cue (Cart aktiv + selektiert + Playhead). Reiner Lesezugriff – Pfade umschreiben ⬜ (bewusste Abweichung). `src/gui/target_search.rs` |
 | Monitor Windows | ⬜ | — |
 | Timecode Status Window | ⬜ | — |

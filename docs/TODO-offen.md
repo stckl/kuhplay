@@ -207,6 +207,10 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 - **Audition-Fenster (Commit e7da3f9):** Workspace → „Audition Window“, zeigt
   das neueste Frame des laufenden Video-/HTML5-/Diashow-Cues
   (`src/gui/audition_window.rs`).
+- **Workspace Status Window:** Tools → „Workspace Status…“: kompaktes
+  Status-Fenster mit Show-Name, Edit/Show-Mode + Engine, aktivem Cart,
+  Playhead, Standby-Cue, laufenden Cues mit Restzeit und Broken-Cues-Zähler
+  (`src/gui/status_window.rs`, Smoke-Test in `tests/gui_smoke.rs`).
 - **Offen aus qlab5-parity.md (bewusst zurückgestellt):** Camera/Mic-Cues
   (kein Live-Input gewünscht), Timecode-Cue mit LTC/MTC-Empfang (Chasing pro
   Cue ist da), Lighting-Pult/LCC (nur Art-Net-DMX-Senden umgesetzt), Audio Map
@@ -214,7 +218,7 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
   (HTML5/JS-Bridge deckt ab), Theme-Auswahl Dark/Light (Palette ist const-
   basiert, 197 Verwendungen – größerer Refactor), QLab-`.qlab5`-Import,
   Auto-Continue erst nach Cue-Ende feuern (Abweichung Nr. 1, Tests hängen am
-  Sofort-Verhalten), Monitor/Status-Fenster (Active-Cues-Tab deckt ab).
+  Sofort-Verhalten), Monitor Windows (Active-Cues-Tab + Stage-View decken ab).
 
 ---
 

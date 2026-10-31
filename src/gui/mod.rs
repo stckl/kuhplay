@@ -42,6 +42,7 @@ pub mod sidebar;
 pub mod stage_editor;
 pub mod stage_view;
 pub mod state;
+pub mod status_window;
 pub mod target_search;
 pub mod theme;
 pub mod toolbox;

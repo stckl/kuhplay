@@ -272,6 +272,14 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 app.ui.target_search_open = true;
                 ui.close_menu();
             }
+            if ui
+                .button("Workspace Status…")
+                .on_hover_text("Compact always-on overview: show, mode, playhead, running cues with remaining time, broken cues")
+                .clicked()
+            {
+                app.ui.status_window_open = true;
+                ui.close_menu();
+            }
         });
         ui.menu_button("Workspace", |ui| {
             ui.checkbox(&mut app.audition_mode, "Audition Mode")

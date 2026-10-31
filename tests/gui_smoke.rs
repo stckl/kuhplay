@@ -2228,6 +2228,44 @@ fn target_search_window_lists_file_targets_and_filters() {
 }
 
 #[test]
+fn status_window_shows_show_mode_cart_and_running_section() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    app.ui.status_window_open = true;
+    // Fenster brauchen 2 Pässe (erster = Sizing).
+    let mut out = render_frame(&ctx, &mut app);
+    for _ in 0..2 {
+        out = render_frame(&ctx, &mut app);
+    }
+    assert!(
+        output_has_text(&out, "Workspace Status"),
+        "Fenster-Titel fehlt"
+    );
+    assert!(output_has_text(&out, "Demo Show"), "Show-Name fehlt");
+    assert!(output_has_text(&out, "Mode: EDIT"), "Mode-Zeile fehlt");
+    assert!(output_has_text(&out, "Active cart:"), "Cart-Zeile fehlt");
+    assert!(output_has_text(&out, "Playhead:"), "Playhead-Zeile fehlt");
+    assert!(
+        output_has_text(&out, "Running cues"),
+        "Running-Cues-Section fehlt"
+    );
+    assert!(
+        output_has_text(&out, "cues in active list"),
+        "Cue-Count-Zeile fehlt"
+    );
+    // Broken-Status-Zeile (Demo-Show kann kaputte Cues enthalten).
+    assert!(
+        output_has_text(&out, "broken cue"),
+        "Broken-Cues-Zeile fehlt"
+    );
+
+    // Im Show-Mode wechselt die Anzeige.
+    app.show_mode = true;
+    out = render_frame(&ctx, &mut app);
+    assert!(output_has_text(&out, "Mode: SHOW"));
+}
+
+#[test]
 fn audition_window_shows_playing_cue_or_empty_state() {
     let ctx = egui::Context::default();
     let mut app = demo_app();

@@ -59,7 +59,7 @@ use crate::remote::{
 use super::shortcuts::ShortcutAction;
 use super::{
     audition_window, cue_table, footer, inspector, masthead, menu_bar, shortcuts, sidebar,
-    stage_view, target_search, theme, toolbox,
+    stage_view, status_window, target_search, theme, toolbox,
 };
 
 /// Tab-Auswahl der Sidebar (QLab 5: „Lists & Carts" / „Active Cues";
@@ -143,6 +143,8 @@ pub struct ShowApp {
     pub carts: CartManager,
     /// Playback-Engine (non-blocking).
     pub engine: EngineHandle,
+    /// Anzeige-Name der Engine („real"/„mock") – z. B. Workspace-Status-Fenster.
+    pub engine_label: String,
     /// Name der Show (Fenster-Titel + Persistenz).
     pub show_name: String,
     /// Show-Mode: Editing deaktiviert (QLab-Sicherheitsfunktion).
@@ -540,6 +542,7 @@ impl ShowApp {
         let mut app = Self {
             carts,
             engine,
+            engine_label: "real".to_string(),
             show_name: "Demo Show".to_string(),
             show_mode: false,
             audition_mode: false,
@@ -1417,6 +1420,11 @@ impl ShowApp {
 
     /// Anzahl kaputter Cues (QLab-Footer: „⚠ N"; Top-Level-Cues, Gruppen-
     /// Kinder zählen nicht doppelt).
+    /// Anzeige-Name der Engine (Workspace-Status-Fenster, Footer).
+    pub fn engine_name(&self) -> &str {
+        &self.engine_label
+    }
+
     pub fn broken_count(&mut self) -> usize {
         self.refresh_problems();
         self.problems.iter().filter(|b| !b.child).count()
@@ -3174,6 +3182,9 @@ impl ShowApp {
 
         // „File Target Search" (Tools-Menü, QLab 5 Workflow-Tool).
         target_search::draw(ctx, self);
+
+        // „Workspace Status" (Tools-Menü, QLab 5 Status-Übersicht).
+        status_window::draw(ctx, self);
 
         // Audition-Fenster (Workspace-Menü, QLab 5 „Audition Window").
         audition_window::draw(ctx, self);

@@ -182,6 +182,7 @@ fn handle_snapshot(webview: &WebView, window: &tao::window::Window, width: u32, 
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = window; // Fenstergriff nur auf macOS nötig (takeSnapshot-Größe)
         js_snapshot(webview, width, height);
     }
 }
