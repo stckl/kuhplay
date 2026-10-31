@@ -43,6 +43,7 @@ mod audio_levels;
 mod basics;
 mod curve;
 mod geometry;
+mod light;
 mod media;
 mod midi;
 mod network;
@@ -107,6 +108,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             InspectorTab::Text => text::draw_text(ui, app),
             InspectorTab::Network => network::draw_network(ui, app),
             InspectorTab::Midi => midi::draw_midi(ui, app),
+            InspectorTab::Light => light::draw_light(ui, app),
         });
 }
 
@@ -152,6 +154,7 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
         Some(CueType::Text) => &[Basics, Triggers, Geometry, Text],
         Some(CueType::Network) => &[Basics, Triggers, Network],
         Some(CueType::Midi) => &[Basics, Triggers, Midi],
+        Some(CueType::Light) => &[Basics, Triggers, Light],
         // Group, Stop, Script, Control, Wait, Memo, keine Auswahl.
         _ => &[Basics, Triggers],
     }

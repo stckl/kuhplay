@@ -629,12 +629,13 @@ impl CueList {
         }
         let command = cue.build_trigger_command();
         match &command {
-            // Sofort-Cues (Stop, leere Container, JSON-Push, Network, MIDI):
-            // direkt abgeschlossen – das Kommando geht trotzdem an die Engine.
+            // Sofort-Cues (Stop, leere Container, JSON-Push, Network, MIDI,
+            // DMX): direkt abgeschlossen – das Kommando geht an die Engine.
             Some(EngineCommand::StopAll)
             | Some(EngineCommand::PushJson { .. })
             | Some(EngineCommand::SendNetwork { .. })
             | Some(EngineCommand::SendMidi { .. })
+            | Some(EngineCommand::SendDmx { .. })
             | None => {
                 let _ = cue.transition_status(CueStatus::Completed);
             }
@@ -674,13 +675,14 @@ impl CueList {
                         continue;
                     }
                     match child.build_trigger_command() {
-                        // Sofort-Cues (Stop/JSON/Network/MIDI) innerhalb einer
-                        // Gruppe gelten direkt als abgeschlossen.
+                        // Sofort-Cues (Stop/JSON/Network/MIDI/DMX) innerhalb
+                        // einer Gruppe gelten direkt als abgeschlossen.
                         Some(
                             cmd @ (EngineCommand::StopAll
                             | EngineCommand::PushJson { .. }
                             | EngineCommand::SendNetwork { .. }
-                            | EngineCommand::SendMidi { .. }),
+                            | EngineCommand::SendMidi { .. }
+                            | EngineCommand::SendDmx { .. }),
                         ) => {
                             let _ = child.transition_status(CueStatus::Completed);
                             commands.push(cmd);
@@ -858,6 +860,7 @@ impl CueList {
             | Some(EngineCommand::PushJson { .. })
             | Some(EngineCommand::SendNetwork { .. })
             | Some(EngineCommand::SendMidi { .. })
+            | Some(EngineCommand::SendDmx { .. })
             | None => {
                 let _ = cue.transition_status(CueStatus::Completed);
             }

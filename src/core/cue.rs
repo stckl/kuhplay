@@ -66,11 +66,14 @@ pub enum CueType {
     /// MIDI-Cue (QLab 5): sendet eine MIDI-Nachricht an das Ausgabegerät
     /// ([`EngineCommand::SendMidi`]) – Sofort-Cue.
     Midi,
+    /// Light-Cue (QLab 5, Minimal-Variante): sendet ein Art-Net-DMX-Paket
+    /// ([`LightMessage`]) per UDP ins Licht-Netz – Sofort-Cue.
+    Light,
 }
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 15] = [
+    pub const ALL: [CueType; 16] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
@@ -86,6 +89,7 @@ impl CueType {
         CueType::Text,
         CueType::Network,
         CueType::Midi,
+        CueType::Light,
     ];
 
     /// Symbol für Tabellenzellen.
@@ -106,6 +110,7 @@ impl CueType {
             CueType::Text => "🅣",
             CueType::Network => "📡",
             CueType::Midi => "🎹",
+            CueType::Light => "💡",
         }
     }
 
@@ -127,6 +132,7 @@ impl CueType {
             CueType::Text => "Text",
             CueType::Network => "Network",
             CueType::Midi => "MIDI",
+            CueType::Light => "Light",
         }
     }
 }
@@ -586,6 +592,9 @@ pub struct Cue {
     /// MIDI-Nachricht – nur [`CueType::Midi`].
     #[serde(default)]
     pub midi: Option<crate::core::midi::MidiMessage>,
+    /// Licht-Nachricht (Art-Net DMX) – nur [`CueType::Light`].
+    #[serde(default)]
+    pub light: Option<crate::core::light::LightMessage>,
     /// Freitext-Notizen für Operatoren.
     #[serde(default)]
     pub notes: String,
@@ -646,6 +655,7 @@ impl Cue {
             text_content: None,
             network: None,
             midi: None,
+            light: None,
             notes: String::new(),
             color: None,
             status: CueStatus::Standby,
@@ -904,6 +914,18 @@ impl Cue {
                     self.number, self.name
                 ))),
             },
+            CueType::Light => match &self.light {
+                Some(l) => l.validate().map_err(|_| {
+                    ShowError::InvalidParameter(format!(
+                        "light cue \"{}\" ({}): invalid universe/channels",
+                        self.number, self.name
+                    ))
+                }),
+                None => Err(ShowError::InvalidParameter(format!(
+                    "light cue \"{}\" ({}): no DMX values configured",
+                    self.number, self.name
+                ))),
+            },
             _ => Ok(()),
         }
     }
@@ -1146,6 +1168,11 @@ impl Cue {
             CueType::Midi => self.midi.as_ref().map(|m| EngineCommand::SendMidi {
                 cue_id: self.id,
                 bytes: m.to_bytes(),
+            }),
+            CueType::Light => self.light.as_ref().map(|l| EngineCommand::SendDmx {
+                cue_id: self.id,
+                host: l.host.clone(),
+                packet: l.to_artnet(),
             }),
             CueType::Group | CueType::Script | CueType::Control | CueType::Memo => None,
         }

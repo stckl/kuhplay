@@ -93,6 +93,14 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                 }
             }
         },
+        CueType::Light => match &cue.light {
+            None => problems.push("no DMX values configured".to_string()),
+            Some(l) => {
+                if l.validate().is_err() {
+                    problems.push("DMX universe/channels invalid".to_string());
+                }
+            }
+        },
         CueType::Control => {
             // Ziel-Cue-Nummer prüfen (Aktionen ohne Ziel gelten für alle /
             // den Cue selbst und sind nie „kaputt").

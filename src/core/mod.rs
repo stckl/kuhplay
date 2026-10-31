@@ -34,6 +34,7 @@ pub mod cue;
 pub mod cue_list;
 pub mod error;
 pub mod html;
+pub mod light;
 pub mod midi;
 pub mod network;
 pub mod screen;
@@ -70,6 +71,7 @@ pub use cue::{
 pub use cue_list::{CueList, GoOutcome};
 pub use error::{ShowError, ShowResult};
 pub use html::{HtmlSource, HtmlSourceKind};
+pub use light::{LightMessage, ARTNET_PORT, DMX_CHANNELS};
 pub use midi::{MidiMessage, MidiMessageKind};
 pub use network::{NetworkMessage, NetworkProtocol};
 pub use screen::{

@@ -101,6 +101,7 @@ mod glyphs {
     pub const HOURGLASS: &str = "\u{E1B8}"; // hourglass
     pub const NOTE: &str = "\u{E5A2}"; // note
     pub const MUSIC_NOTES: &str = "\u{E5BE}"; // music-notes
+    pub const LIGHTBULB: &str = "\u{E524}"; // lightbulb
     pub const PAPER_PLANE_TILT: &str = "\u{E6D0}"; // paper-plane-tilt
     pub const IMAGE: &str = "\u{E2CA}"; // image
     pub const IMAGES: &str = "\u{E836}"; // images
@@ -156,6 +157,7 @@ pub enum Icon {
     Text,
     Network,
     Midi,
+    Light,
     // Status
     Playing,
     Paused,
@@ -248,6 +250,7 @@ impl Icon {
         Icon::Text,
         Icon::Network,
         Icon::Midi,
+        Icon::Light,
         // Status
         Icon::Playing,
         Icon::Paused,
@@ -338,6 +341,7 @@ impl Icon {
             CueType::Text => Icon::Text,
             CueType::Network => Icon::Network,
             CueType::Midi => Icon::Midi,
+            CueType::Light => Icon::Light,
         }
     }
 
@@ -380,6 +384,7 @@ impl Icon {
             Icon::Text => glyphs::TEXT_T,
             Icon::Network => glyphs::PAPER_PLANE_TILT,
             Icon::Midi => glyphs::MUSIC_NOTES,
+            Icon::Light => glyphs::LIGHTBULB,
             // Status
             Icon::Playing => glyphs::PLAY,
             Icon::Paused => glyphs::PAUSE,

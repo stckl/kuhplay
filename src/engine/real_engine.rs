@@ -904,15 +904,33 @@ impl RealMediaEngine {
     }
 }
 
-/// Meldet das Ergebnis eines asynchronen Network-Cue-Sends (ggf. als
-/// `EngineEvent::Error`) – läuft im gespawnten Send-Thread.
-fn finish_send(events: Sender<EngineEvent>, cue_id: Uuid, result: Result<(), String>) {
+/// Meldet das Ergebnis eines asynchronen Sends (ggf. als `EngineEvent::Error`)
+/// – läuft im gespawnten Send-Thread.
+fn finish_send(events: Sender<EngineEvent>, cue_id: Uuid, label: &str, result: Result<(), String>) {
     if let Err(message) = result {
         let _ = events.send(EngineEvent::Error {
             cue_id: Some(cue_id),
-            message: format!("network cue send failed: {message}"),
+            message: format!("{label} send failed: {message}"),
         });
     }
+}
+
+/// Sendet `bytes` per UDP an `host:port` in einem eigenen Thread
+/// (fire-and-forget; ein blockierendes Ziel hält die Engine nicht auf).
+fn spawn_udp_send(
+    events: Sender<EngineEvent>,
+    cue_id: Uuid,
+    label: &'static str,
+    host: String,
+    port: u16,
+    bytes: Vec<u8>,
+) {
+    std::thread::spawn(move || {
+        let result = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
+            .and_then(|socket| socket.send_to(&bytes, (host.as_str(), port)).map(|_| ()))
+            .map_err(|err| err.to_string());
+        finish_send(events, cue_id, label, result);
+    });
 }
 
 impl MediaEngine for RealMediaEngine {
@@ -1602,45 +1620,67 @@ impl MediaEngine for RealMediaEngine {
                 // Ziel (TCP-Connect-Timeout, DNS) darf den Engine-Thread nicht
                 // aufhalten. Fehler landen als Error-Event.
                 let events = self.events.clone();
+                if protocol == crate::core::NetworkProtocol::Udp {
+                    spawn_udp_send(
+                        events,
+                        cue_id,
+                        "network cue",
+                        host,
+                        port,
+                        message.into_bytes(),
+                    );
+                    return Ok(());
+                }
                 std::thread::spawn(move || {
-                    let result: Result<(), String> = match protocol {
-                        crate::core::NetworkProtocol::Udp => {
-                            std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
-                                .and_then(|socket| {
-                                    socket
-                                        .send_to(message.as_bytes(), (host.as_str(), port))
-                                        .map(|_| ())
-                                })
-                                .map_err(|err| err.to_string())
-                        }
-                        crate::core::NetworkProtocol::Tcp => {
-                            use std::io::Write;
-                            let addr = match (host.as_str(), port).to_socket_addrs() {
-                                Ok(mut addrs) => match addrs.next() {
-                                    Some(addr) => addr,
-                                    None => {
-                                        return finish_send(
-                                            events,
-                                            cue_id,
-                                            Err("no address resolved".to_string()),
-                                        );
-                                    }
-                                },
-                                Err(err) => {
-                                    return finish_send(events, cue_id, Err(err.to_string()));
+                    let result: Result<(), String> = {
+                        use std::io::Write;
+                        let addr = match (host.as_str(), port).to_socket_addrs() {
+                            Ok(mut addrs) => match addrs.next() {
+                                Some(addr) => addr,
+                                None => {
+                                    return finish_send(
+                                        events,
+                                        cue_id,
+                                        "network cue",
+                                        Err("no address resolved".to_string()),
+                                    );
                                 }
-                            };
-                            std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500))
-                                .and_then(|mut stream| {
-                                    stream.write_all(message.as_bytes())?;
-                                    stream.flush()?;
-                                    Ok(())
-                                })
-                                .map_err(|err| err.to_string())
-                        }
+                            },
+                            Err(err) => {
+                                return finish_send(
+                                    events,
+                                    cue_id,
+                                    "network cue",
+                                    Err(err.to_string()),
+                                );
+                            }
+                        };
+                        std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+                            .and_then(|mut stream| {
+                                stream.write_all(message.as_bytes())?;
+                                stream.flush()?;
+                                Ok(())
+                            })
+                            .map_err(|err| err.to_string())
                     };
-                    finish_send(events, cue_id, result);
+                    finish_send(events, cue_id, "network cue", result);
                 });
+            }
+            EngineCommand::SendDmx {
+                cue_id,
+                host,
+                packet,
+            } => {
+                debug!(%cue_id, %host, packet_len = packet.len(), "send dmx (real)");
+                // Art-Net: UDP an Port 6454, fire-and-forget wie Network-UDP.
+                spawn_udp_send(
+                    self.events.clone(),
+                    cue_id,
+                    "light cue",
+                    host,
+                    crate::core::ARTNET_PORT,
+                    packet,
+                );
             }
             EngineCommand::SendMidi { cue_id, bytes } => {
                 debug!(%cue_id, ?bytes, "send midi (real)");

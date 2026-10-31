@@ -1402,6 +1402,11 @@ fn target_display(cue: &Cue) -> String {
             .as_ref()
             .map(|m| m.describe())
             .unwrap_or_else(|| "–".to_string()),
+        CueType::Light => cue
+            .light
+            .as_ref()
+            .map(|l| l.describe())
+            .unwrap_or_else(|| "–".to_string()),
         CueType::Text => cue
             .text_content
             .as_ref()

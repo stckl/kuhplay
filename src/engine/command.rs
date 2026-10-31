@@ -160,6 +160,14 @@ pub enum EngineCommand {
     /// Sofort-Cue; Fehler (kein Gerät, Send-Fehler) als
     /// [`super::EngineEvent::Error`].
     SendMidi { cue_id: Uuid, bytes: Vec<u8> },
+    /// Light-Cue (QLab 5, Minimal): sendet ein Art-Net-DMX-Paket
+    /// (OpDmx, [`crate::core::LightMessage::to_artnet`]) per UDP an
+    /// `host:6454`. Sofort-Cue; Fehler als [`super::EngineEvent::Error`].
+    SendDmx {
+        cue_id: Uuid,
+        host: String,
+        packet: Vec<u8>,
+    },
     /// Health-Check: Engine antwortet mit [`super::EngineEvent::Pong`].
     /// Dient Stress-Tests zur verlässlichen "keine Message-Drops"-Prüfung.
     Ping(u64),

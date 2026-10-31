@@ -41,6 +41,8 @@ const GROUPS: &[(&str, &[CueType])] = &[
     ("Misc", &[CueType::Wait, CueType::Memo]),
     // Network/MIDI (QLab 5): UDP/TCP-Nachricht bzw. MIDI an Ziele im Show-Netz.
     ("Network", &[CueType::Network, CueType::Midi]),
+    // Lighting (QLab 5): Art-Net DMX ins Licht-Netz.
+    ("Lighting", &[CueType::Light]),
 ];
 
 /// Zeichnet die Toolbox (linkes SidePanel, ~136 px breit).

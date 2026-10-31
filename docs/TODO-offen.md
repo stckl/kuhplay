@@ -186,6 +186,28 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 
 ---
 
+## ERLEDIGT nach dem Übergabe-Dokument (neuere Commits)
+
+- **Neue QLab-Cue-Typen (Commit 406419e):** Wait (Timer-Unit, `EngineCommand::Wait`
+  in beiden Engines), Memo (Sofort-Cue), Text (rendert als Inline-HTML über die
+  HTML5-Pipeline, `src/core/text.rs`), Network (UDP/TCP, `EngineCommand::SendNetwork`,
+  fire-and-forget-Thread in der Real-Engine). Toolbox/Inspector/Icons/Web-Remote
+  verdrahtet; ⌘0–⌘9 bleiben den 10 Original-Typen vorbehalten (wie QLab).
+- **MIDI-Cue (Commit da78e33):** `CueType::Midi` + `src/core/midi.rs` (Note On/Off,
+  CC, Program Change, Wire-Bytes), `EngineCommand::SendMidi`, midir-Output lazy in
+  der Real-Engine (`src/engine/midi_out.rs`, Gerät via `KUHPLAY_MIDI_OUT_DEVICE`).
+- **Workspace Templates (Commit 8a5726b):** benannte UiState-Snapshots, eigener
+  Storage-Key, Settings → General (Save/Apply/Delete).
+- **Light-Cue (Art-Net DMX, Commit siehe Git-Log):** `CueType::Light` +
+  `src/core/light.rs` (ArtDmx-Paket OpDmx 0x5000, Port 6454), `EngineCommand::SendDmx`,
+  Sofort-Cue. Camera/Mic-Cues bewusst **weggelassen** (kein Live-Input gewünscht).
+- **Offen aus qlab5-parity.md:** Lighting-Pult/LCC (nur DMX-Senden umgesetzt),
+  Timecode-Cue mit LTC/MTC-Empfang (Chasing pro Cue ist da), Audio Map Editor
+  (Patch-Matrix deckt Kanal→Ausgang ab), Script-Cue dediziert (HTML5/JS-Bridge
+  deckt ab), File Target Search Tool, Monitor/Status-Fenster, QLab-`.qlab5`-Import.
+
+---
+
 ## Sonstiges Kleinvolumen (nicht vergessen)
 
 - **docs/TODO-video-routing.md** als „abgearbeitet“ markieren oder ins Archiv
