@@ -2,7 +2,7 @@
 name = "kuhplay"
 version = "0.1.0"
 edition = "2021"
-description = "Plattformübergreifende Show-Control- und Cue-Playback-Software (QLab-Style) in Rust"
+description = "Plattformübergreifende Show-Control- und Cue-Playback-Software in Rust"
 license = "MIT"
 
 [dependencies]
@@ -35,7 +35,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net",
 axum = { version = "0.8", features = ["ws", "macros"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 # Companion Plugin: TCP JSON-lines Protokoll (nutzt tokio::net)
-# OSC-Steuerung: UDP (rosc, pure Rust) – QLab „OSC" Netzwerk-Remote
+# OSC-Steuerung: UDP (rosc, pure Rust) – Netzwerk-Remote
 rosc = "0.10"
 # MIDI-Steuerung: Controller-Input (midir; macOS CoreMIDI, Linux ALSA)
 midir = "0.11"
@@ -54,7 +54,7 @@ cpal = "0.18.2"
 symphonia = { version = "0.5.4", features = ["mp3", "aac", "alac", "isomp4", "aiff", "caf"] }
 # Video: ffmpeg-Subprocess (rawvideo/rgba) + Bild-Dekodierung (Diashows).
 image = "0.25.10"
-# Hardware-Displays (Screen-Zuordnung der Stages, QLab „Stage → Screen“).
+# Hardware-Displays (Screen-Zuordnung der Stages, „Stage → Screen“).
 display-info = "0.5"
 
 # HTML5-WebView (optional, Feature „webview"): eigener Subprocess

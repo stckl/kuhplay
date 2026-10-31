@@ -1,4 +1,4 @@
-//! QLab-inspiriertes Dark-Theme und Status-Farben.
+//! Dark-Theme und Status-Farben.
 //!
 //! ## Erweiterung
 //!
@@ -15,7 +15,7 @@ use crate::core::CueStatus;
 /// farben mit WCAG-AA-Kontrast (≥ 4,5:1) auf [`palette::PANEL`] – siehe
 /// Unit-Test `text_colors_meet_wcag_aa`. Rot ist ausschließlich „kaputt /
 /// Fehler" ([`palette::ERROR`]) bzw. Panic ([`palette::PANIC`]) – ein
-/// armierter Cue in Standby ist neutral (QLab-Semantik, siehe
+/// armierter Cue in Standby ist neutral (siehe
 /// [`status_color`]).
 pub mod palette {
     use egui::Color32;
@@ -50,8 +50,7 @@ pub mod palette {
     pub const PRE_WAIT: Color32 = Color32::from_rgb(255, 145, 0);
     /// Playing: Grün.
     pub const PLAYING: Color32 = Color32::from_rgb(46, 204, 113);
-    /// Paused: Blau (TODO(qlab-parity): QLab-Paused gelb oder blau – exakte
-    /// QLab-Farbe verifizieren).
+    /// Paused: Blau.
     pub const PAUSED: Color32 = Color32::from_rgb(52, 152, 219);
     /// Post-Wait: Türkis (Playback vorbei, Cue noch offen).
     pub const POST_WAIT: Color32 = Color32::from_rgb(39, 174, 150);
@@ -59,7 +58,7 @@ pub mod palette {
     pub const COMPLETED: Color32 = Color32::from_rgb(140, 140, 148);
     /// Stopped: Schiefergrau (dezente Grafiken, z. B. GO-Rahmen ohne Standby).
     pub const STOPPED: Color32 = Color32::from_rgb(112, 118, 132);
-    /// Broken / Fehler: Rot (QLab: Rot = kaputt).
+    /// Broken / Fehler: Rot (Rot = kaputt).
     pub const ERROR: Color32 = Color32::from_rgb(235, 90, 72);
 
     /// GO-Button.
@@ -67,11 +66,11 @@ pub mod palette {
     /// Panic/Stop-All (und SHOW-MODE-Label im Footer).
     pub const PANIC: Color32 = Color32::from_rgb(232, 95, 70);
 
-    /// Selektierte Zeile (QLab-Blau, unabhängig vom Playhead).
+    /// Selektierte Zeile (Blau, unabhängig vom Playhead).
     pub const SELECTION: Color32 = Color32::from_rgb(58, 84, 112);
     /// Playhead-Zeile (dezente Hervorhebung; unter der Selektion).
     pub const CURSOR_ROW: Color32 = Color32::from_rgb(50, 54, 64);
-    /// Deckkraft der Cue-Color-Zeilen-Tönung (QLab: ganze Zeile leicht
+    /// Deckkraft der Cue-Color-Zeilen-Tönung (ganze Zeile leicht
     /// getönt, niedriger Alpha-Wert).
     pub const ROW_TINT: f32 = 0.10;
     /// Footer-Hintergrund im Show-Mode (TODO.md Phase 6: Show-Mode muss
@@ -79,12 +78,12 @@ pub mod palette {
     pub const SHOW_MODE_BG: Color32 = Color32::from_rgb(58, 22, 18);
 }
 
-/// Größen & Abstände (QLab-Layout-Konstanten – keine Magic Numbers in den
+/// Größen & Abstände (Layout-Konstanten – keine Magic Numbers in den
 /// Panel-Modulen; Phase 1 des UI-Refactorings).
 pub mod size {
     use egui::Vec2;
 
-    /// GO-Button (Masthead, QLab: groß, mindestens 120×64).
+    /// GO-Button (Masthead, groß, mindestens 120×64).
     pub const GO_BUTTON: Vec2 = Vec2::new(132.0, 64.0);
     /// Standby-Anzeige (Schriftgröße).
     pub const STANDBY_TEXT: f32 = 22.0;
@@ -96,7 +95,7 @@ pub mod size {
     pub const FOOTER_HEIGHT: f32 = 28.0;
     /// Inspector-Default-Höhe (ziehbar).
     pub const INSPECTOR_HEIGHT: f32 = 260.0;
-    /// Toolbox-Breite (linke Leiste, QLab: schmal, einklappbar).
+    /// Toolbox-Breite (linke Leiste, schmal, einklappbar).
     pub const TOOLBOX_WIDTH: f32 = 136.0;
     /// Toolbox-Zeile (Icon + Label).
     pub const TOOLBOX_ROW_HEIGHT: f32 = 26.0;
@@ -112,7 +111,7 @@ pub mod size {
     pub const FOOTER_ICON_BUTTON: Vec2 = Vec2::new(24.0, 24.0);
     /// Transport-Icon-Buttons (Sidebar: Reset/Pause/Resume/Panic).
     pub const TRANSPORT_ICON_BUTTON: Vec2 = Vec2::new(26.0, 26.0);
-    /// Farbiger Streifen am linken Rand einer Cue-Zeile (QLab „Cue Color").
+    /// Farbiger Streifen am linken Rand einer Cue-Zeile („Cue Color").
     pub const CUE_COLOR_STRIP: f32 = 3.0;
     /// Pause/Resume/Stop-Buttons im Active-Cues-Tab (TODO.md Phase 6:
     /// gut klickbar, min. 28 px hoch).
@@ -128,8 +127,8 @@ pub mod size {
 
 /// EINE Status-Farben-Quelle (TODO.md Phase 2 + Phase 0b).
 ///
-/// QLab-Semantik: Standby (auch armiert) ist **neutral** – Rot bedeutet in
-/// QLab „kaputt / Problem" (siehe [`palette::ERROR`]). Die Status-Pille in
+/// Semantik: Standby (auch armiert) ist **neutral** – Rot bedeutet
+/// „kaputt / Problem" (siehe [`palette::ERROR`]). Die Status-Pille in
 /// der Cue-Liste und die Fortschrittsbalken nutzen ausschließlich diese
 /// Funktion.
 /// Farbe mit Alpha (0–255, gamma-korrigiert wie bisher, siehe
@@ -191,7 +190,7 @@ pub fn apply_theme(ctx: &egui::Context) {
     visuals.widgets.active.bg_fill = Color32::from_rgb(70, 70, 82);
     visuals.widgets.active.weak_bg_fill = Color32::from_rgb(70, 70, 82);
 
-    // Abgerundete Widgets (QLab-Look: weiche Kanten statt scharfer Kästchen).
+    // Abgerundete Widgets (weiche Kanten statt scharfer Kästchen).
     let rounding = egui::Rounding::same(5.0);
     visuals.widgets.noninteractive.rounding = rounding;
     visuals.widgets.inactive.rounding = rounding;
@@ -364,8 +363,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_color_qlab_semantics() {
-        // Standby (auch armiert) ist neutral – Rot ist in QLab „kaputt"
+    fn status_color_semantics() {
+        // Standby (auch armiert) ist neutral – Rot ist „kaputt"
         // (TODO.md Phase 2).
         assert_eq!(status_color(CueStatus::Standby), palette::TEXT);
         assert_eq!(status_color(CueStatus::PreWait), palette::PRE_WAIT);

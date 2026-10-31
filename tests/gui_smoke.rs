@@ -1,4 +1,4 @@
-//! Headless GUI-Smoke-Tests (QLab 5 Workspace).
+//! Headless GUI-Smoke-Tests (Workspace).
 //!
 //! Rendert den kompletten Workspace (Menüleiste, Masthead, Toolbox,
 //! Sidebar, Cue-Tabelle, Inspector, Footer) in einer echten
@@ -132,7 +132,7 @@ fn inspector_renders_every_cue_type_both_tabs() {
 }
 
 #[test]
-fn edit_actions_work_like_qlab() {
+fn edit_actions_work() {
     let ctx = egui::Context::default();
     let mut app = demo_app();
     let initial_len = app.carts.active().len();
@@ -178,7 +178,7 @@ fn show_mode_toggles() {
 
 #[test]
 fn auto_continue_fires_next_cue_only_after_first_completes() {
-    // QLab-5-Semantik: Auto-Continue feuert den Folge-Cue erst beim
+    // Semantik: Auto-Continue feuert den Folge-Cue erst beim
     // Abschluss des laufenden Cues (Finished), nicht beim GO.
     let (mut app, _cmd_rx, evt_tx) = manual_app();
     app.carts.active_mut().cues_mut()[0].continue_mode = ContinueMode::AutoContinue;
@@ -312,7 +312,7 @@ fn all_icons_render_without_panic() {
 
 #[test]
 fn workspace_settings_video_page_renders_and_edits_stages_and_routes() {
-    // Video-Seite (Workspace Settings → Video, QLab-5-Tabs): rendert ohne
+    // Video-Seite (Workspace Settings → Video, Tabs): rendert ohne
     // Panic; Stage/Route-Verwaltung (anlegen, Editor oeffnen, loeschen)
     // funktioniert gegen Mock-Engine + RouteManager.
     let ctx = egui::Context::default();
@@ -496,7 +496,7 @@ fn footer_shows_cue_count_and_broken_indicator() {
     let mut app = demo_app();
     icons::install(&ctx); // Footer malt Icon-Glyphen (Phosphor-Font nötig).
                           // Demo-Show: 11 Cues in 1 Liste; Media-Dateien fehlen (/media/… existiert
-                          // nicht) → kaputte Cues werden im Footer gezählt (QLab: Warnzähler).
+                          // nicht) → kaputte Cues werden im Footer gezählt (Warnzähler).
     let total = app.carts.active().len();
     let broken = app.broken_count();
     assert!(broken > 0, "Demo-Show ohne Media-Dateien hat kaputte Cues");
@@ -694,7 +694,7 @@ fn workspace_settings_window_renders_nav_and_pages() {
         assert!(output_has_text(&out, page), "Nav fehlt: {page}");
     }
     assert!(!output_has_text(&out, "not implemented yet"));
-    // Seite Video: drei Reiter wie QLab (Stages/Routing/Devices).
+    // Seite Video: drei Reiter (Stages/Routing/Devices).
     app.ui.workspace_settings_page = SettingsPage::Video;
     let mut out = render_frame(&ctx, &mut app);
     for _ in 0..2 {
@@ -705,7 +705,7 @@ fn workspace_settings_window_renders_nav_and_pages() {
 }
 
 // ------------------------------------------------------------------
-// Phase 2 (TODO.md): Status-Semantik (QLab), Broken-✕ + Tooltip,
+// Phase 2 (TODO.md): Status-Semantik, Broken-✕ + Tooltip,
 // Cue-Color als Zeilen-Tönung + Streifen, Fortschrittsbalken,
 // Pre-Wait-Countdown
 // ------------------------------------------------------------------
@@ -858,7 +858,7 @@ fn cue_color_paints_row_tint_and_left_strip() {
         output_has_rect_fill(&out, egui::Color32::from_rgb(200, 60, 60)),
         "Cue-Color-Streifen am linken Zeilenrand fehlt"
     );
-    // … und Tönung der ganzen Zeile (niedrige Deckkraft, QLab-Style).
+    // … und Tönung der ganzen Zeile (niedrige Deckkraft).
     assert!(
         output_has_rect_fill(
             &out,
@@ -962,11 +962,11 @@ fn playing_and_post_wait_cues_show_progress_bars() {
     );
 }
 
-/// QLab-5-Header: Die Spalten heißen „Pre-wait“, „Duration“, „Post-wait“
-/// (verifiziert gegen das QLab-5-Handbuch; „Action" ist die alte
-/// QLab-4-Bezeichnung und darf nicht mehr als Header auftauchen).
+/// Header: Die Spalten heißen „Pre-wait“, „Duration“, „Post-wait“
+/// („Action" ist die alte
+/// Bezeichnung und darf nicht mehr als Header auftauchen).
 #[test]
-fn cue_table_header_shows_qlab_column_titles() {
+fn cue_table_header_shows_column_titles() {
     let ctx = egui::Context::default();
     let mut app = demo_app();
     // Zwei Frames (erster Frame ist egui-Sizing-Pass).
@@ -985,12 +985,12 @@ fn cue_table_header_shows_qlab_column_titles() {
     }
     assert!(
         !output_has_exact_text(&out, "Action"),
-        "QLab 5: Duration-Spalte heißt „Duration“, nicht „Action“"
+        "Duration-Spalte heißt „Duration“, nicht „Action“"
     );
 }
 
 /// Laufender Cue: Die Duration-Zelle zeigt die RESTZEIT (Duration −
-/// elapsed), QLab-Verhalten. Meta manuell → deterministisch.
+/// elapsed). Meta manuell → deterministisch.
 #[test]
 fn duration_cell_shows_remaining_time_for_playing_cue() {
     let ctx = egui::Context::default();
@@ -1081,7 +1081,7 @@ fn post_wait_cell_shows_countdown() {
 }
 
 /// Spalten-Menü: Eine ausgeblendete Spalte (hier „Target") wird nicht
-/// gerendert (QLab: Spalten konfigurierbar).
+/// gerendert (Spalten konfigurierbar).
 #[test]
 fn hidden_column_is_not_rendered() {
     let ctx = egui::Context::default();
@@ -1116,7 +1116,7 @@ fn standby_display_is_neutral_not_red() {
             masthead::draw(ui, &mut app);
         });
     });
-    // QLab-Phase-2-Semantik: Standby (auch armiert) ist neutral – Rot wäre
+    // Phase-2-Semantik: Standby (auch armiert) ist neutral – Rot wäre
     // „kaputt". Der Standby-Text darf nicht in einer Statusfarbe stehen.
     let color = output_text_color(&out, "1 • House to Half").expect("Standby-Text gerendert");
     assert_eq!(
@@ -1150,7 +1150,7 @@ fn render_inspector_only(ctx: &egui::Context, app: &mut ShowApp) -> egui::FullOu
 }
 
 /// Jeder Cue-Typ rendert in jedem seiner typabhängigen Tabs ohne Panic
-/// (QLab 5: Tabs je nach Cue-Typ).
+/// (Tabs je nach Cue-Typ).
 #[test]
 fn inspector_renders_type_specific_tabs() {
     let ctx = egui::Context::default();
@@ -1183,7 +1183,7 @@ fn inspector_renders_type_specific_tabs() {
 }
 
 /// Kopfzeile: einzelner Cue zeigt „Q# • Name“, Mehrfachauswahl
-/// „N cues selected" (QLab 5).
+/// „N cues selected".
 #[test]
 fn inspector_header_shows_cue_or_selection_count() {
     let ctx = egui::Context::default();

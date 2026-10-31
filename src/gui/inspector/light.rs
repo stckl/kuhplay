@@ -1,4 +1,4 @@
-//! Inspector-Tab „Light" (Light-Cue, QLab 5 Minimal-Variante): DMX-Universe,
+//! Inspector-Tab „Light" (Light-Cue, Minimal-Variante): DMX-Universe,
 //! Startkanal, Kanalwerte und Ziel-Host. Die Engine baut das Art-Net-Paket
 //! (`LightMessage::to_artnet`) und sendet es per UDP an Port 6454
 //! (`EngineCommand::SendDmx`).

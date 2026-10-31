@@ -1,4 +1,4 @@
-//! Inspector-Tab „Timecode" (Timecode-Cue, QLab 5): Trigger-Zeitcode
+//! Inspector-Tab „Timecode" (Timecode-Cue): Trigger-Zeitcode
 //! (`HH:MM:SS:FF`) + Bildrate. Der Cue feuert, wenn der externe Timecode
 //! (OSC `/kuhplay/timecode "01:00:00:00" 25`, später LTC/MTC) den Trigger
 //! erreicht. Manuelles GO verhält sich wie ein Wait-Cue mit `duration`.

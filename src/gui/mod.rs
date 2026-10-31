@@ -1,4 +1,4 @@
-//! GUI-Layer (egui/eframe) – QLab 5 Workspace-Layout.
+//! GUI-Layer (egui/eframe) – Workspace-Layout.
 //!
 //! **Verbindliche UI-Richtlinie: `docs/UI.md`** (Layout, Farben,
 //! Typografie, Komponenten).
@@ -12,13 +12,13 @@
 //! * [`inspector`] – unteres Panel, volle Breite (typabhängige Tabs)
 //! * [`footer`] – unterster Panel-Bereich (Edit/Show, ⚠ kaputte Cues,
 //!   „N cues in M lists", Icon-Toggles, Zahnrad Workspace Settings)
-//! * [`cue_table`] – zentrale Cue-Liste (QLab-Spaltenlayout)
+//! * [`cue_table`] – zentrale Cue-Liste (Spaltenlayout)
 //! * [`stage_editor`] – Stage-Editor (Regionen, Edge Blends, Layer)
 //! * [`workspace_settings`] – Fenster „Workspace Settings" (Nav + Seiten)
 //! * [`stage_view`] – Stage-Monitor, Route-Vorschau & Device-Ausgabe (Vollbild)
 //! * [`app`] – `ShowApp` (eframe::App) mit Panel-Orchestrierung
 //! * [`state`] – `UiState`: persistiertes UI-Layout (serde)
-//! * [`problems`] – Broken-Cue-Erkennung (QLab „broken cue")
+//! * [`problems`] – Broken-Cue-Erkennung („broken cue")
 //! * [`demo`] – Demo-Show für den ersten Start
 //! * [`theme`] – Dark-Theme, Flächen-/Status-Farben, Layout-Konstanten,
 //!   `tab_bar`/`section_label`/`panel_frame`

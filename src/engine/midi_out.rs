@@ -1,4 +1,4 @@
-//! MIDI-Ausgang für MIDI-Cues (QLab 5 „MIDI Cue" sendet): hält eine
+//! MIDI-Ausgang für MIDI-Cues („MIDI Cue" sendet): hält eine
 //! midir-`MidiOutputConnection` offen und schickt Wire-Bytes
 //! ([`crate::core::MidiMessage::to_bytes`]).
 //!

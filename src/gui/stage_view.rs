@@ -1,9 +1,9 @@
 //! Stage-/Route-Ansichten: Monitor-Fenster pro Stage, Vorschau-Fenster pro
-//! Output Route und randlose Device-Ausgabe (QLab 5:
-//! **Stage → Region → Output Route → Device**).
+//! Output Route und randlose Device-Ausgabe
+//! (**Stage → Region → Output Route → Device**).
 //!
 //! * **Stage-Monitor** ([`draw_stage_windows`]): `egui::Window` pro Stage
-//!   mit dem komponierten Canvas (QLab „Monitor“-Fenster).
+//!   mit dem komponierten Canvas („Monitor“-Fenster).
 //! * **Route-Vorschau** ([`draw_route_previews`]): ein Fenster pro Route
 //!   (`Route: <Name>`) – für die Vorschau zählt der Inhalt, nicht der
 //!   Bildschirm. Testbild-Linien werden bei Verkleinerung nachgezeichnet.
@@ -151,7 +151,7 @@ fn fallback_frame(app: &ShowApp, stage_name: &str) -> Option<Arc<VideoFrame>> {
     None
 }
 
-/// Stage-Monitor-Fenster (ein Fenster pro geöffneter Stage, QLab „Monitor“).
+/// Stage-Monitor-Fenster (ein Fenster pro geöffneter Stage, „Monitor“).
 pub fn draw_stage_windows(app: &mut ShowApp, ctx: &Context) {
     let stage_names: Vec<String> = app.stage_windows.iter().cloned().collect();
     if !stage_names.is_empty() {

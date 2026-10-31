@@ -1,4 +1,4 @@
-//! MIDI-Steuerung: Controller-Note-On → RemoteCommands (QLab „MIDI-Cues"-Stil).
+//! MIDI-Steuerung: Controller-Note-On → RemoteCommands.
 //!
 //! Note-Mapping (Channel egal, Note-On = Velocity > 0), Default:
 //! * Note 0 (C-1) → [`RemoteCommand::Go`]

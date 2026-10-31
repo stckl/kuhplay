@@ -324,9 +324,9 @@ fn remote_config_from_env() {
 
     // OSC-Präfix (Default + Custom).
     assert_eq!(cfg.osc_prefix, "/kuhplay");
-    std::env::set_var("KUHPLAY_OSC_PREFIX", "/qlab");
+    std::env::set_var("KUHPLAY_OSC_PREFIX", "/show");
     let cfg = RemoteConfig::from_env();
-    assert_eq!(cfg.osc_prefix, "/qlab");
+    assert_eq!(cfg.osc_prefix, "/show");
 
     // MIDI-Map (Default + Custom; kaputte Paare werden ignoriert).
     assert_eq!(cfg.midi_map, MidiNoteMap::default());
@@ -520,7 +520,7 @@ fn remote_structure_and_settings_commands_apply() {
     });
     assert_eq!(app.audio_patch.channels[0].output, 4);
 
-    // Video-Routing (QLab 5: Route/Region statt Screen).
+    // Video-Routing (Route/Region statt Screen).
     app.handle_remote_command(RemoteCommand::AddRoute {
         name: "Beamer".to_string(),
         width: 1920,

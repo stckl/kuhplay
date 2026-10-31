@@ -1,4 +1,4 @@
-//! Integrationstests für das Video-Routing (QLab 5: Stage → Region →
+//! Integrationstests für das Video-Routing (Stage → Region →
 //! Output Route → Device).
 //!
 //! Phase 1: Migration alter Shows. Das feste JSON-Beispiel

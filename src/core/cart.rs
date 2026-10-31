@@ -1,4 +1,4 @@
-//! Carts: mehrere unabhängige Cue-Listen (QLab-Pendant: Cart-Fenster).
+//! Carts: mehrere unabhängige Cue-Listen (Cart-Fenster).
 //!
 //! Ein [`CartManager`] verwaltet benannte [`CueList`]s. GO, Selektion und
 //! Playhead wirken immer auf den **aktiven Cart**; alle anderen Carts bleiben
@@ -117,7 +117,7 @@ impl CartManager {
         self.active_mut().go()
     }
 
-    /// GO im aktiven Cart inkl. Auto-Continue-Ketten (QLab „Cue Sequences").
+    /// GO im aktiven Cart inkl. Auto-Continue-Ketten („Cue Sequences").
     pub fn go_chained(&mut self) -> Option<GoOutcome> {
         self.active_mut().go_chained()
     }
@@ -334,14 +334,14 @@ impl CartManager {
         self.active_mut().reset();
     }
 
-    /// Reset ALLER Carts (QLab Sidebar: Reset wirkt workspace-weit).
+    /// Reset ALLER Carts (Reset wirkt workspace-weit).
     pub fn reset_all(&mut self) {
         for cart in &mut self.carts {
             cart.reset();
         }
     }
 
-    /// Pausiert alle laufenden Cues in ALLEN Carts (QLab: „Pause All").
+    /// Pausiert alle laufenden Cues in ALLEN Carts („Pause All").
     pub fn pause_all_running(&mut self) -> Vec<EngineCommand> {
         let mut commands = Vec::new();
         for cart in &mut self.carts {
@@ -350,7 +350,7 @@ impl CartManager {
         commands
     }
 
-    /// Setzt alle pausierten Cues in ALLEN Carts fort (QLab: „Resume All").
+    /// Setzt alle pausierten Cues in ALLEN Carts fort („Resume All").
     pub fn resume_all_running(&mut self) -> Vec<EngineCommand> {
         let mut commands = Vec::new();
         for cart in &mut self.carts {
@@ -359,7 +359,7 @@ impl CartManager {
         commands
     }
 
-    /// Stoppt alle laufenden Cues in ALLEN Carts hart (QLab: „Panic" wirkt workspace-weit).
+    /// Stoppt alle laufenden Cues in ALLEN Carts hart („Panic" wirkt workspace-weit).
     /// Das zugehörige `EngineCommand::StopAll` wird vom Aufrufer separat gesendet.
     pub fn stop_all_running_all(&mut self) {
         for cart in &mut self.carts {

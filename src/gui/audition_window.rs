@@ -1,4 +1,4 @@
-//! Audition-Fenster (QLab 5 „Audition Window"): eigenes Fenster, das das
+//! Audition-Fenster („Audition Window"): eigenes Fenster, das das
 //! Bild des gerade laufenden Video-/HTML5-/Diashow-Cues zeigt – unabhängig
 //! von Stages/Outputs (Vorschau im Audition Mode oder parallel zur Show).
 //!

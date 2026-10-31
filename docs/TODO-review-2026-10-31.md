@@ -184,6 +184,17 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   „KuhPlay compatible with Blackmagic Design DeckLink“ oder „KuhPlay for Blackmagic Design
   DeckLink“ (Klausel 6.2).
 
+- [ ] **G0. Absturz bei Control-Cue-Zyklen beheben** (kritisch, zuerst und eigener Commit)
+  - Ort: `go_control` → `trigger_by_number` → `trigger_at` (`src/core/cue_list.rs`), seit Block D.
+  - Beleg: Cue 1 (Control, Start → „2“) und Cue 2 (Control, Start → „1“): GO endet mit `stack
+    overflow, aborting`, die ganze App stürzt ab. Der Control-Cue bleibt während seiner Aktion
+    `Standby`, die Prüfung in `trigger_by_number` greift daher nicht. Auch ein Cue, der sich
+    selbst startet, und längere Ketten testen.
+  - Fix: Cue vor der Aktion als ausgelöst markieren oder die Tiefe begrenzen; ein Zyklus darf nur
+    einen Fehlerzustand oder einen Hinweis erzeugen, keinen Absturz. Regressionstests dazu.
+  - **Hinweis zu Block E:** Script-Cues enden ohne Done-Event nach 1000 ms
+    (`KUHPLAY_SCRIPT_SETTLE_MS`). Längeres JS kann damit weiterhin abgeschnitten werden, und der Fix
+    ist nur mit einer Fake-WebView getestet. Das ist mit dem CEF-Umbau neu zu prüfen.
 - [ ] **G1. Farbraum korrigieren** (zuerst, klein und eigener Commit)
   - Ort: `rgba_to_uyvy422` (`src/engine/decklink.rs`) rechnet immer mit BT.601.
   - Fix: BT.709 für HD und UHD, BT.601 nur für SD. Tests mit bekannten Farbwerten.
@@ -228,9 +239,14 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     müssen weiter funktionieren.
   - Fehlende Programme klar melden, und ein Video-Test läuft ohne ffmpeg im `PATH`.
 - [ ] **G8. Test auf echter Hardware**
-  - Vorhandene Karten auf Mac und ZBOOK nach Absprache mit einem deaktivierten Test wie dem
-    Windows-Test prüfen: Dauerlauf, Farben, Key/Fill, Bildaussetzer. Linux bleibt ohne
-    Hardware-Test, falls keine Karte verfügbar ist; das im Commit und im README nennen.
+  - Am Mac ist eine **UltraStudio Monitor 3G** angeschlossen und wird vom SDK mit Ausgang erkannt
+    (Treiber 16.5, SDK 16.0). Dort mit einem standardmäßig deaktivierten Test prüfen: Dauerlauf,
+    Farben, Bildaussetzer. Key/Fill nur, soweit diese Karte es kann; sonst offen nennen.
+  - Fehlt die Karte plötzlich: Mac neu starten, das hat das Problem schon einmal behoben.
+  - Die Windows-Tests auf dem ZBOOK macht der Auftraggeber am 2026-11-01, die Karte hängt dann
+    dort. Vorher muss alles für Windows bauen.
+  - Linux bleibt ohne Hardware-Test, falls keine Karte verfügbar ist; das im Commit und im README
+    nennen.
 
 ## Block F: Look and Feel wie QLab 5 (zum Schluss, nach den Blöcken A–E)
 

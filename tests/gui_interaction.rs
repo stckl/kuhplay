@@ -4,7 +4,7 @@
 //! `PointerButton(released)` über drei Frames) gegen die Tabelle und prüft:
 //!
 //! * Klick auf eine Zeile **selektiert** den Cue (Inspector-Anzeige),
-//! * Klick in die **Status-Spalte** setzt den Playhead (QLab) ohne Selektion,
+//! * Klick in die **Status-Spalte** setzt den Playhead ohne Selektion,
 //! * **Doppelklick** öffnet den Inline-Editor (Enter/Klick daneben
 //!   committen, Esc bricht ab),
 //! * **⌘-Klick** toggelt die Mehrfachselektion, **⇧-Klick** wählt einen
@@ -507,7 +507,7 @@ fn clicking_status_column_sets_playhead_without_selecting() {
     assert_eq!(
         carts.cursor(),
         1,
-        "Klick in der Status-Spalte muss den Playhead setzen (QLab)"
+        "Klick in der Status-Spalte muss den Playhead setzen"
     );
     assert_eq!(
         carts.selected_index(),
@@ -616,7 +616,7 @@ fn escape_cancels_inline_editor() {
 }
 
 /// Klick auf eine andere Zeile: Der Editor verliert den Fokus und wird
-/// übernommen (QLab-Verhalten); der Klick selektiert zugleich die Zeile.
+/// übernommen; der Klick selektiert zugleich die Zeile.
 #[test]
 fn click_elsewhere_commits_inline_editor() {
     let ctx = egui::Context::default();
@@ -655,7 +655,7 @@ fn click_elsewhere_commits_inline_editor() {
     );
 }
 
-/// Doppelklick auf die Duration-Zelle: Timecode-Edit („5“ = 5 s, QLab
+/// Doppelklick auf die Duration-Zelle: Timecode-Edit („5“ = 5 s,
 /// akzeptiert nackte Sekunden). Die Spalte wird über den Header-Text
 /// kalibriert.
 #[test]
@@ -705,7 +705,7 @@ fn double_click_edits_duration_inline_as_timecode() {
     assert_eq!(
         carts.active().cues()[1].duration,
         Duration::from_secs(5),
-        "Duration-Editor parst „5“ als 5 Sekunden (QLab-Timecode)"
+        "Duration-Editor parst „5“ als 5 Sekunden (Timecode)"
     );
 }
 
@@ -904,7 +904,7 @@ fn shift_click_selects_range() {
     let id0 = carts.active().cues()[0].id;
 
     // Einfacher Klick auf Zeile 1 (setzt den Anker), dann ⇧-Klick auf
-    // Zeile 3 → Bereich 1..=3 ersetzt die Selektion (QLab).
+    // Zeile 3 → Bereich 1..=3 ersetzt die Selektion.
     click_button_mod(
         &ctx,
         &mut carts,
@@ -1040,7 +1040,7 @@ fn context_menu_set_color_no_color_requests_color_none() {
 }
 
 /// Kontextmenü auf einer Zeile innerhalb einer Mehrfachselektion wirkt auf
-/// die GANZE Selektion (QLab) und zeigt den Plural („Disarm Cues“).
+/// die GANZE Selektion und zeigt den Plural („Disarm Cues“).
 #[test]
 fn context_menu_applies_to_effective_multi_selection() {
     let ctx = egui::Context::default();
@@ -1104,7 +1104,7 @@ fn context_menu_applies_to_effective_multi_selection() {
 }
 
 /// Header-Rechtsklick → Spalten-Menü: „Target“ ausblenden versteckt die
-/// Spalte (QLab: Spalten konfigurierbar).
+/// Spalte (Spalten konfigurierbar).
 #[test]
 fn header_context_menu_hides_column() {
     let ctx = egui::Context::default();
@@ -1182,7 +1182,7 @@ fn header_context_menu_hides_column() {
     );
 }
 
-/// Aufklapp-Dreieck einer Gruppe klappt die Kinder aus/ein (QLab).
+/// Aufklapp-Dreieck einer Gruppe klappt die Kinder aus/ein.
 #[test]
 fn triangle_click_collapses_and_expands_group() {
     let ctx = egui::Context::default();
@@ -1227,7 +1227,7 @@ fn triangle_click_collapses_and_expands_group() {
     // Dreieck-Position über das Caret-Down-Glyph finden (einzige Gruppe;
     // aufgeklappt zeigt das Dreieck nach unten). `find_text_center_last`:
     // Der Playhead der Cursor-Zeile nutzt dasselbe Caret-Right-Glyph wie
-    // das eingeklappte Dreieck (QLab: beides ein Rechtspfeil) und wird in
+    // das eingeklappte Dreieck (beides ein Rechtspfeil) und wird in
     // der Status-Spalte zuerst gemalt – der letzte Treffer ist das Dreieck
     // in der Type-Spalte.
     let caret = find_text_center_last(&out, "\u{E136}").expect("Aufklapp-Dreieck gerendert");
@@ -1377,7 +1377,7 @@ fn cue_color_can_be_set_and_cleared() {
     let mut app = ShowApp::new(spawn_mock_engine());
     app.carts_mut().select(Some(0));
 
-    // Farbe setzen (QLab „Cue Color").
+    // Farbe setzen („Cue Color").
     app.set_selected_color(Some(CUE_COLORS[0]));
     assert_eq!(app.carts().active().cues()[0].color, Some(CUE_COLORS[0]));
     // Andere Farbe wählen.
@@ -1695,7 +1695,7 @@ fn engine_events_update_cues_in_inactive_carts() {
     app.carts_mut().set_active(0).unwrap();
 
     // Engine-Event: Finished für „A" → Status landet in Cart 2 (nicht-aktiv),
-    // Auto-Continue feuert „B" in derselben Liste (Cart 2) – QLab-5-Semantik
+    // Auto-Continue feuert „B" in derselben Liste (Cart 2) – Semantik
     // (Auto-Continue erst nach Abschluss, Auto-Follow schon beim Start).
     evt_tx.send(EngineEvent::Finished { cue_id: id_a }).unwrap();
     app.poll_engine_events();
@@ -2081,7 +2081,7 @@ fn add_cue_numbers_are_unique_after_delete() {
         numbers.len(),
         "keine doppelten Q-Nummern: {numbers:?}"
     );
-    // QLab: höchste vorhandene Nummer + 1 (Demo-Max = 13 → „14").
+    // höchste vorhandene Nummer + 1 (Demo-Max = 13 → „14").
     assert_eq!(app.carts().active().cues().last().unwrap().number, "14");
 }
 
@@ -2611,7 +2611,7 @@ fn delete_key_removes_selected_cue_only_in_edit_mode() {
     app.set_show_mode(false);
 }
 
-/// ⌘D dupliziert die Selektion; ⌘0–⌘9 legen Cues des Typs an (QLab Cues-Menü).
+/// ⌘D dupliziert die Selektion; ⌘0–⌘9 legen Cues des Typs an (Cues-Menü).
 #[test]
 fn cmd_d_duplicates_selection_and_cmd_digits_add_typed_cues() {
     let (mut app, _cmd_rx, _evt) = hotkey_app();
@@ -2630,13 +2630,13 @@ fn cmd_d_duplicates_selection_and_cmd_digits_add_typed_cues() {
     assert_eq!(
         app.carts().active().selected().map(|c| c.cue_type),
         Some(CueType::Audio),
-        "⌘1 = neuer Audio-Cue, direkt selektiert (QLab Cues-Menü)"
+        "⌘1 = neuer Audio-Cue, direkt selektiert (Cues-Menü)"
     );
     run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::Num0, true)], 1.2);
     assert_eq!(
         app.carts().active().selected().map(|c| c.cue_type),
         Some(CueType::Group),
-        "⌘0 = neuer Group-Cue, direkt selektiert (QLab Cues-Menü)"
+        "⌘0 = neuer Group-Cue, direkt selektiert (Cues-Menü)"
     );
 
     // Im Show-Mode legen die Ziffern keine Cues an.
@@ -2647,7 +2647,7 @@ fn cmd_d_duplicates_selection_and_cmd_digits_add_typed_cues() {
     app.set_show_mode(false);
 }
 
-/// `[`/`]`/Esc dispatchen Pause All / Resume All / Panic (QLab 5).
+/// `[`/`]`/Esc dispatchen Pause All / Resume All / Panic.
 #[test]
 fn pause_resume_panic_keys_dispatch_from_table() {
     let (mut app, cmd_rx, _evt) = hotkey_app();

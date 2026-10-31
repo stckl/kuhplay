@@ -1,6 +1,6 @@
 //! Reiner UI-Zustand (Panel-Sichtbarkeit, aktive Tabs, Fenster) als
 //! serde-fähiger Struct – Persistenz des Workspace-Layouts via
-//! `eframe::Storage` (QLab: Workspace-Einstellungen bleiben erhalten).
+//! `eframe::Storage` (Workspace-Einstellungen bleiben erhalten).
 //!
 //! TODO.md Phase 0b („`ShowApp` ist ein God-Object"): Die UI-Felder wandern
 //! aus `ShowApp` in diesen eigenen Struct; `ShowApp::ui` ist die eine Quelle.
@@ -13,7 +13,7 @@ use super::workspace_settings::SettingsPage;
 /// Storage-Key des UI-Zustands in `eframe::Storage`.
 pub const UI_STATE_STORAGE_KEY: &str = "kuhplay.ui_state";
 
-/// Storage-Key der Workspace-Templates (QLab 5 „Workspace Templates") in
+/// Storage-Key der Workspace-Templates („Workspace Templates") in
 /// `eframe::Storage` – benannte Layout-Vorlagen (Snapshots des [`UiState`]).
 pub const UI_TEMPLATES_STORAGE_KEY: &str = "kuhplay.ui_templates";
 
@@ -37,7 +37,7 @@ pub const CUE_COLUMN_TITLES: [&str; CUE_COLUMN_COUNT] = [
 ];
 
 /// Persistiertes Spalten-Layout der Cue-Tabelle (TODO.md Phase 3):
-/// veränderbare Breiten + ein-/ausblendbare Spalten (QLab: Rechtsklick
+/// veränderbare Breiten + ein-/ausblendbare Spalten (Rechtsklick
 /// auf den Header). Breiten werden pro Frame aus der Tabelle zurückgelesen
 /// (`TableRow::widths`) und landen so in der Persistenz.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub struct CueColumnLayout {
 impl Default for CueColumnLayout {
     fn default() -> Self {
         Self {
-            // QLab-Default-Breiten (Name = remainder, Breite hier ungenutzt).
+            // Default-Breiten (Name = remainder, Breite hier ungenutzt).
             widths: [46.0, 38.0, 60.0, 0.0, 150.0, 84.0, 84.0, 84.0, 48.0],
             hidden: [false; CUE_COLUMN_COUNT],
             prev_hidden: [false; CUE_COLUMN_COUNT],
@@ -73,16 +73,16 @@ impl CueColumnLayout {
     }
 }
 
-/// Persistierter UI-Zustand (QLab-Workspace-Layout).
+/// Persistierter UI-Zustand (Workspace-Layout).
 ///
 /// `#[serde(default)]` auf Container-Ebene: fehlende Felder laden als
 /// Defaults (abwärtskompatibel zu älteren/leereren Persistenz-Daten).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
-    /// Sichtbarkeit Masthead (QLab: ein-/ausblendbar).
+    /// Sichtbarkeit Masthead (ein-/ausblendbar).
     pub masthead_visible: bool,
-    /// Sichtbarkeit Toolbox (linke Leiste, QLab 5 default: sichtbar).
+    /// Sichtbarkeit Toolbox (linke Leiste, default: sichtbar).
     pub toolbox_visible: bool,
     /// Sichtbarkeit Sidebar (rechte Leiste).
     pub sidebar_visible: bool,
@@ -100,11 +100,11 @@ pub struct UiState {
     pub about_open: bool,
     /// „Keyboard Shortcuts"-Fenster geöffnet (TODO.md Phase 5).
     pub shortcuts_open: bool,
-    /// „File Target Search"-Fenster geöffnet (QLab 5 Tools-Menü).
+    /// „File Target Search"-Fenster geöffnet (Tools-Menü).
     pub target_search_open: bool,
-    /// Audition-Fenster geöffnet (QLab 5 „Audition Window").
+    /// Audition-Fenster geöffnet („Audition Window").
     pub audition_window_open: bool,
-    /// „Workspace Status"-Fenster geöffnet (QLab 5 Tools-Menü).
+    /// „Workspace Status"-Fenster geöffnet (Tools-Menü).
     pub status_window_open: bool,
     /// Filter-Query des File-Target-Search-Fensters (reiner Laufzeit-Zustand).
     #[serde(skip)]
@@ -142,7 +142,7 @@ pub struct FindState {
 }
 
 impl Default for UiState {
-    /// QLab-5-Default-Layout: alle Panels sichtbar, Toolbox eingeblendet.
+    /// Default-Layout: alle Panels sichtbar, Toolbox eingeblendet.
     fn default() -> Self {
         Self {
             video_tab: Default::default(),
@@ -179,7 +179,7 @@ impl UiState {
     }
 }
 
-/// Eine benannte Workspace-Vorlage (QLab 5 „Workspace Templates"): Snapshot
+/// Eine benannte Workspace-Vorlage („Workspace Templates"): Snapshot
 /// des UI-Layouts, das jederzeit wieder angewendet werden kann.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceTemplate {

@@ -6,19 +6,15 @@
 //! Shortcuts"-Fenster (Help-Menü) rendert die Tabelle 1:1. Menüanzeige
 //! und Verhalten können so nie auseinanderlaufen.
 //!
-//! Die Belegung folgt dem QLab-5-Handbuch („Keyboard Shortcuts",
-//! https://qlab.app/docs/v5/general/keyboard-shortcuts/):
+//! Belegung:
 //!
 //! * Space = GO, Esc = Panic All, `[` = Pause All, `]` = Resume All
-//! * ⌘0–⌘9 = neue Cues (QLab: Group/Audio/Mic/Video/Camera/Text/Light/
-//!   Fade/Network/MIDI – KuhPlay belegt die Ziffern mit seinen eigenen
-//!   Cue-Typen, Abweichungen siehe `docs/qlab5-parity.md`)
+//! * ⌘0–⌘9 = neue Cues in den Standard-Cue-Typen
 //! * ⌘I/⌘K/⌘L = Inspector/Toolbox/Lists & Carts, ⌘F = Find, ⌘G = Find Next
 //! * ⌘N/⌘O/⌘S/⇧⌘S/⌘, /⌘Q = Datei-Menü
 //!
-//! Abweichungen (z. B. ⌘→Ctrl auf Linux/Windows – egui bildet
-//! `Modifiers::command` plattformadaptiv ab, siehe `matches`) sind in
-//! `docs/qlab5-parity.md` dokumentiert.
+//! ⌘ wird auf Linux/Windows zu Ctrl: egui bildet `Modifiers::command`
+//! plattformadaptiv ab, siehe `matches`.
 
 use egui::{Key, Modifiers, RichText};
 
@@ -29,29 +25,27 @@ use crate::core::CueType;
 pub enum ShortcutAction {
     /// GO (nächster armed Cue).
     Go,
-    /// Panic: alles sofort stoppen (QLab: Esc, Doppel-Esc = Hard Stop –
-    /// in KuhPlay nicht abgebildet, siehe `docs/qlab5-parity.md`).
+    /// Panic: alles sofort stoppen (Esc).
     PanicAll,
-    /// Pause All (QLab: `[`).
+    /// Pause All (`[`).
     PauseAll,
-    /// Resume All (QLab: `]`).
+    /// Resume All (`]`).
     ResumeAll,
-    /// Reset All (QLab hat keine Standard-Taste – Menü-only, `key: None`).
+    /// Reset All (keine Standard-Taste – Menü-only, `key: None`).
     ResetAll,
-    /// Playhead eine Zeile nach oben (nackte Pfeiltaste; QLab nutzt dafür
-    /// ⌘↑ – Abweichung dokumentiert).
+    /// Playhead eine Zeile nach oben (nackte Pfeiltaste).
     PlayheadUp,
     /// Playhead eine Zeile nach unten.
     PlayheadDown,
-    /// Selektierten Cue nach oben verschieben (⌘↑ und ⌥⌘↑, QLab: ⌥⌘↑).
+    /// Selektierten Cue nach oben verschieben (⌘↑ und ⌥⌘↑).
     MoveCueUp,
     /// Selektierten Cue nach unten verschieben (⌘↓ und ⌥⌘↓).
     MoveCueDown,
-    /// Neuen Cue des Typs erzeugen (QLab Cues-Menü: ⌘0–⌘9).
+    /// Neuen Cue des Typs erzeugen (⌘0–⌘9).
     NewCue(CueType),
     /// Inspector ein-/ausblenden (⌘I).
     ToggleInspector,
-    /// Sidebar ein-/ausblenden (⌘L, QLab: „Lists / Carts & Active Cues").
+    /// Sidebar ein-/ausblenden (⌘L, „Lists / Carts & Active Cues").
     ToggleSidebar,
     /// Toolbox ein-/ausblenden (⌘K).
     ToggleToolbox,
@@ -71,13 +65,11 @@ pub enum ShortcutAction {
     Find,
     /// Nächster Find-Treffer (⌘G; zusätzlich Enter in der Find-Leiste).
     FindNext,
-    /// Selektierten Cue löschen – nur Edit-Mode (⌘⌫ sowie ⌫/Delete;
-    /// QLab: ⌘⌫).
+    /// Selektierten Cue löschen – nur Edit-Mode (⌘⌫ sowie ⌫/Delete).
     DeleteCue,
-    /// Selektion duplizieren (⌘D; QLab 5 nutzt ⌘D für „Delete numbers" –
-    /// KuhPlay hat diesen Befehl nicht, Abweichung dokumentiert).
+    /// Selektion duplizieren (⌘D).
     DuplicateCues,
-    /// Selektion zu Group-Cue gruppieren (QLab 5: kein Standard-Kürzel,
+    /// Selektion zu Group-Cue gruppieren (kein Standard-Kürzel,
     /// ⌘G ist Find Next – daher Menü-only, `key: None`).
     GroupCues,
 }
@@ -309,7 +301,7 @@ pub const ALL: &[Shortcut] = &[
         modifiers: mods(false, false, false),
         label: "Group Cues",
     },
-    // --- Cues (neue Cue-Typen; QLab 5 Cues-Menü: ⌘0–⌘9) ----------------
+    // --- Cues (neue Cue-Typen; Cues-Menü: ⌘0–⌘9) ----------------
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Group),
@@ -457,7 +449,7 @@ pub fn shortcut_for(action: ShortcutAction) -> Option<&'static Shortcut> {
 }
 
 /// Menü-Label mit angehängtem Kürzel aus der Tabelle, z. B.
-/// „Open Show…  ⌘O“ (zweispaltig wie in QLab-Menüs; ohne Kürzel nur
+/// „Open Show…  ⌘O“ (zweispaltig; ohne Kürzel nur
 /// das Label).
 pub fn menu_label(label: &str, action: ShortcutAction) -> String {
     match shortcut_for(action).map(|s| s.display()) {
@@ -550,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn display_renders_qlab_style_symbols() {
+    fn display_renders_symbols() {
         assert_eq!(shortcut_for(ShortcutAction::Go).unwrap().display(), "Space");
         assert_eq!(
             shortcut_for(ShortcutAction::PanicAll).unwrap().display(),
@@ -589,7 +581,7 @@ mod tests {
                 .display(),
             "⌘0"
         );
-        // Reset All hat kein Standard-Kürzel (QLab 5 ebenfalls nicht) → „–“.
+        // Reset All hat kein Standard-Kürzel → „–“.
         let reset = ALL
             .iter()
             .find(|s| s.action == ShortcutAction::ResetAll)
@@ -646,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn qlab5_minimum_set_is_covered() {
+    fn minimum_shortcut_set_is_covered() {
         // TODO.md Phase 5: Space=GO, Esc=Panic, ↑/↓=Playhead, ⌘-Zahlen,
         // Pause/Resume/Reset All, ⌘I/⌘K/⌘L, ⌘F, Delete, ⌘D, Group.
         for action in [
@@ -667,8 +659,8 @@ mod tests {
         ] {
             assert!(ALL.iter().any(|s| s.action == action), "fehlt: {action:?}");
         }
-        // ⌘0–⌘9 belegen exakt die zehn QLab-Cue-Typen (jede Ziffer genau
-        // einmal). Weitere Cue-Typen (Wait/Memo/Text) haben wie in QLab 5
+        // ⌘0–⌘9 belegen exakt die zehn Standard-Cue-Typen (jede Ziffer genau
+        // einmal). Weitere Cue-Typen (Wait/Memo/Text) haben
         // kein Standard-Kürzel – sie kommen über Toolbox/Menü.
         let mut digits: Vec<Key> = ALL
             .iter()

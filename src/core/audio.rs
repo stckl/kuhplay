@@ -46,7 +46,7 @@ pub enum FadeCurve {
     /// Lineare Interpolation.
     #[default]
     Linear,
-    /// dB-Interpolation über Zeit (gehörrichtig, QLab-Standard für Audio).
+    /// dB-Interpolation über Zeit (gehörrichtig, Standard für Audio).
     Decibel,
 }
 
@@ -77,7 +77,7 @@ pub fn db_to_linear(db: f32) -> f32 {
     10f32.powf(db / 20.0)
 }
 
-/// dB-Floor für Fades gegen 0 (verhindert `-∞`-Interpolation; QLab nutzt -∞,
+/// dB-Floor für Fades gegen 0 (verhindert `-∞`-Interpolation;
 /// die Engine begrenzt hier auf -96 dB ≈ Stille).
 pub const DB_FLOOR: f32 = -96.0;
 

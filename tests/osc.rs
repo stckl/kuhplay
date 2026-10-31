@@ -160,16 +160,16 @@ fn osc_custom_prefix_in_and_out() {
     let listen = free_port();
     let (socket, out_port) = out_socket();
     let (mut cmd_rx, event_tx) =
-        start_osc_server(listen, Some(("127.0.0.1".to_string(), out_port)), "/qlab");
+        start_osc_server(listen, Some(("127.0.0.1".to_string(), out_port)), "/show");
     std::thread::sleep(Duration::from_millis(100));
 
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    // In: /qlab/go → Go (Default-Präfix /kuhplay matcht nicht).
-    send_osc(&sender, listen, "/qlab/go", vec![]);
+    // In: /show/go → Go (Default-Präfix /kuhplay matcht nicht).
+    send_osc(&sender, listen, "/show/go", vec![]);
     assert!(matches!(cmd_rx.blocking_recv().unwrap(), RemoteCommand::Go));
 
-    // Out: Events landen unter /qlab/…
+    // Out: Events landen unter /show/…
     let id = uuid::Uuid::new_v4();
     event_tx
         .send(RemoteEvent::CueStarted {
@@ -179,6 +179,6 @@ fn osc_custom_prefix_in_and_out() {
         })
         .unwrap();
     let msg = recv_osc(&socket);
-    assert_eq!(msg.addr, "/qlab/cue/started");
+    assert_eq!(msg.addr, "/show/cue/started");
     assert_eq!(msg.args[1], OscType::String("1".to_string()));
 }

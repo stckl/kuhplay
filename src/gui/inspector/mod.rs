@@ -1,15 +1,15 @@
-//! Inspector (unteres Panel, QLab 5 „The Inspector").
+//! Inspector (unteres Panel).
 //!
 //! ## Phase 4 (TODO.md): typabhängige Tabs + Kopfzeile
 //!
 //! * **Kopfzeile** über den Tabs: Typ-Icon, Cue-Nummer und Name des
 //!   selektierten Cues (bei Mehrfachauswahl „N cues selected").
-//! * **Typabhängige Tabs** wie in QLab 5 (siehe [`tabs_for`]): alle Typen
+//! * **Typabhängige Tabs** (siehe [`tabs_for`]): alle Typen
 //!   „Basics" + „Triggers"; Audio/Video zusätzlich „Time & Loops" (+ „Audio
 //!   Levels", Video auch „Geometry"); Fade „Curve"; HTML5 „Geometry" +
 //!   „Source"; Diashow „Geometry" + „Slides"; HTML-Data „Data". Tabs, die
 //!   es in KuhPlay nicht gibt, werden weggelassen (nicht leer angezeigt).
-//! * „Basics" ist **zweispaltig wie QLab** (links Q#/Name/Target/Pre Wait/
+//! * „Basics" ist **zweispaltig** (links Q#/Name/Target/Pre Wait/
 //!   Duration/Post Wait/Continue, rechts Armed/Color/Notes/Type) –
 //!   siehe `basics.rs`.
 //! * **Zeitfelder** zeigen/akzeptieren Timecode `MM:SS.mmm` (wie die
@@ -26,7 +26,7 @@
 //! Engine arbeitet auf ihrem eigenen Thread unbeeindruckt weiter.
 //!
 //! **Show-Mode:** Der Inspector bleibt sichtbar, ist aber read-only
-//! (`ui.disable()` in [`draw`] – QLab-Sicherheitsfunktion).
+//! (`ui.disable()` in [`draw`] – Sicherheitsfunktion).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -93,7 +93,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     }
 
     if app.show_mode {
-        // Show-Mode: Inspector read-only (QLab-Sicherheitsfunktion).
+        // Show-Mode: Inspector read-only (Sicherheitsfunktion).
         ui.disable();
     }
     egui::ScrollArea::vertical()
@@ -146,7 +146,7 @@ fn draw_header(ui: &mut egui::Ui, app: &ShowApp) {
     });
 }
 
-/// Typabhängige Tab-Liste wie in QLab 5 (TODO.md Phase 4). Tabs, die es
+/// Typabhängige Tab-Liste (TODO.md Phase 4). Tabs, die es
 /// in KuhPlay (noch) nicht gibt, fehlen statt leer angezeigt zu werden.
 pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
     use InspectorTab::*;
@@ -170,7 +170,7 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
 }
 
 /// Zeitfeld: Anzeige und Eingabe als Timecode `MM:SS.mmm` (wie die
-/// Cue-Liste). QLab akzeptiert `MM:SS.mmm`, `HH:MM:SS.mmm` und nackte
+/// Cue-Liste). Akzeptiert `MM:SS.mmm`, `HH:MM:SS.mmm` und nackte
 /// Sekunden (siehe [`parse_timecode`]); ungültige Eingabe wird verworfen.
 /// DragValue-Ziehen bleibt erhalten (Schrittweite in Sekunden).
 pub fn time_field(ui: &mut egui::Ui, value: &mut Duration) -> egui::Response {

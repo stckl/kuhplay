@@ -1,4 +1,4 @@
-//! Light-Cue (QLab 5, Minimal): Art-Net-DMX-Paket per UDP (Port 6454).
+//! Light-Cue (Minimal): Art-Net-DMX-Paket per UDP (Port 6454).
 //! Core-Verhalten (Sofort-Cue, Paket-Bytes, Validierung) + UDP-Loopback
 //! über die direkt konstruierte Real-Engine (deterministisch, keine Soundkarte).
 

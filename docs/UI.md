@@ -1,6 +1,6 @@
 # KuhPlay – UI-Richtlinie
 
-**Vorbild:** QLab 5 (Workspace-Fenster). **Ziel:** übersichtlich. Ein
+**Ziel:** übersichtlich. Ein
 Operator muss in einer dunklen Regie in **unter einer Sekunde** sehen:
 *Was kommt als Nächstes? Was läuft gerade? Ist etwas kaputt?*
 
@@ -63,7 +63,7 @@ Zeile „Menüleiste" unten entfällt dort. Echte Menü-Kürzel gibt es nur für
 * Der **Footer ist immer die unterste Zeile** des Fensters – unter dem
   Inspector, nie dazwischen.
 * Der **Inspector** sitzt unter Toolbox/Liste/Sidebar und geht über die
-  volle Breite (QLab 5).
+  volle Breite.
 * Toolbox (links) und Sidebar (rechts) sind optional (⌘K / ⌘L).
 * Masthead und Footer haben eine **feste Höhe**, Inspector ist in der
   Höhe ziehbar (Default 260 px).
@@ -107,7 +107,7 @@ in Panel-Modulen.
 `TEXT` und `TEXT_DIM` erfüllen WCAG AA (≥ 4,5 : 1) auf `PANEL`
 (Unit-Test). `TEXT_FAINT` ist bewusst schwächer – nur für „nichts da".
 
-### Semantische Farben (QLab-Bedeutung)
+### Semantische Farben
 
 | Farbe     | Bedeutung                       | Wo                                 |
 |-----------|---------------------------------|------------------------------------|
@@ -116,10 +116,10 @@ in Panel-Modulen.
 | Blau      | pausiert                        | Status, Fortschritt                |
 | Türkis    | Post-Wait                       | Status, Countdown                  |
 | Rot       | **kaputt** oder **Panic** – sonst nie | ✕ in der Liste, Footer-⚠, Panic |
-| QLab-Blau | Selektion                       | selektierte Zeile                  |
+| Blau      | Selektion                       | selektierte Zeile                  |
 | Akzent (Gelb) | aktiver Toggle / Badge      | Footer-Toggles, Audition-Badge     |
 
-* **Standby ist neutral**, nicht rot. Rot heißt in QLab „kaputt".
+* **Standby ist neutral**, nicht rot. Rot heißt „kaputt".
 * Transparenz nur über `gamma_multiply` (siehe `theme::progress_fill`).
 * Cue-Farbe des Benutzers = 3-px-Streifen links + sehr leichte Tönung der
   Zeile. Nie Textfarbe.
@@ -161,7 +161,7 @@ Zeiten sind immer Monospace, damit herunterzählende Werte nicht springen.
 
 ### 5.2 Cue-Liste (Fläche `LIST_BG`)
 
-Spalten (QLab): **Status · Type · Q · Name · Target · Pre-wait · Action ·
+Spalten: **Status · Type · Q · Name · Target · Pre-wait · Action ·
 Post-wait · Continue**.
 
 * Zeilenhöhe **28 px**, Kopfzeile 24 px. Zebra-Streifen `ROW_STRIPE`.
@@ -212,8 +212,8 @@ Post-wait · Continue**.
 * **Basics dreispaltig**, damit bei Default-Höhe nichts wegscrollt:
   links Q#/Name/Target/Datei, Mitte Zeiten/Continue, rechts
   Type+Armed/Color/Notes.
-* **Geometry zweispaltig:** links Stage/Layer, rechts Lage des Cues. Mode wie in
-  QLab: Fit (Standard), Fill, Stretch, Custom (eigene Position und Größe).
+* **Geometry zweispaltig:** links Stage/Layer, rechts Lage des Cues. Mode:
+  Fit (Standard), Fill, Stretch, Custom (eigene Position und Größe).
 * **Slides zweispaltig:** links Slide-Liste, rechts Crossfade/Optionen.
 * Alle Felder folgen §6.4.
 * Die Höhe hängt nicht vom Inhalt ab (nur vom Ziehen): Beim Wechsel von Cue
@@ -247,7 +247,7 @@ Post-wait · Continue**.
   Umlegen wirkt sofort, auch live; nur Show Mode sperrt es. Zuordnungen auf
   nicht verbundene Geräte bleiben in der Show erhalten (Hinweis darunter).
 * Network: PIN der Web-Remote anzeigen und ändern (4 bis 8 Ziffern).
-* Video (QLab 5 „Workspace → Video“) mit drei Reitern:
+* Video („Workspace → Video“) mit drei Reitern:
   - **Video Outputs (Stages):** Tabelle pro Stage (Name, Auflösung, Devices,
     Edit, Monitor, Delete). „New Stage“-Menü: leere Stage (1920×1080), Stage
     mit Ausgabe (neue Route + Full-Canvas-Region) oder Multi-Output-Stage
@@ -284,7 +284,7 @@ Post-wait · Continue**.
   einem Display startet die App mit Preview Windows, weil ein Vollbild sonst
   die App selbst verdeckt. Stage-Monitor („Monitor“) zeigt das Canvas.
 * Testbild: gehört zur Route und entsteht in Route-Auflösung (1 Bildpunkt =
-  1 Ausgangspixel), mit Aufbau wie das QLab-Raster: monochrom, 1 px Linien,
+  1 Ausgangspixel), mit Aufbau eines Ausrichtungsrasters: monochrom, 1 px Linien,
   Skala, Diagonalen, Kreise und Beschriftung im weißen Kasten. Ist der Kreis
   auf der Leinwand eine Ellipse, verzerrt die Darstellung dahinter. Das
   Region-Grid liegt nur über der Fläche der jeweiligen Region.

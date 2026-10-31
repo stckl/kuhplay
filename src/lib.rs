@@ -1,7 +1,7 @@
 //! # KuhPlay
 //!
 //! Plattformübergreifende Show-Control- und Cue-Playback-Software in Rust
-//! (Windows, macOS, Linux), orientiert an QLab – mit Fokus auf latenzfreie
+//! (Windows, macOS, Linux) – mit Fokus auf latenzfreie
 //! Audio-/Video-Wiedergabe.
 //!
 //! ## Architektur (strikte Schichtentrennung)
@@ -40,7 +40,7 @@
 //!    virtuellen WebView-Instanzen (JS-Bridge + JSON-Push mit exakten
 //!    Timestamps) und Diashow-Simulation. Eine produktive GStreamer-/cpal-/
 //!    wry-Engine wird hier eingehängt, ohne den Rest des Systems zu ändern.
-//! 3. [`gui`] – `egui`-Oberfläche im QLab-Dark-Look: Top-Bar (mit Cart-Switcher),
+//! 3. [`gui`] – `egui`-Oberfläche im Dark-Look: Top-Bar (mit Cart-Switcher),
 //!    Cue-Tabelle, Inspector (inkl. HTML5-Quellen-Editor, JS-Test-Button,
 //!    Slide-Editor, JSON-Editor), GO-Leiste.
 //!

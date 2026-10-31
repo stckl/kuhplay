@@ -1,4 +1,4 @@
-//! Tab „Geometry" (QLab 5, Video/HTML5/Diashow): Stage, Layer, Surface
+//! Tab „Geometry" (Video/HTML5/Diashow): Stage, Layer, Surface
 //! (Position/Größe, Crop, Hard Edge, Deckkraft) und
 //! Stage-Einstellungen (Canvas/Screen/Visible).
 
@@ -42,7 +42,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
             return;
         };
         theme::form_grid("inspector_geometry_grid").show(left, |ui| {
-            // --- Stage (QLab: Dropdown vorhandener Stages) ---
+            // --- Stage (Dropdown vorhandener Stages) ---
             theme::field_label(ui, "Stage");
             let stage_names = stages.names();
             let mut stage_name = cue.stage.clone().unwrap_or_default();
@@ -71,7 +71,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
                     if let Some(picked) = &stage_picked {
                         stage_name = picked.clone();
                     }
-                    // Freitext für neue Stage-Namen (QLab legt Stages
+                    // Freitext für neue Stage-Namen (legt Stages
                     // on-the-fly an) + „+"-Button für „Stage N".
                     ui.add(
                         egui::TextEdit::singleline(&mut stage_name)
@@ -119,7 +119,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
             ui.add(egui::DragValue::new(&mut cue.layer).range(0..=99));
             ui.end_row();
 
-            // --- Stage-Editor (QLab: "Edit Stage…") ---
+            // --- Stage-Editor ("Edit Stage…") ---
             if let Some(stage_name) = cue.stage.clone() {
                 theme::field_label(ui, "Stage");
                 let known = stages.find(&stage_name).is_some();
@@ -141,7 +141,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
             }
         });
 
-        // --- Surface (QLab: Surface auf der Stage) – nur Video/Diashow ---
+        // --- Surface (Surface auf der Stage) – nur Video/Diashow ---
         if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
             theme::section_label(right, "Geometry");
             // Vorschau: abstrahiert, wie der Inhalt auf der Stage liegt
@@ -171,7 +171,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     }
 }
 
-/// Editor für eine Cue-Surface (QLab: Surface-Geometrie auf der Stage):
+/// Editor für eine Cue-Surface (Surface-Geometrie auf der Stage):
 /// Position/Größe, Crop (Quellen-Zuschnitt), Hard-Edge-Blending,
 /// Deckkraft und Sichtbarkeit.
 fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry, content: Option<(u32, u32)>) {

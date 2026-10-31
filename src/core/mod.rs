@@ -8,13 +8,13 @@
 //! * [`cue`]: [`Cue`], [`CueType`], [`CueStatus`]-State-Machine, [`GroupMode`],
 //!   [`LoopMode`], Control-Cues ([`ControlAction`]).
 //! * [`cue_list`]: [`CueList`] – Playhead, GO-Logik, Group-Kaskadierung.
-//! * [`cart`]: [`CartManager`] – mehrere unabhängige Cue-Listen (QLab-Carts).
+//! * [`cart`]: [`CartManager`] – mehrere unabhängige Cue-Listen (Carts).
 //! * [`audio`]: Fade-Parameter/-Kurven (linear/dB), [`AudioRoute`], [`MediaSlice`].
 //! * [`timecode`]: [`Timecode`]/[`Fps`] – Grundlage für Timecode-Chasing.
 //! * [`stage`]: [`Stage`]/[`StageGeometry`]/[`Crop`] – Video-Ausgabeflächen
 //!   mit Regionen und Layern.
 //! * [`video_routing`]: [`OutputRoute`]/[`Region`]/[`RouteManager`] –
-//!   Stage → Region → Output Route → Device (QLab 5).
+//!   Stage → Region → Output Route → Device.
 //! * [`html`]: [`HtmlSource`] – Quelle eines HTML5-Cues (Datei/URL/Inline).
 //! * [`slideshow`]: [`SlideShow`]/[`Slide`]/[`SlideNav`] – Diashow-Cues.
 //! * [`error`] – [`ShowError`].

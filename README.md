@@ -1,6 +1,6 @@
 # KuhPlay
 
-**Show-Control- und Cue-Playback-Software in Rust, nach dem Vorbild von QLab.**
+**Show-Control- und Cue-Playback-Software in Rust.**
 Audio, Video, HTML5 und Diashows laufen als Cues in einer Liste und werden mit
 GO abgefahren, vom Theater bis zur Eventtechnik. Die Software ist ausgelegt für
 macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
@@ -18,7 +18,7 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 | **Ablauf** | Playhead und GO, mehrere Cue-Listen (Carts), Gruppen (Simultaneous, Sequential, Timeline, Loop, Shuffle), Timecode-Chasing (LTC/MTC) |
 | **Audio** | Dekodierung mit symphonia, Ausgabe mit cpal, Geräteauswahl, Fades (Volume, Rate, Opacity; linear oder dB), Slices mit Play-Count |
 | **Audio-Routing** | Pro Cue: Datei-Kanal → 16 benannte Kanäle; Patch-Matrix in den Workspace Settings: Kanal → mehrere Ausgänge UND mehrere Ausgabegeräte parallel; Umlegen wirkt live |
-| **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing wie QLab 5: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand); **Key/Fill pro Stage** (Fill-Route + Key-Route mit Alpha; Alpha aus Video/Bild/HTML, HTML default transparent) |
+| **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand); **Key/Fill pro Stage** (Fill-Route + Key-Route mit Alpha; Alpha aus Video/Bild/HTML, HTML default transparent) |
 | **Ausgabe** | Ein randloses Fenster pro belegtem Display (alle Routen des Displays, auch Teilbereiche) oder Vorschau-Fenster pro Route, ideal für die Arbeit am Laptop; Stage-Monitor pro Stage |
 | **HTML5** | Eigene WebView (Feature `webview`), JavaScript-Trigger und JSON-Push für Lower-Thirds, Spielstände, Countdowns |
 | **Fernsteuerung** | Web-Remote, Bitfocus Companion, OSC, MIDI |
@@ -136,7 +136,7 @@ src/
 companion/     Modul für Bitfocus Companion
 scripts/       Build-Skripte
 tests/         Integrationstests
-docs/          UI-Richtlinie und QLab-Abgleich
+docs/          UI-Richtlinie, Konzepte und Backlog
 ```
 
 GUI und Remote schicken Befehle über Kanäle an den Engine-Thread und bekommen
@@ -158,11 +158,10 @@ keinen Client zulässt. Das passiert gelegentlich und ist kein Fehler im Code.
 Weiterführend:
 
 - [`docs/UI.md`](docs/UI.md): verbindliche UI-Richtlinie
-- [`docs/qlab5-parity.md`](docs/qlab5-parity.md): Stand gegenüber QLab 5
+- [`docs/BACKLOG.md`](docs/BACKLOG.md): offene Funktionen
 - [`ROADMAP.md`](ROADMAP.md) und [`TODO.md`](TODO.md): Verlauf und Planung
 
 ## Lizenz
 
 [MIT](LICENSE). Die Phosphor-Icons stehen ebenfalls unter MIT, siehe
-[`assets/fonts/phosphor`](assets/fonts/phosphor). KuhPlay ist ein eigenständiges
-Projekt und steht in keiner Verbindung zu Figure 53 oder QLab.
+[`assets/fonts/phosphor`](assets/fonts/phosphor).

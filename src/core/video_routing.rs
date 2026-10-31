@@ -1,4 +1,4 @@
-//! Video-Routing wie QLab 5: **Stage → Region → Output Route → Device**.
+//! Video-Routing: **Stage → Region → Output Route → Device**.
 //!
 //! * Eine **Stage** ist die Bildfläche, auf der Cues spielen (mit Layern).
 //! * Eine **Region** ist ein Ausschnitt der Stage, der auf genau **eine**
@@ -51,7 +51,7 @@ impl DeviceRef {
 }
 
 /// Wie eine Route auf ihr Device abgebildet wird, wenn die Auflösungen
-/// nicht übereinstimmen (QLab: Route-Skalierung auf dem Device).
+/// nicht übereinstimmen (Route-Skalierung auf dem Device).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RouteScaling {
     /// Unskaliert zentriert; Überstand wird abgeschnitten.
@@ -75,7 +75,7 @@ impl RouteScaling {
         RouteScaling::Fill,
     ];
 
-    /// UI-Label (QLab-Begriffe).
+    /// UI-Label .
     pub fn label(self) -> &'static str {
         match self {
             Self::Center => "Center",
@@ -86,7 +86,7 @@ impl RouteScaling {
     }
 }
 
-/// Welchen Teil des Geräts die Route belegt (QLab „Partial Output“).
+/// Welchen Teil des Geräts die Route belegt („Partial Output“).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DeviceArea {
     /// Das ganze Gerät.
@@ -116,7 +116,7 @@ impl DeviceArea {
     }
 }
 
-/// Ein logischer Video-Ausgang (QLab „Output Route“).
+/// Ein logischer Video-Ausgang („Output Route“).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputRoute {
     /// Stabile ID (Referenz von [`Region::route`]).
@@ -150,7 +150,7 @@ pub struct OutputRoute {
     /// Farbe der Route (automatisch codiert nach Index, für UI und Testbild).
     #[serde(default = "default_route_color")]
     pub color: [u8; 3],
-    /// Testbild über dem vollen Raster der Route (QLab „Test Pattern“).
+    /// Testbild über dem vollen Raster der Route („Test Pattern“).
     #[serde(default)]
     pub test_pattern: bool,
     /// Art des Testbilds (Grid / Solid Color / Color Bars / LED Wall).
@@ -598,7 +598,7 @@ impl From<&display_info::DisplayInfo> for DisplayRefInfo {
     }
 }
 
-/// Default-Setup einer neuen Show wie QLab 5: pro Display eine Route
+/// Default-Setup einer neuen Show: pro Display eine Route
 /// („Display n“, Auflösung in Pixeln) und eine Stage in dessen Pixelgröße
 /// mit einer Region über die ganze Fläche. `Stage 1` bleibt für die
 /// Demo-Cues bestehen und liegt auf dem ersten Display.

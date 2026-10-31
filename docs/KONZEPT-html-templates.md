@@ -25,7 +25,7 @@ Die Timeline (`assets/demo/timetable.html`) ist ein Beispiel, kein Sonderfall.
 | Datenort | Standarddaten am HTML-Cue; der Data-Cue zeigt dasselbe Formular und überschreibt nur geänderte Felder; rohes JSON bleibt als Expertenansicht und für alte Shows |
 | Datentabelle | Zeilen sind Datensätze, die einzeln abgefeuert werden |
 | Import/Export | CSV und Excel, **in beide Richtungen** |
-| Projektdaten | **Alle** Projektdaten liegen im Projektordner, wie bei QLab |
+| Projektdaten | **Alle** Projektdaten liegen im Projektordner |
 | Web-Remote | Bietet dieselben Funktionen wie die GUI, also auch die neuen Formulare |
 | Außerdem gewünscht | Live-Vorschau im Inspector, Presets, Sprachumschaltung, Automatik nach Uhrzeit, Variablen (Uhr, Timer, Countdown) |
 
@@ -99,7 +99,7 @@ Seite zu starten:
 </script>
 ```
 
-Fehlt ein Pflichtfeld, gilt der Cue wie in QLab als kaputt (rotes X).
+Fehlt ein Pflichtfeld, gilt der Cue als kaputt (rotes X).
 
 ### Datentypen
 

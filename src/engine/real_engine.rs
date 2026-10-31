@@ -273,8 +273,8 @@ pub struct RealMediaEngine {
     fades: HashMap<Uuid, ActiveFade>,
     chasing: HashMap<Uuid, Timecode>,
     stages: HashMap<String, Stage>,
-    /// Testbild pro Stage-Name (QLab „Test Pattern"; überdeckt die Inhalte).
-    /// Output Routes (QLab 5) und ihre gerenderten Bilder.
+    /// Testbild pro Stage-Name („Test Pattern"; überdeckt die Inhalte).
+    /// Output Routes und ihre gerenderten Bilder.
     routes: RouteManager,
     route_frames: RouteFrameStore,
     /// Routen, die neu gerendert werden muessen (Config oder Stage-Aenderung).

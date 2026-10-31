@@ -1,4 +1,4 @@
-//! Script-Cue (QLab 5): JavaScript in eigener WebView ausführen.
+//! Script-Cue: JavaScript in eigener WebView ausführen.
 //! Mock-Engine: sofort Finished. Core: RunScript-Kommando, Empty-Script → Error.
 
 use crossbeam_channel::unbounded;

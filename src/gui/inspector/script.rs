@@ -1,4 +1,4 @@
-//! Inspector-Tab „Script" (Script-Cue, QLab 5 „Script Cue"): JavaScript-
+//! Inspector-Tab „Script" (Script-Cue): JavaScript-
 //! Editor. Das Script läuft beim GO in einer eigenen WebView-Instanz
 //! (unsichtbar, ohne Stage – `EngineCommand::RunScript`); nach dem Laden
 //! meldet die Engine `Finished`. Daten-Übergabe an laufende HTML5-Cues über

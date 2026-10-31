@@ -8,7 +8,7 @@ erreichbar. ACS-Sol-Media19 (192.168.89.210, UltraStudio Mini 3G): Rust+ffmpeg
 installiert, DeckLinkAPI64.dll registriert, COM-Live-Test siehe Git-Log. Alles
 gepusht (HEAD siehe Git-Log).
 
-Der ursprüngliche Arbeitsauftrag `docs/TODO-video-routing.md` (QLab-5-Video-Routing:
+Der ursprüngliche Arbeitsauftrag `docs/TODO-video-routing.md` (Video-Routing:
 Stage → Region → Output Route → Device) ist **komplett umgesetzt und getestet** —
 Phasen 1–8, Abschlussbericht siehe Git-History (Commits ab `45c5e8c`). Diese Datei
 listet alles, was danach **offen** ist, in abarbeitbarer Reihenfolge. Jede Aufgabe
@@ -208,11 +208,11 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 
 ## ERLEDIGT nach dem Übergabe-Dokument (neuere Commits)
 
-- **Neue QLab-Cue-Typen (Commit 406419e):** Wait (Timer-Unit, `EngineCommand::Wait`
+- **Neue Cue-Typen (Commit 406419e):** Wait (Timer-Unit, `EngineCommand::Wait`
   in beiden Engines), Memo (Sofort-Cue), Text (rendert als Inline-HTML über die
   HTML5-Pipeline, `src/core/text.rs`), Network (UDP/TCP, `EngineCommand::SendNetwork`,
   fire-and-forget-Thread in der Real-Engine). Toolbox/Inspector/Icons/Web-Remote
-  verdrahtet; ⌘0–⌘9 bleiben den 10 Original-Typen vorbehalten (wie QLab).
+  verdrahtet; ⌘0–⌘9 bleiben den 10 Original-Typen vorbehalten.
 - **MIDI-Cue (Commit da78e33):** `CueType::Midi` + `src/core/midi.rs` (Note On/Off,
   CC, Program Change, Wire-Bytes), `EngineCommand::SendMidi`, midir-Output lazy in
   der Real-Engine (`src/engine/midi_out.rs`, Gerät via `KUHPLAY_MIDI_OUT_DEVICE`).
@@ -231,12 +231,12 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
   Status-Fenster mit Show-Name, Edit/Show-Mode + Engine, aktivem Cart,
   Playhead, Standby-Cue, laufenden Cues mit Restzeit und Broken-Cues-Zähler
   (`src/gui/status_window.rs`, Smoke-Test in `tests/gui_smoke.rs`).
-- **Offen aus qlab5-parity.md (bewusst zurückgestellt):** Camera/Mic-Cues
+- **Bewusst zurückgestellt (siehe `docs/BACKLOG.md`):** Camera/Mic-Cues
   (kein Live-Input gewünscht), Timecode-Cue mit LTC/MTC-Empfang (Chasing pro
   Cue ist da), Lighting-Pult/LCC (nur Art-Net-DMX-Senden umgesetzt), Audio Map
   Editor (Patch-Matrix deckt Kanal→Ausgang ab), dedizierter Script-Cue
   (HTML5/JS-Bridge deckt ab), Theme-Auswahl Dark/Light (Palette ist const-
-  basiert, 197 Verwendungen – größerer Refactor), QLab-`.qlab5`-Import,
+  basiert, 197 Verwendungen – größerer Refactor),
   Auto-Continue erst nach Cue-Ende feuern (Abweichung Nr. 1, Tests hängen am
   Sofort-Verhalten), Monitor Windows (Active-Cues-Tab + Stage-View decken ab).
 

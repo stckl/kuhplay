@@ -1,4 +1,4 @@
-//! Light-Cue (QLab 5 „Light Cue", Minimal-Variante): sendet ein **Art-Net
+//! Light-Cue („Light Cue", Minimal-Variante): sendet ein **Art-Net
 //! DMX-Paket** (OpDmx) per UDP an ein Lighting-Netz (Port 6454). Damit lassen
 //! sich DMX-Universen an Nodes/Gateways triggern – ohne eigenes DMX-Interface.
 //!
@@ -56,7 +56,7 @@ pub struct LightMessage {
     /// DMX-Universe (0–32767; Art-Net Net:SubUni bzw. sACN Universe 1–63999).
     #[serde(default)]
     pub universe: u16,
-    /// Erster DMX-Kanal (1-basiert, 1–512) – QLab „channel".
+    /// Erster DMX-Kanal (1-basiert, 1–512) – „channel".
     #[serde(default = "default_start_channel")]
     pub start_channel: u16,
     /// Kanalwerte (0–255), ab `start_channel`.

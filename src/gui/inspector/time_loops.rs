@@ -1,4 +1,4 @@
-//! Tab „Time & Loops" (QLab 5, Audio/Video): Loop-Modus, Media-Slices
+//! Tab „Time & Loops" (Audio/Video): Loop-Modus, Media-Slices
 //! (Segment-Plan mit Play-Counts) und große Waveform-Vorschau.
 //!
 //! Zeiten werden als Timecode `MM:SS.mmm` angezeigt/editiert
@@ -88,7 +88,7 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
             );
             ui.end_row();
 
-            // --- Media-Slices (QLab: Segment-Plan mit Play-Counts) ---
+            // --- Media-Slices (Segment-Plan mit Play-Counts) ---
             theme::field_label(ui, "Slices");
             ui.vertical(|ui| {
                 if cue.slices.is_empty() {
@@ -120,7 +120,7 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
             ui.end_row();
 
             // Waveform-Vorschau (nur lokale Dateien, nicht Streams) –
-            // hier groß (QLab: „Time & Loops" zeigt die Waveform).
+            // hier groß („Time & Loops" zeigt die Waveform).
             if let Some(path) = &cue.target_path {
                 if !path.starts_with("http://") && !path.starts_with("https://") {
                     theme::field_label(ui, "Waveform");

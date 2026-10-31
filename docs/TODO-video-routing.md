@@ -1,11 +1,9 @@
-# TODO: Video-Zuordnung wie QLab 5 (Stage → Region → Output Route → Device)
+# TODO: Video-Zuordnung (Stage → Region → Output Route → Device)
 
 Arbeitsauftrag für die Umsetzung. Wer das hier abarbeitet, soll keine Grundsatz-
 entscheidungen neu treffen: Abschnitt 3 legt sie fest. Passt etwas davon nicht zum
 Code, nicht still abweichen, sondern im Abschlussbericht nennen.
 
-**Vorlage:** <https://qlab.app/docs/v5/video/video-output/> und
-<https://qlab.app/docs/v5/video/video-cues/> (Geometry-Tab). Vor dem Start lesen.
 
 ---
 
@@ -46,7 +44,7 @@ Cue ──▶ Stage ──▶ Region ──▶ Output Route ──▶ Device
        mit Layern  der Stage    Ausgang         Blackmagic
 ```
 
-Begriffe in der UI exakt wie in QLab: **Stage, Region, Output Route, Device**. Das
+Begriffe in der UI: **Stage, Region, Output Route, Device**. Das
 Wort „Screen" verschwindet aus der UI.
 
 - Ein Cue spielt auf **einer** Stage.
@@ -64,7 +62,7 @@ Wort „Screen" verschwindet aus der UI.
 2. **Ein Fenster pro belegtem Display**, nicht pro Stage oder Route. Dieses Fenster
    zeigt alle Routen des Displays. Damit fällt die Spaces-Grenze von macOS weg.
 3. **Vorschau: ein Fenster pro Route.** Ausdrücklicher Wunsch: Für die Vorschau zählt
-   der Inhalt, nicht der Bildschirm. Zusätzlich pro Stage ein Monitor-Fenster (QLab:
+   der Inhalt, nicht der Bildschirm. Zusätzlich pro Stage ein Monitor-Fenster (
    „Monitor"-Button). Vorhanden ist `draw_stage_windows`, weiterverwenden.
 4. **Auflösung in echten Pixeln.** `DisplayInfo.width/height` sind auf Retina Punkte
    (MacBook: 1512×982 bei 3024×1964 Pixeln). Route-Auflösung = Punkte × `scale_factor`.
@@ -74,7 +72,7 @@ Wort „Screen" verschwindet aus der UI.
 5. **Regionen füllen ihre Route:** Eine Region wird auf den ganzen Raster der Route
    abgebildet. Region und Route mit gleichem Format verzerren nicht. Warping ist nicht
    Teil dieses Auftrags.
-6. **Interne Koordinaten: Pixel, Ursprung oben links.** QLab zeigt Regionen relativ zur
+6. **Interne Koordinaten: Pixel, Ursprung oben links.** Die UI zeigt Regionen relativ zur
    Stage-Mitte an. Hier oben links, in UI und Datei gleich.
 7. **Alte Shows laden weiter und sehen gleich aus** (Abschnitt 6).
 8. **Keine neue externe Abhängigkeit** ohne Rückfrage.
@@ -105,7 +103,7 @@ pub enum RouteScaling { Center, Fit, #[default] Stretch, Fill }
 
 pub enum DeviceArea {
     #[default] Full,
-    /// Teil des Geräts in Gerätepixeln (QLab: Partial Output).
+    /// Teil des Geräts in Gerätepixeln (Partial Output).
     Part { x: u32, y: u32, width: u32, height: u32 },
 }
 
@@ -153,7 +151,7 @@ Regeln:
 - Region-Buchstabe (A, B, …) ergibt sich aus der Position, wird nicht gespeichert.
 - Regionen müssen innerhalb der Stage liegen (`validate`, UI begrenzt).
 - Stage-Größe bis 16384×16384, wie heute.
-- Reihenfolge laut QLab: höherer Stage-Layer liegt oben. Gleicher Layer: der alphabetisch
+- Reihenfolge: höherer Stage-Layer liegt oben. Gleicher Layer: der alphabetisch
   frühere Name liegt oben.
 
 `ShowDocument` (`src/core/show.rs`) bekommt `routes: RouteManager`. Siehe Abschnitt 6
@@ -172,7 +170,7 @@ Jede Phase endet mit grünem `cargo test`, Clippy ohne Warnung und einem eigenen
 - Abschnitt 4 umsetzen, Abschnitt 6 umsetzen.
 - `ShowApp` (`src/gui/app.rs`): Feld `routes`, Speichern und Laden in `save_show`,
   `load_show`, `new_show`.
-- **Neue Show wie QLab:** pro Display eine Route (`Display n`) und eine Stage in dessen
+- **Neue Show:** pro Display eine Route (`Display n`) und eine Stage in dessen
   Pixelgröße mit einer Region über die ganze Fläche. `Stage 1` bleibt für die Demo-Cues
   bestehen und liegt auf dem ersten Display.
 - Fertig, wenn: Eine alte Show lädt, speichert und wieder lädt, ohne dass Daten fehlen.
@@ -208,7 +206,7 @@ pub fn auto_blends(regions_of_stage) -> Vec<EdgeBlend>;
 - 200 Pixel Überlappung: In der Mitte des Blends ergibt die Summe beider Routen die
   Ausgangshelligkeit (Toleranz ±2 von 255, unter Berücksichtigung des Gamma).
 - Jede Skalierung: 1920×1080 auf 1000×1000 mit exakten Rechtecken wie im vorhandenen Test
-  `placement_modes_follow_qlab`.
+  `placement_modes_fit_fill_stretch_custom`.
 - Drehung 90° und Spiegelung auf einem kleinen Bild mit bekannten Pixeln.
 - Zwei Stages auf einer Route: Layer und Alphabet-Regel.
 - Testbild-Kreis bleibt rund, wenn Route und Stage verschiedene Formate haben.
@@ -243,7 +241,7 @@ pub fn auto_blends(regions_of_stage) -> Vec<EdgeBlend>;
 - `stage_screen_open` wird zu „Device offen" oder entfällt zugunsten von `OutputMode`.
 
 ### Phase 5: Einstellungen in der App
-`src/gui/workspace_settings.rs`, Seite Video, drei Reiter wie QLab:
+`src/gui/workspace_settings.rs`, Seite Video, drei Reiter:
 
 **Video Outputs (Stages):** Tabelle Name, Auflösung, Devices, `Edit`, `Monitor`, Löschen.
 „New Stage" mit Menü: Leer (1920×1080), Stage mit Output (je Route), Multi-Output Stage
@@ -295,7 +293,6 @@ dass Anordnung und Auflösung der Displays in den Systemeinstellungen geändert 
 
 ### Phase 8: Doku
 - `docs/UI.md`: Abschnitte zu Screens und Stages neu; „Screen" raus.
-- `docs/qlab5-parity.md`: Zeilen Video Output und Screens aktualisieren.
 - `README.md`: Funktionsübersicht und Konfiguration.
 - `src/gui/mod.rs`, Modul-Kommentare, `tests/screens.rs` umbenennen, falls der Inhalt jetzt
   Routen betrifft.

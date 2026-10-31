@@ -1,4 +1,4 @@
-//! Masthead (QLab 5): GO-Button + Standby-Anzeige + Notes-Feld +
+//! Masthead: GO-Button + Standby-Anzeige + Notes-Feld +
 //! globaler Transport.
 //!
 //! Layout (docs/UI.md §5.1):
@@ -24,7 +24,7 @@ const TRANSPORT_WIDTH: f32 = 3.0 * 32.0 + 96.0 + 4.0 * size::SPACE_SMALL;
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     let editable = !app.show_mode;
     ui.horizontal(|ui| {
-        // GO-Button (QLab: groß, dunkel, grün umrandet wenn ein Cue bereitsteht).
+        // GO-Button (groß, dunkel, grün umrandet wenn ein Cue bereitsteht).
         let ready = app.carts.standby().is_some();
         let stroke = if ready {
             egui::Stroke::new(3.0_f32, palette::PLAYING)
@@ -59,7 +59,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.horizontal(|ui| {
                     theme::section_label(ui, "Standby");
-                    // Audition-Mode-Badge (QLab: dezentes Pill-Label).
+                    // Audition-Mode-Badge (dezentes Pill-Label).
                     if app.audition_mode {
                         egui::Frame::none()
                             .fill(palette::ACCENT.gamma_multiply(0.15))
@@ -80,7 +80,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                     }
                 });
                 // Standby-Display: „Q# • Name" (Standby ist neutral – Rot
-                // heißt in QLab „kaputt").
+                // heißt „kaputt").
                 match app.carts.standby() {
                     Some(cue) => {
                         ui.label(
@@ -100,7 +100,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                     }
                 }
                 ui.add_space(size::SPACE_SMALL);
-                // Notes-Feld (QLab: gebunden an den Standby-Cue).
+                // Notes-Feld (gebunden an den Standby-Cue).
                 if editable {
                     let width = ui.available_width();
                     let r = match app.carts.standby_mut() {

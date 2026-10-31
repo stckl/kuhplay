@@ -1,7 +1,7 @@
 //! OSC-Steuerung (Open Sound Control über UDP).
 //!
 //! Ergänzt Web-Remote/Companion um das in der Show-Control-Welt übliche
-//! OSC-Protokoll (QLab „OSC"-Netzwerk-Steuerung):
+//! OSC-Protokoll:
 //!
 //! ## Eingehend (OSC → [`RemoteCommand`])
 //!
@@ -56,7 +56,7 @@ pub fn normalize_prefix(prefix: &str) -> String {
 
 /// Startet den OSC-Server (In: UDP-Listener, Out: Event→OSC-Bridge).
 ///
-/// `prefix`: Adress-Präfix für In und Out (z. B. `/kuhplay` oder `/qlab`).
+/// `prefix`: Adress-Präfix für In und Out (z. B. `/kuhplay` oder `/show`).
 /// Rückgabe wie bei Web-Remote/Companion: Command-Receiver +
 /// Event-Broadcast. `out_addr = None` deaktiviert den OSC-Out.
 pub fn start_osc_server(
@@ -327,7 +327,7 @@ mod tests {
             Some(RemoteCommand::GetStatus)
         ));
         // Anderes Präfix matcht nicht.
-        assert!(osc_message_to_command(&msg("/kuhplay/go", vec![]), "/qlab").is_none());
+        assert!(osc_message_to_command(&msg("/kuhplay/go", vec![]), "/show").is_none());
         // Unbekannt → None.
         assert!(osc_message_to_command(&msg("/other/go", vec![]), PREFIX).is_none());
         // Fehlende Argumente → None.
@@ -341,18 +341,18 @@ mod tests {
 
     #[test]
     fn osc_in_custom_prefix() {
-        // QLab-kompatibles Präfix: /qlab/go → Go.
+        // Eigenes Präfix: /show/go → Go.
         assert!(matches!(
-            osc_message_to_command(&msg("/qlab/go", vec![]), "/qlab"),
+            osc_message_to_command(&msg("/show/go", vec![]), "/show"),
             Some(RemoteCommand::Go)
         ));
         let cmd = osc_message_to_command(
-            &msg("/qlab/goto", vec![OscType::String("5.1".into())]),
-            "/qlab",
+            &msg("/show/goto", vec![OscType::String("5.1".into())]),
+            "/show",
         );
         assert!(matches!(cmd, Some(RemoteCommand::GoTo { ref cue }) if cue == "5.1"));
         // Anderes Präfix matcht nicht mehr.
-        assert!(osc_message_to_command(&msg("/kuhplay/go", vec![]), "/qlab").is_none());
+        assert!(osc_message_to_command(&msg("/kuhplay/go", vec![]), "/show").is_none());
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(normalize_prefix("/kuhplay"), "/kuhplay");
         assert_eq!(normalize_prefix("kuhplay"), "/kuhplay");
         assert_eq!(normalize_prefix("/kuhplay/"), "/kuhplay");
-        assert_eq!(normalize_prefix(" /qlab/ "), "/qlab");
+        assert_eq!(normalize_prefix(" /show/ "), "/show");
     }
 
     #[test]
@@ -442,7 +442,7 @@ mod tests {
             ]
         );
         // Custom-Präfix landet in den Out-Adressen.
-        let msgs = event_to_osc_messages(&RemoteEvent::Panicked, "/qlab");
-        assert_eq!(msgs[0].addr, "/qlab/panicked");
+        let msgs = event_to_osc_messages(&RemoteEvent::Panicked, "/show");
+        assert_eq!(msgs[0].addr, "/show/panicked");
     }
 }

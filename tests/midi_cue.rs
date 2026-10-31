@@ -1,4 +1,4 @@
-//! MIDI-Cue (QLab 5): sendet Wire-Bytes an das MIDI-Ausgabegerät.
+//! MIDI-Cue: sendet Wire-Bytes an das MIDI-Ausgabegerät.
 //! Core-Verhalten (Sofort-Cue, Bytes, Validierung) – das midir-Output-Device
 //! selbst wird nicht getestet (CoreMIDI verweigert in manchen CI-Prozessen
 //! den Client, siehe src/remote/midi.rs).

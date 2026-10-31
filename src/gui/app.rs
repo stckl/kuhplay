@@ -1,11 +1,11 @@
-//! Zentrale Anwendungsstruktur ([`eframe::App`]) – QLab 5 Workspace-Layout.
+//! Zentrale Anwendungsstruktur ([`eframe::App`]) – Workspace-Layout.
 //!
 //! Verbindet Domain ([`CartManager`]/[`CueList`](crate::core::CueList)) und
 //! Engine ([`EngineHandle`]) mit der `egui`-Oberfläche. Alle
 //! Zustandsänderungen laufen über Methoden dieser Struktur; die Panels
 //! selbst sind in eigene Module ausgelagert.
 //!
-//! ## Layout (QLab 5 „The Workspace")
+//! ## Layout („The Workspace")
 //!
 //! Verbindlich beschrieben in **`docs/UI.md`** (Layout, Farben,
 //! Typografie, Komponenten). Gezeichnet wird es in
@@ -62,7 +62,7 @@ use super::{
     stage_view, status_window, target_search, theme, toolbox,
 };
 
-/// Tab-Auswahl der Sidebar (QLab 5: „Lists & Carts" / „Active Cues";
+/// Tab-Auswahl der Sidebar („Lists & Carts" / „Active Cues";
 /// Screens liegen in den Workspace Settings → Video).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SidebarTab {
@@ -72,13 +72,13 @@ pub enum SidebarTab {
     ActiveCues,
 }
 
-/// Tab-Auswahl des Inspectors (QLab 5: typabhängige Tabs, TODO.md Phase 4).
+/// Tab-Auswahl des Inspectors (typabhängige Tabs, TODO.md Phase 4).
 ///
 /// Serde per Varianten-Name – neue Varianten sind abwärtskompatibel
 /// (alte gespeicherte Zustände deserialisieren weiter).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InspectorTab {
-    /// Grundparameter (QLab-Basics-Reihenfolge, zweispaltig).
+    /// Grundparameter (Basics-Reihenfolge, zweispaltig).
     Basics,
     /// Trigger (Timecode-In / Chasing).
     Triggers,
@@ -113,7 +113,7 @@ pub enum InspectorTab {
 }
 
 impl InspectorTab {
-    /// Anzeigename des Tabs (QLab-5-Begriffe, TODO.md Phase 4).
+    /// Anzeigename des Tabs (Begriffe, TODO.md Phase 4).
     pub fn label(self) -> &'static str {
         match self {
             InspectorTab::Basics => "Basics",
@@ -137,7 +137,7 @@ impl InspectorTab {
 }
 
 /// Hauptanwendung: Show-Zustand (Carts), Engine-Verbindung und
-/// Panel-Sichtbarkeit (QLab 5 Workspace).
+/// Panel-Sichtbarkeit (Workspace).
 pub struct ShowApp {
     /// Cue-Listen & Carts (Domain-Modell).
     pub carts: CartManager,
@@ -147,14 +147,14 @@ pub struct ShowApp {
     pub engine_label: String,
     /// Name der Show (Fenster-Titel + Persistenz).
     pub show_name: String,
-    /// Show-Mode: Editing deaktiviert (QLab-Sicherheitsfunktion).
+    /// Show-Mode: Editing deaktiviert (Sicherheitsfunktion).
     pub show_mode: bool,
     /// Audition-Mode: Video-Cues spielen ohne Stage-Ziel (Audio normal).
     pub audition_mode: bool,
     /// Reiner UI-Zustand (Panel-Sichtbarkeit, Tabs, Fenster) – serde-fähig
     /// für die Layout-Persistenz via `eframe::Storage` (TODO.md Phase 0b).
     pub ui: super::state::UiState,
-    /// Workspace-Templates (QLab 5 „Workspace Templates"): benannte
+    /// Workspace-Templates („Workspace Templates"): benannte
     /// Layout-Vorlagen, Persistenz über eigenen Storage-Key.
     pub workspace_templates: Vec<super::state::WorkspaceTemplate>,
     /// Eingabe-Puffer für den Namen eines neuen Workspace-Templates
@@ -197,14 +197,14 @@ pub struct ShowApp {
     scrub_last: HashMap<Uuid, (Instant, f32)>,
     /// Stage-Manager: alle Video-Stages mit Screen-Mapping & Geometrie.
     pub stages: StageManager,
-    /// Screen-Manager: physische Ausgabebereiche (QLab „Screens") –
+    /// Screen-Manager: physische Ausgabebereiche („Screens") –
     /// frei platzierbar (Teile eines Displays, mehrere Displays, mehrere
     /// Screens pro Display), mit Drehung und Testbild.
     pub screens: ScreenManager,
-    /// Output Routes (QLab 5 "Video -> Output Routing"): logische Ausgaenge
+    /// Output Routes ("Video -> Output Routing"): logische Ausgaenge
     /// mit eigener Aufloesung auf Displays oder Blackmagic-Geraeten.
     pub routes: RouteManager,
-    /// Offen gehaltene Stage-Vorschau-Fenster (QLab „Stage Window").
+    /// Offen gehaltene Stage-Vorschau-Fenster („Stage Window").
     pub stage_windows: HashSet<String>,
     /// Per Esc von Hand geschlossene Device-Ausgaben (bis zum naechsten
     /// Moduswechsel; Display-ID).
@@ -526,10 +526,10 @@ impl ShowApp {
                 next_go: Instant::now() + Duration::from_millis(1500),
                 count: 0,
             });
-        // Default-Screens: einer pro Display (QLab legt Screens pro Display an).
+        // Default-Screens: einer pro Display .
         let displays = stage_view::detect_displays();
         let screens = ScreenManager::from_displays(&displays);
-        // UI-Layout aus Storage laden (fehlend/ungültig → QLab-Defaults).
+        // UI-Layout aus Storage laden (fehlend/ungültig → Defaults).
         let ui = storage
             .and_then(|s| s.get_string(super::state::UI_STATE_STORAGE_KEY))
             .map(|json| super::state::UiState::from_json(&json))
@@ -588,7 +588,7 @@ impl ShowApp {
             problems_at: None,
             waveforms: WaveformCache::new(),
         };
-        // Alle Stages beim Start an die Engine melden (QLab: Stage-Konfiguration).
+        // Alle Stages beim Start an die Engine melden (Stage-Konfiguration).
         for stage in app.stages.stages().to_vec() {
             app.configure_stage(stage);
         }
@@ -606,7 +606,7 @@ impl ShowApp {
                 }
             }
         }
-        // QLab-5-Default-Video-Setup: pro Display eine Route ("Display n")
+        // Default-Video-Setup: pro Display eine Route ("Display n")
         // und Stages mit einer Region ueber die ganze Flaeche; Stage 1 bleibt
         // fuer die Demo-Cues bestehen und liegt auf dem ersten Display.
         app.setup_default_routes();
@@ -628,7 +628,7 @@ impl ShowApp {
     }
 
     // ------------------------------------------------------------------
-    // Stages & Screens (QLab: Stage → Screen, Hard Edge, Area of Interest)
+    // Stages & Screens (Stage → Screen, Hard Edge, Area of Interest)
     // ------------------------------------------------------------------
 
     /// Übernimmt eine Stage-Änderung: im Manager speichern und an die
@@ -647,7 +647,7 @@ impl ShowApp {
         }
     }
 
-    /// Baut das Default-Video-Setup einer neuen Show (QLab 5): pro Display
+    /// Baut das Default-Video-Setup einer neuen Show: pro Display
     /// eine Route ("Display n", Aufloesung in echten Pixeln) und pro
     /// weiterem Display eine Stage in dessen Pixelgroesse mit einer Region
     /// ueber die ganze Flaeche. Stage 1 bleibt fuer die Demo-Cues bestehen
@@ -717,7 +717,7 @@ impl ShowApp {
     }
 
     /// Legt eine Stage mit Ausgabe an: neue Route (ohne Device) und eine
-    /// Region über die ganze Fläche (QLab „New Stage with Output“).
+    /// Region über die ganze Fläche („New Stage with Output“).
     pub fn add_stage_with_output(&mut self) {
         let mut number = self.stages.len() + 1;
         while self.stages.find(&format!("Stage {number}")).is_some() {
@@ -966,7 +966,7 @@ impl ShowApp {
     // ------------------------------------------------------------------
 
     /// GO: nächsten armed Cue des aktiven Carts triggern, inkl.
-    /// Auto-Continue-Ketten (QLab „Cue Sequences").
+    /// Auto-Continue-Ketten („Cue Sequences").
     pub fn go_now(&mut self) {
         match self.carts.go_chained() {
             Some(outcome) => {
@@ -1002,7 +1002,7 @@ impl ShowApp {
                         commands.push(EngineCommand::Stop { cue_id: id });
                     }
                 }
-                // „Vorherige Cues beenden" (QLab 5): alle laufenden Cues stoppen,
+                // „Vorherige Cues beenden": alle laufenden Cues stoppen,
                 // die in der Liste vor dem getriggerten Cue stehen.
                 let stop_prev = self
                     .carts
@@ -1035,7 +1035,7 @@ impl ShowApp {
         self.remote_dirty = true;
     }
 
-    /// Panic: alles sofort stoppen (workspace-weit, QLab-Sidebar).
+    /// Panic: alles sofort stoppen (workspace-weit, Sidebar).
     pub fn panic(&mut self) {
         self.dispatch(vec![EngineCommand::StopAll]);
         self.carts.stop_all_running_all();
@@ -1044,7 +1044,7 @@ impl ShowApp {
     }
 
     /// Reset: alle Cues stoppen + Playhead aller Carts an den Anfang
-    /// (QLab-Sidebar: Reset wirkt workspace-weit).
+    /// (Sidebar: Reset wirkt workspace-weit).
     pub fn reset_all(&mut self) {
         self.dispatch(vec![EngineCommand::StopAll]);
         self.carts.reset_all();
@@ -1052,14 +1052,14 @@ impl ShowApp {
         self.remote_dirty = true;
     }
 
-    /// Pause All: alle laufenden Cues pausieren (QLab-Sidebar).
+    /// Pause All: alle laufenden Cues pausieren (Sidebar).
     pub fn pause_all(&mut self) {
         let commands = self.carts.pause_all_running();
         self.dispatch(commands);
         self.remote_dirty = true;
     }
 
-    /// Resume All: alle pausierten Cues fortsetzen (QLab-Sidebar).
+    /// Resume All: alle pausierten Cues fortsetzen (Sidebar).
     pub fn resume_all(&mut self) {
         let commands = self.carts.resume_all_running();
         self.dispatch(commands);
@@ -1089,7 +1089,7 @@ impl ShowApp {
     // Edit-Aktionen (Masthead-Toolbar, Menü, Kontextmenü)
     // ------------------------------------------------------------------
 
-    /// Fügt einen Cue des Typs nach der Selektion ein (QLab-Verhalten),
+    /// Fügt einen Cue des Typs nach der Selektion ein,
     /// nummeriert ihn automatisch (höchste vorhandene Nummer + 1, nie
     /// doppelt) und selektiert ihn.
     pub fn add_cue(&mut self, cue_type: CueType) {
@@ -1097,7 +1097,7 @@ impl ShowApp {
         let at = list.selected_insert_index();
         let n = list.next_free_number();
         let mut cue = Cue::new(n.to_string(), format!("New Cue {n}"), cue_type);
-        // Wait-Cue (QLab 5): sinnvolle Vorgabe-Dauer statt 0.
+        // Wait-Cue: sinnvolle Vorgabe-Dauer statt 0.
         if cue_type == CueType::Wait {
             cue.duration = std::time::Duration::from_secs(1);
         }
@@ -1165,7 +1165,7 @@ impl ShowApp {
 
     /// Löscht den Cue an `index` (aktiver Cart) – ein laufender Cue wird
     /// vorher gestoppt (Engine `Stop`), sonst würde er nach dem Löschen
-    /// weiterlaufen (QLab stoppt gelöschte Cues ebenfalls).
+    /// weiterlaufen (gelöschte Cues werden mitgestoppt).
     pub fn delete_cue_at(&mut self, index: usize) {
         if let Some(cue) = self.carts.active().cues().get(index) {
             let id = cue.id;
@@ -1202,7 +1202,7 @@ impl ShowApp {
         self.properties_clipboard.is_some()
     }
 
-    /// „Copy Cue Properties" (QLab Edit-Menü): serialisiert die Properties des
+    /// „Copy Cue Properties" (Edit-Menü): serialisiert die Properties des
     /// selektierten Cues (ohne ID/Nummer/Status/Kinder) in die Zwischenablage.
     pub fn copy_cue_properties(&mut self) {
         const PROTECTED: &[&str] = &[
@@ -1289,7 +1289,7 @@ impl ShowApp {
         }
     }
 
-    /// Setzt die Anzeigefarbe des selektierten Cues (QLab „Cue Color",
+    /// Setzt die Anzeigefarbe des selektierten Cues („Cue Color",
     /// `None` = keine Farbe).
     pub fn set_selected_color(&mut self, color: Option<[u8; 3]>) {
         if let Some(cue) = self.carts.selected_mut() {
@@ -1313,7 +1313,7 @@ impl ShowApp {
     }
 
     // ------------------------------------------------------------------
-    // UI-Layout-Persistenz (QLab: Workspace bleibt über Neustarts erhalten)
+    // UI-Layout-Persistenz (Workspace bleibt über Neustarts erhalten)
     // ------------------------------------------------------------------
 
     /// Speichert den UI-Zustand (Panel-Sichtbarkeit, Tabs, Fenster) als
@@ -1339,8 +1339,8 @@ impl ShowApp {
         );
     }
 
-    /// Speichert das aktuelle UI-Layout als Workspace-Template (QLab 5
-    /// „Workspace Templates"). Gleicher Name → ersetzt (Rename-Semantik);
+    /// Speichert das aktuelle UI-Layout als Workspace-Template
+    /// („Workspace Templates"). Gleicher Name → ersetzt (Rename-Semantik);
     /// leerer Name → ignoriert.
     pub fn save_workspace_template(&mut self, name: String) {
         let name = name.trim().to_string();
@@ -1353,7 +1353,7 @@ impl ShowApp {
             .push(super::state::WorkspaceTemplate { name, layout });
     }
 
-    /// Wendet ein Workspace-Template an (QLab: Layout wiederherstellen).
+    /// Wendet ein Workspace-Template an (Layout wiederherstellen).
     /// Laufzeit-Zustand (Find-Leiste) bleibt erhalten.
     pub fn apply_workspace_template(&mut self, index: usize) {
         if let Some(template) = self.workspace_templates.get(index) {
@@ -1372,7 +1372,7 @@ impl ShowApp {
     }
 
     // ------------------------------------------------------------------
-    // Broken Cues (QLab: Warnungs-Zähler im Footer, ✕ in der Cue-Liste)
+    // Broken Cues (Warnungs-Zähler im Footer, ✕ in der Cue-Liste)
     // ------------------------------------------------------------------
 
     /// Aktualisiert den Broken-Cache (max. alle 2 s – Dateisystem-Checks
@@ -1418,7 +1418,7 @@ impl ShowApp {
         self.problems = found;
     }
 
-    /// Anzahl kaputter Cues (QLab-Footer: „⚠ N"; Top-Level-Cues, Gruppen-
+    /// Anzahl kaputter Cues (Footer: „⚠ N"; Top-Level-Cues, Gruppen-
     /// Kinder zählen nicht doppelt).
     /// Anzeige-Name der Engine (Workspace-Status-Fenster, Footer).
     pub fn engine_name(&self) -> &str {
@@ -1557,7 +1557,7 @@ impl ShowApp {
     }
 
     // ------------------------------------------------------------------
-    // Show-Mode (QLab-Sicherheitsfunktion)
+    // Show-Mode (Sicherheitsfunktion)
     // ------------------------------------------------------------------
 
     /// Schaltet den Show-Mode um (Editing deaktiviert/aktiviert).
@@ -2208,11 +2208,11 @@ impl ShowApp {
     // ------------------------------------------------------------------
 
     /// Spult einen laufenden Media-Cue (Audio/Video) an `position`
-    /// (QLab „Scrub" in den Active Cues; Bild+Ton springen synchron, weil
+    /// („Scrub" in den Active Cues; Bild+Ton springen synchron, weil
     /// beide Backends im selben Engine-Command den Seek bekommen).
     /// Externer Timecode (OSC `/kuhplay/timecode`, später LTC/MTC): in die
     /// Engine injizieren (chasing Cues springen mit) und alle Timecode-Trigger-
-    /// Cues feuern, deren Trigger ≤ tc ist (QLab „timecode trigger").
+    /// Cues feuern, deren Trigger ≤ tc ist („timecode trigger").
     pub fn receive_timecode(&mut self, tc: crate::core::Timecode) {
         let mut commands = vec![EngineCommand::InjectTimecode { tc }];
         commands.extend(self.carts.receive_timecode(tc));
@@ -2221,7 +2221,7 @@ impl ShowApp {
 
     /// Spult einen laufenden Cue an `position` (Active-Cues-Scrubber).
     ///
-    /// **Timecode-Gruppe (QLab-Verhalten):** Hat der Cue ein `timecode_in`
+    /// **Timecode-Gruppe:** Hat der Cue ein `timecode_in`
     /// (Chasing), wird zusätzlich der externe Timecode `timecode_in + position`
     /// in die Engine injiziert – alle chasing Cues springen damit auf ihre
     /// neue Zeit mit (`EngineCommand::InjectTimecode`).
@@ -2492,7 +2492,7 @@ impl ShowApp {
         }
     }
 
-    /// Audition-Mode (QLab „Workspace → Audition Mode"): Video-Cues spielen
+    /// Audition-Mode („Workspace → Audition Mode"): Video-Cues spielen
     /// ohne Stage-Ziel – das Bild landet nicht auf einer Stage, Audio bleibt
     /// unverändert (Audio-Play ignoriert `stage` in der Engine ohnehin).
     pub fn set_audition_mode(&mut self, enabled: bool) {
@@ -2627,7 +2627,7 @@ impl ShowApp {
         while let Some(event) = self.engine.try_recv_event() {
             match event {
                 EngineEvent::Started { cue_id, duration } => {
-                    // Auto-Follow feuert beim Start (QLab-5-Semantik).
+                    // Auto-Follow feuert beim Start.
                     self.apply_status_with_follow(cue_id, CueStatus::Playing);
                     self.note_started(cue_id);
                     if let Some(d) = duration {
@@ -2747,7 +2747,7 @@ impl ShowApp {
         }
     }
 
-    /// Status anwenden + Auto-Follow (QLab „Cue Sequences": bei `Completed`
+    /// Status anwenden + Auto-Follow („Cue Sequences": bei `Completed`
     /// feuert der nächste Cue, wenn dieser auf Auto-Follow steht).
     fn apply_status_with_follow(&mut self, cue_id: Uuid, status: CueStatus) {
         let (result, follow_commands) = self.carts.set_status_with_follow(cue_id, status);
@@ -2757,7 +2757,7 @@ impl ShowApp {
         self.dispatch(follow_commands);
     }
 
-    /// Globale Hotkeys (QLab-Style, TODO.md Phase 5): liest die zentrale
+    /// Globale Hotkeys (TODO.md Phase 5): liest die zentrale
     /// Tabelle [`shortcuts::ALL`] – Space = GO, Esc = Panic, ↑/↓ = Playhead,
     /// ⌘/⌥⌘+↑/↓ = Cue verschieben, ⌘0–9 = neue Cues, ⌘F/⌘G = Find,
     /// ⌘D/⌘G = Duplicate/Find Next, ⌘I/L/K = Panels, ⌘N/O/S/⇧⌘S/Q = Datei.
@@ -2809,8 +2809,8 @@ impl ShowApp {
         for action in matched {
             let editable = !self.show_mode;
             match action {
-                // Space = GO – auch wenn z. B. ein Slider fokussiert ist
-                // (QLab); nur Textfelder (Tippen) blockieren. Das Event
+                // Space = GO – auch wenn z. B. ein Slider fokussiert ist;
+                // nur Textfelder (Tippen) blockieren. Das Event
                 // wird konsumiert, damit ein fokussierter Button
                 // (Tab-Fokus) nicht zusätzlich feuert (kein Doppel-GO).
                 ShortcutAction::Go => {
@@ -2828,7 +2828,7 @@ impl ShowApp {
                     }
                     self.panic();
                 }
-                // Nackte Klammern: Pause All / Resume All (QLab 5) –
+                // Nackte Klammern: Pause All / Resume All –
                 // nicht während Texteingabe.
                 ShortcutAction::PauseAll => {
                     if text_input {
@@ -2877,7 +2877,7 @@ impl ShowApp {
                     }
                     self.move_selected(1);
                 }
-                // ⌘0–⌘9: neuen Cue des Typs anlegen (QLab Cues-Menü).
+                // ⌘0–⌘9: neuen Cue des Typs anlegen (Cues-Menü).
                 ShortcutAction::NewCue(cue_type) => {
                     if !editable {
                         continue;
@@ -3163,7 +3163,7 @@ impl ShowApp {
                 self,
                 |_ctx, ui, app| {
                     ui.label(RichText::new("KuhPlay").size(24.0).strong());
-                    ui.label("QLab-style show control & cue playback – Rust/egui.");
+                    ui.label("Show control & cue playback – Rust/egui.");
                     ui.separator();
                     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                     if ui.button("Close").clicked() {
@@ -3180,18 +3180,18 @@ impl ShowApp {
         // rendert dieselbe zentrale Tabelle wie Menüs und Hotkeys.
         shortcuts::draw_window(ctx, &mut self.ui.shortcuts_open);
 
-        // „File Target Search" (Tools-Menü, QLab 5 Workflow-Tool).
+        // „File Target Search" (Tools-Menü, Workflow-Tool).
         target_search::draw(ctx, self);
 
-        // „Workspace Status" (Tools-Menü, QLab 5 Status-Übersicht).
+        // „Workspace Status" (Tools-Menü, Status-Übersicht).
         status_window::draw(ctx, self);
 
-        // Audition-Fenster (Workspace-Menü, QLab 5 „Audition Window").
+        // Audition-Fenster (Workspace-Menü).
         audition_window::draw(ctx, self);
 
         stage_view::draw_route_previews(self, ctx);
 
-        // Workspace-Settings-Fenster (QLab: Workspace → Workspace Settings;
+        // Workspace-Settings-Fenster (Workspace → Workspace Settings;
         // Screens/Stages auf der Seite „Video").
         super::workspace_settings::draw(ctx, self);
         // Stage-Editor, Route-Editor und Multi-Output-Assistent (Video).
@@ -3264,7 +3264,7 @@ impl eframe::App for ShowApp {
         self.poll_native_menu(ctx);
         self.draw_workspace(ctx);
 
-        // Stage-Vorschau-Fenster (QLab „Stage Window") und Vollbild-Screen-
+        // Stage-Vorschau-Fenster („Stage Window") und Vollbild-Screen-
         // Ausgaben (borderless auf dem zugeordneten Display).
         stage_view::draw_stage_windows(self, ctx);
         stage_view::draw_device_outputs(self, ctx);
@@ -3291,7 +3291,7 @@ impl eframe::App for ShowApp {
     }
 
     /// Persistiert das UI-Layout (Panel-Sichtbarkeit, Tabs, Fenster) beim
-    /// Beenden (QLab: Workspace bleibt über Neustarts erhalten).
+    /// Beenden (Workspace bleibt über Neustarts erhalten).
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_ui_state(storage);
         self.save_ui_templates(storage);

@@ -968,7 +968,7 @@ fn seek_in_running_video_jumps_and_continues() {
     );
 }
 
-/// Fade mit Ziel-Cue (QLab-Verhalten): Der Parameter wird am TARGET gesetzt,
+/// Fade mit Ziel-Cue: Der Parameter wird am TARGET gesetzt,
 /// nicht am Fade-Cue selbst (hier Opacity → opacities-Store des Ziels).
 #[test]
 fn fade_applies_to_target_cue_not_self() {

@@ -3,7 +3,7 @@
 //! Die Liste kennt weder UI noch Engine – sie erzeugt lediglich
 //! [`EngineCommand`]s ([`GoOutcome`]), die der Aufrufer an die Engine sendet.
 //!
-//! ## Playhead-Modell (QLab)
+//! ## Playhead-Modell
 //!
 //! * `cursor` zeigt auf das *nächste* Standby-Cue (ab dort wird gesucht).
 //! * [`CueList::go`] triggert das nächste armed Standby-Cue ab `cursor` und
@@ -147,13 +147,13 @@ impl CueList {
         false
     }
 
-    /// Nächste freie Q-Nummer (QLab: höchste vorhandene Nummer + 1).
+    /// Nächste freie Q-Nummer (höchste vorhandene Nummer + 1).
     ///
     /// Rekursive Suche über alle Cues (inkl. Group-Kinder); die führenden
     /// Ziffern der Nummer werden verglichen („5.1" zählt als 5). Nicht-
     /// numerische Nummern werden ignoriert. Bei leerer Liste → 1. Anders
     /// als `len() + 1` entstehen so auch nach Löschen keine doppelten
-    /// Nummern (QLab vergibt nie dieselbe Nummer zweimal).
+    /// Nummern (dieselbe Nummer wird nie zweimal vergeben).
     pub fn next_free_number(&self) -> u32 {
         fn leading_number(number: &str) -> Option<u32> {
             let digits: String = number.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -222,7 +222,7 @@ impl CueList {
     }
 
     /// Nächster Standby-Cue ab dem Playhead (mutabel, z. B. für das
-    /// Notes-Feld im QLab-Masthead).
+    /// Notes-Feld im Masthead).
     pub fn standby_mut(&mut self) -> Option<&mut Cue> {
         self.cues
             .iter_mut()
@@ -256,7 +256,7 @@ impl CueList {
         self.selection_anchor = id.filter(|_| !self.selection.is_empty());
     }
 
-    /// ⌘-Klick: Cue zur Selektion hinzufügen/entfernen (QLab).
+    /// ⌘-Klick: Cue zur Selektion hinzufügen/entfernen.
     pub fn toggle_select_id(&mut self, id: Uuid) {
         if self.find_cue(id).is_none() {
             return;
@@ -269,8 +269,8 @@ impl CueList {
         self.selection_anchor = Some(id);
     }
 
-    /// ⇧-Klick: Bereich von Anker bis `id` selektieren (Top-Level-Bereich,
-    /// QLab). Ohne Anker wie ein einfacher Klick.
+    /// ⇧-Klick: Bereich von Anker bis `id` selektieren (Top-Level-Bereich).
+    /// Ohne Anker wie ein einfacher Klick.
     pub fn select_range_to(&mut self, id: Uuid) {
         let (a, b) = match (
             self.selection_anchor.and_then(|a| self.index_of_id(a)),
@@ -320,7 +320,7 @@ impl CueList {
         )
     }
 
-    /// Einfügeposition für „Add Cue" (QLab: nach der Selektion; bei einem
+    /// Einfügeposition für „Add Cue" (nach der Selektion; bei einem
     /// selektierten Group-Kind nach der Eltern-Gruppe).
     pub fn selected_insert_index(&self) -> usize {
         self.selected_index()
@@ -420,7 +420,7 @@ impl CueList {
     }
 
     /// Verschiebt einen Top-Level-Cue als letztes Kind in eine Gruppe
-    /// (Drag & Drop auf eine Gruppen-Zeile, QLab).
+    /// (Drag & Drop auf eine Gruppen-Zeile).
     pub fn move_into_group(&mut self, cue_index: usize, group_index: usize) -> bool {
         if cue_index >= self.cues.len() || group_index >= self.cues.len() {
             return false;
@@ -445,7 +445,7 @@ impl CueList {
     }
 
     /// Dupliziert einen Top-Level-Cue (tiefe Kopie inkl. Group-Kinder mit
-    /// frischen UUIDs, QLab „Duplicate"). Rückgabe: Index der Kopie.
+    /// frischen UUIDs, „Duplicate"). Rückgabe: Index der Kopie.
     pub fn duplicate(&mut self, index: usize) -> Option<usize> {
         if index >= self.cues.len() {
             return None;
@@ -483,8 +483,8 @@ impl CueList {
         copies
     }
 
-    /// Gruppiert Top-Level-Cues per ID zu einem neuen Group-Cue (QLab
-    /// „Group Cues"; Kontextmenü). Die Gruppe landet an der Position des
+    /// Gruppiert Top-Level-Cues per ID zu einem neuen Group-Cue
+    /// („Group Cues"; Kontextmenü). Die Gruppe landet an der Position des
     /// ersten gruppierten Cues und wird selektiert. Kind-Nummern bleiben
     /// erhalten. Rückgabe: ID der neuen Gruppe.
     pub fn group_ids(&mut self, ids: &[Uuid]) -> Option<Uuid> {
@@ -509,7 +509,7 @@ impl CueList {
         Some(group_id)
     }
 
-    /// Group-Cue ein-/ausklappen (QLab-Aufklapp-Dreieck, TODO.md Phase 3).
+    /// Group-Cue ein-/ausklappen (Aufklapp-Dreieck, TODO.md Phase 3).
     pub fn set_collapsed(&mut self, index: usize, collapsed: bool) {
         if let Some(cue) = self.cues.get_mut(index) {
             if cue.cue_type == CueType::Group {
@@ -531,7 +531,7 @@ impl CueList {
 
     /// GO: Triggert das nächste armed Standby-Cue ab dem Playhead.
     ///
-    /// Der Playhead rückt automatisch weiter (QLab-Verhalten). Liefert den
+    /// Der Playhead rückt automatisch weiter. Liefert den
     /// Index des getriggerten Cues und die zu sendenden Engine-Commands.
     /// `None`, wenn kein Cue in Standby ist.
     pub fn go(&mut self) -> Option<GoOutcome> {
@@ -559,13 +559,13 @@ impl CueList {
         Some(GoOutcome { index, commands })
     }
 
-    /// Wie [`CueList::go`], folgt aber **Auto-Continue-Ketten** (QLab:
-    /// „Cue Sequences"): Hat der getriggerte Cue `AutoContinue`, wird der
+    /// Wie [`CueList::go`], folgt aber **Auto-Continue-Ketten**
+    /// („Cue Sequences"): Hat der getriggerte Cue `AutoContinue`, wird der
     /// nächste Cue sofort mitgetriggert – rekursiv, bis ein Cue ohne
     /// Auto-Continue erreicht ist (Safety-Guard: max. 100 Verkettungen).
     /// Rückgabe: Index des ersten Cues + alle gesammelten Commands.
     pub fn go_chained(&mut self) -> Option<GoOutcome> {
-        // QLab-5-Semantik: Beim GO feuert nur der Standby-Cue. Auto-Continue
+        // Beim GO feuert nur der Standby-Cue. Auto-Continue
         // feuert den Folge-Cue erst, wenn der laufende Cue abgeschlossen ist
         // (inkl. Post-Wait → `set_status_with_follow` bei Completed);
         // Auto-Follow feuert beim Start (Playing). Deshalb hier kein Chaining.
@@ -573,8 +573,8 @@ impl CueList {
     }
 
     /// Externer Timecode (LTC/MTC/OSC) erreicht die Liste: alle armed
-    /// Standby-Cues mit [`Cue::tc_trigger`] ≤ `tc` feuern (QLab
-    /// „timecode trigger"). Rückgabe: die dabei erzeugten Engine-Commands.
+    /// Standby-Cues mit [`Cue::tc_trigger`] ≤ `tc` feuern
+    /// („timecode trigger"). Rückgabe: die dabei erzeugten Engine-Commands.
     /// Top-Level-Cues only (Gruppen-Kinder feuern über ihre Gruppe).
     pub fn receive_timecode(&mut self, tc: Timecode) -> Vec<EngineCommand> {
         let tc_dur = tc.to_duration();
@@ -900,12 +900,12 @@ impl CueList {
         Ok(())
     }
 
-    /// Wie [`CueList::set_status`], triggert aber zusätzlich die QLab-5-
+    /// Wie [`CueList::set_status`], triggert aber zusätzlich die
     /// Continue-Modi am richtigen Zeitpunkt:
     /// * **Auto-Follow** feuert den nächsten Cue, sobald dieser Cue **startet**
-    ///   (`Playing` nach Pre-Wait) – QLab: „starts as soon as this cue starts".
+    ///   (`Playing` nach Pre-Wait) – „starts as soon as this cue starts".
     /// * **Auto-Continue** feuert den nächsten Cue, wenn dieser Cue
-    ///   **abgeschlossen** ist (`Completed` inkl. Post-Wait) – QLab:
+    ///   **abgeschlossen** ist (`Completed` inkl. Post-Wait) –
     ///   „starts when this cue completes".
     ///
     /// Rückgabe: Status-Ergebnis + die dabei erzeugten Engine-Commands.
@@ -1070,7 +1070,7 @@ impl CueList {
         }
     }
 
-    /// Pausiert alle laufenden Cues (QLab Sidebar: „Pause All").
+    /// Pausiert alle laufenden Cues („Pause All").
     /// Rückgabe: `Pause`-Commands für alle pausierten Cues.
     pub fn pause_all_running(&mut self) -> Vec<EngineCommand> {
         let mut commands = Vec::new();
@@ -1080,7 +1080,7 @@ impl CueList {
         commands
     }
 
-    /// Setzt alle pausierten Cues fort (QLab Sidebar: „Resume All").
+    /// Setzt alle pausierten Cues fort („Resume All").
     /// Rückgabe: `Resume`-Commands für alle fortgesetzten Cues.
     pub fn resume_all_running(&mut self) -> Vec<EngineCommand> {
         let mut commands = Vec::new();
@@ -1164,7 +1164,7 @@ fn group_id_seed(id: Uuid) -> u64 {
 }
 
 /// Vergibt einem ( geklonten ) Cue und allen Kindern frische UUIDs
-/// (QLab „Duplicate": Kopien dürfen nie dieselbe ID teilen – sonst würde
+/// („Duplicate": Kopien dürfen nie dieselbe ID teilen – sonst würde
 /// Engine-Feedback/Selektion auf Original und Kopie wirken).
 fn reassign_ids(cue: &mut Cue) {
     cue.id = Uuid::new_v4();
@@ -1239,7 +1239,7 @@ mod tests {
         list.add(audio("2"));
         list.add(audio("3"));
         assert_eq!(list.next_free_number(), 4);
-        // Löschen erzeugt eine Lücke – QLab vergibt die Nummer NICHT neu.
+        // Löschen erzeugt eine Lücke – die Nummer wird NICHT neu vergeben.
         list.remove(1).unwrap();
         assert_eq!(list.next_free_number(), 4);
         // Group-Kinder zählen mit („5.1" → 5).
@@ -1639,7 +1639,7 @@ mod tests {
 
     #[test]
     fn go_chained_follows_auto_continue_sequence() {
-        // QLab-5-Semantik: GO feuert nur den ersten Cue; Auto-Continue feuert
+        // GO feuert nur den ersten Cue; Auto-Continue feuert
         // den Folge-Cue erst beim Abschluss (Completed) des laufenden Cues.
         let mut list = CueList::new();
         list.add(
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[test]
     fn auto_follow_fires_next_cue_when_cue_starts() {
-        // QLab 5: Auto-Follow feuert den Folge-Cue, sobald der Cue STARTET.
+        // Auto-Follow feuert den Folge-Cue, sobald der Cue STARTET.
         let mut list = CueList::new();
         list.add(audio("1").with_continue_mode(ContinueMode::AutoFollow));
         list.add(audio("2"));

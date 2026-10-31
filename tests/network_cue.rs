@@ -1,4 +1,4 @@
-//! Network-Cue (QLab 5): UDP/TCP-Versand über die Real-Engine (Loopback)
+//! Network-Cue: UDP/TCP-Versand über die Real-Engine (Loopback)
 //! plus Core-Verhalten (Sofort-Cue, Validierung).
 
 use std::io::Read;

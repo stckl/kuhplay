@@ -68,7 +68,7 @@ impl Slide {
 }
 
 /// Definition eines Diashow-Cues ([`crate::core::CueType::SlideShow`]).
-/// Übergangsart zwischen zwei Dias (QLab-ähnlich: Crossfade / harter Schnitt /
+/// Übergangsart zwischen zwei Dias (Crossfade / harter Schnitt /
 /// Auf-/Abblende über Schwarz).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SlideTransition {

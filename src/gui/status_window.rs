@@ -1,4 +1,4 @@
-//! Workspace Status Window (QLab 5 „Tools → Workspace Status"): kompaktes,
+//! Workspace Status Window („Tools → Workspace Status"): kompaktes,
 //! immeraktuelles Übersichtsfenster: Show-Name, Edit/Show-Mode, aktiver Cart,
 //! Playhead/Standby, laufende Cues mit Restzeit, kaputte Cues, Engine.
 //! Reiner Lesezugriff, aktualisiert sich jeden Frame.

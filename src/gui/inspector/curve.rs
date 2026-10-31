@@ -1,10 +1,9 @@
-//! Tab „Curve" (QLab 5, Fade-Cues): gefadeter Parameter, Kurve sowie
+//! Tab „Curve" (Fade-Cues): gefadeter Parameter, Kurve sowie
 //! Start- und Zielwert.
 //!
 //! KuhPlay-Fades haben kein Ziel-Cue/-Stage (der Parameter des eigenen
 //! Cues wird gefadet) – daher gibt es hier kein „Audio Levels"/„Geometry"
-//! je nach Ziel. // TODO(qlab-parity): verifizieren, ob QLab 5 Fades mit
-//! Ziel-Cue vorsieht.
+//! je nach Ziel.
 
 use egui::RichText;
 

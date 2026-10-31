@@ -32,7 +32,7 @@ pub enum CueType {
     Video,
     /// Parameter-Fade über [`Cue::duration`] (Volume/Rate/Opacity, linear/dB).
     Fade,
-    /// Container für Kinder-Cues (QLab: Group/QFolder).
+    /// Container für Kinder-Cues (Group/QFolder).
     Group,
     /// Stoppt alle laufenden Playbacks (Blackout / Panic).
     Stop,
@@ -51,28 +51,28 @@ pub enum CueType {
     /// Daten-Cue: pusht einen JSON-Payload an die WebView eines aktiven
     /// HTML5-Cues (dynamische Lower-Thirds, Spielstände, Countdowns).
     HtmlData,
-    /// Wait-Cue (QLab 5): tut nichts, wartet nur seine `duration` ab –
+    /// Wait-Cue: tut nichts, wartet nur seine `duration` ab –
     /// reine Timer-Unit in der Engine ([`EngineCommand::Wait`]).
     Wait,
-    /// Memo-Cue (QLab 5): zeigt nur seine Notiz an, tut sonst nichts
+    /// Memo-Cue: zeigt nur seine Notiz an, tut sonst nichts
     /// (kein Engine-Kommando, gilt sofort als abgeschlossen).
     Memo,
-    /// Text-Cue (QLab 5): rendert Text ([`TextContent`]) als Inline-HTML
+    /// Text-Cue: rendert Text ([`TextContent`]) als Inline-HTML
     /// über die HTML5-Pipeline auf einer Video-Stage.
     Text,
-    /// Network-Cue (QLab 5): sendet eine Nachricht per UDP/TCP an
+    /// Network-Cue: sendet eine Nachricht per UDP/TCP an
     /// `host:port` ([`EngineCommand::SendNetwork`]) – Sofort-Cue.
     Network,
-    /// MIDI-Cue (QLab 5): sendet eine MIDI-Nachricht an das Ausgabegerät
+    /// MIDI-Cue: sendet eine MIDI-Nachricht an das Ausgabegerät
     /// ([`EngineCommand::SendMidi`]) – Sofort-Cue.
     Midi,
-    /// Light-Cue (QLab 5, Minimal-Variante): sendet ein Art-Net/sACN-DMX-Paket
+    /// Light-Cue (Minimal-Variante): sendet ein Art-Net/sACN-DMX-Paket
     /// ([`LightMessage`]) per UDP ins Licht-Netz – Sofort-Cue.
     Light,
     /// Companion-Cue: triggert Bitfocus Companion über dessen HTTP-API
     /// (Button press/down/up, [`CompanionTrigger`]) – Sofort-Cue.
     Companion,
-    /// Timecode-Cue (QLab 5): feuert, wenn der externe Timecode (LTC/MTC/OSC
+    /// Timecode-Cue: feuert, wenn der externe Timecode (LTC/MTC/OSC
     /// `/kuhplay/timecode`) seinen Trigger [`Cue::tc_trigger`] erreicht.
     /// Manuelles GO: Wait mit `duration` (0 = Sofort-Cue).
     Timecode,
@@ -284,15 +284,15 @@ impl ControlAction {
     }
 }
 
-/// Continue-Mode eines Cues (QLab: „Continue Mode", letzte Spalte der
-/// Cue-Liste; siehe „Cue Sequences" im QLab-5-Handbuch).
+/// Continue-Mode eines Cues („Continue Mode", letzte Spalte der
+/// Cue-Liste).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ContinueMode {
     /// Cue endet, nächster Cue startet nicht automatisch (Standard).
     #[default]
     Off,
     /// Auto-Continue: Beim Start dieses Cues startet der folgende Cue mit
-    /// (ggf. nach diesem Cue's Post-Wait – V1: sofort, siehe Parity-Doku).
+    /// (ggf. nach diesem Cue's Post-Wait – V1: sofort).
     AutoContinue,
     /// Auto-Follow: Startet den folgenden Cue, sobald dieser Cue endet.
     AutoFollow,
@@ -315,7 +315,7 @@ impl ContinueMode {
         }
     }
 
-    /// Spalten-Icon (QLab zeigt Symbole statt Text).
+    /// Spalten-Icon (Symbole statt Text).
     pub fn icon(self) -> &'static str {
         match self {
             ContinueMode::Off => "·",
@@ -364,7 +364,7 @@ impl LoopMode {
 
 /// Lebenszyklus eines Cues (State-Pattern).
 ///
-/// Deterministischer Ablauf (QLab-Vokabular):
+/// Deterministischer Ablauf:
 ///
 /// ```text
 /// Standby ──GO──▶ Pre-Wait ──▶ Playing ◀──▶ Paused
@@ -469,7 +469,7 @@ fn default_volume() -> f32 {
     1.0
 }
 
-/// Vordefinierte Cue-Farben (QLab-Palette, RGB) – Auswahl im Inspector.
+/// Vordefinierte Cue-Farben (Palette, RGB) – Auswahl im Inspector.
 pub const CUE_COLORS: [[u8; 3]; 8] = [
     [229, 76, 60],   // rot
     [230, 126, 34],  // orange
@@ -515,7 +515,7 @@ pub struct Cue {
     /// nachgeführt, falls ≠ 1.0 (siehe [`CueList`](crate::core::CueList)).
     #[serde(default = "default_volume")]
     pub volume: f32,
-    /// Ziel-Cue des Fades (QLab: Fade fadet einen Parameter eines ANDEREN Cues);
+    /// Ziel-Cue des Fades (Fade fadet einen Parameter eines ANDEREN Cues);
     /// `None` = der Fade-Cue selbst (altes Verhalten).
     #[serde(default)]
     pub fade_target: Option<Uuid>,
@@ -528,15 +528,14 @@ pub struct Cue {
     /// Loop-Modus der Wiedergabe.
     #[serde(default)]
     pub loop_mode: LoopMode,
-    /// Continue-Mode (Auto-Continue/Auto-Follow, QLab Cue Sequences).
+    /// Continue-Mode (Auto-Continue/Auto-Follow, Cue Sequences).
     #[serde(default)]
     pub continue_mode: ContinueMode,
     /// Kill-Switch: Beim Start dieses Cues alle anderen laufenden Media-Cues
-    /// (Video/Diashow/HTML) stoppen (QLab-äquivalent: „alle bisherigen Contents
-    /// abschießen").
+    /// (Video/Diashow/HTML) stoppen.
     #[serde(default)]
     pub kill_others: bool,
-    /// QLab-5-analog „vorherige Cues beenden": Beim Start dieses Cues alle
+    /// „Vorherige Cues beenden": Beim Start dieses Cues alle
     /// laufenden Cues stoppen, die in der Liste VOR diesem Cue stehen.
     #[serde(default)]
     pub stop_previous: bool,
@@ -622,16 +621,16 @@ pub struct Cue {
     /// Freitext-Notizen für Operatoren.
     #[serde(default)]
     pub notes: String,
-    /// Anzeigefarbe des Cues (QLab „Cue Color", RGB) – `None` = keine Farbe.
+    /// Anzeigefarbe des Cues („Cue Color", RGB) – `None` = keine Farbe.
     #[serde(default)]
     pub color: Option<[u8; 3]>,
     /// Aktueller Lebenszyklus-Zustand (wird vom Engine-Feedback gepflegt).
     #[serde(default)]
     pub status: CueStatus,
-    /// "Armed" (QLab: roter Balken) – Cue wird von GO berücksichtigt.
+    /// "Armed" (roter Balken) – Cue wird von GO berücksichtigt.
     #[serde(default = "default_armed")]
     pub is_armed: bool,
-    /// Group-Cues: Kinder ein-/ausgeklappt (QLab-Aufklapp-Dreieck,
+    /// Group-Cues: Kinder ein-/ausgeklappt (Aufklapp-Dreieck,
     /// TODO.md Phase 3). Default: ausgeklappt.
     #[serde(default)]
     pub collapsed: bool,
@@ -1083,7 +1082,7 @@ impl Cue {
         parent
     }
 
-    /// Pausiert alle laufenden Cues rekursiv (QLab Sidebar: „Pause All");
+    /// Pausiert alle laufenden Cues rekursiv („Pause All");
     /// sammelt die `Pause`-Commands.
     pub(crate) fn pause_all_collect(&mut self, commands: &mut Vec<EngineCommand>) {
         if self.status == CueStatus::Playing && self.transition_status(CueStatus::Paused).is_ok() {
@@ -1094,7 +1093,7 @@ impl Cue {
         }
     }
 
-    /// Setzt alle pausierten Cues rekursiv fort (QLab Sidebar: „Resume All");
+    /// Setzt alle pausierten Cues rekursiv fort („Resume All");
     /// sammelt die `Resume`-Commands.
     pub(crate) fn resume_all_collect(&mut self, commands: &mut Vec<EngineCommand>) {
         if self.status == CueStatus::Paused && self.transition_status(CueStatus::Playing).is_ok() {
@@ -1267,10 +1266,10 @@ pub fn format_timecode(d: Duration) -> String {
     }
 }
 
-/// Parst einen Timecode zu einer [`Duration`] (QLab-Eingabe in den
+/// Parst einen Timecode zu einer [`Duration`] (Eingabe in den
 /// Zeit-Spalten, TODO.md Phase 3: Inline-Edit).
 ///
-/// Akzeptiert (wie QLab):
+/// Akzeptiert:
 /// * `MM:SS` / `MM:SS.mmm` (z. B. `01:04`, `00:01.500`),
 /// * `HH:MM:SS` / `HH:MM:SS.mmm` (z. B. `01:00:02.000`),
 /// * nackte Sekunden als Dezimalzahl (z. B. `3`, `3.5` = 3,5 s).
@@ -1365,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_timecode_accepts_qlab_formats() {
+    fn parse_timecode_accepts_common_formats() {
         // MM:SS(.mmm)
         assert_eq!(parse_timecode("01:04"), Some(Duration::from_secs(64)));
         assert_eq!(

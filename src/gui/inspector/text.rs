@@ -1,4 +1,4 @@
-//! Inspector-Tab „Text" (Text-Cue, QLab 5): Text-Editor mit Schriftgröße,
+//! Inspector-Tab „Text" (Text-Cue): Text-Editor mit Schriftgröße,
 //! Text-/Hintergrundfarbe und Ausrichtung. Der Cue rendert den Inhalt als
 //! Inline-HTML über die HTML5-Pipeline (siehe `TextContent::to_html`).
 

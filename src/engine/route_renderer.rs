@@ -1,4 +1,4 @@
-//! Reine Render-Funktionen für das Video-Routing (QLab 5):
+//! Reine Render-Funktionen für das Video-Routing:
 //! Stage → Region → Output Route → Device.
 //!
 //! Alles läuft auf der CPU in reinen Funktionen – ohne GPU testbar, und
@@ -298,7 +298,7 @@ pub fn render_route(
         }
     }
 
-    // Route-Testbild überdeckt den Inhalt (QLab „Test Pattern“).
+    // Route-Testbild überdeckt den Inhalt („Test Pattern“).
     if route.test_pattern {
         let spec = crate::core::TestPatternSpec {
             label: route.label(),
@@ -627,8 +627,8 @@ mod tests {
     }
 
     #[test]
-    fn scaling_center_fit_stretch_fill_follow_qlab() {
-        // 1920×1080 auf 1000×1000, wie `placement_modes_follow_qlab`.
+    fn scaling_center_fit_stretch_fill() {
+        // 1920×1080 auf 1000×1000, wie `placement_modes_fit_fill_stretch_custom`.
         // Quelle: links von 960 rot, rechts blau.
         let frame = split_frame(1920, 1080, 960, [255, 0, 0], [0, 0, 255]);
         let mut route = OutputRoute::new("D", 1920, 1080);

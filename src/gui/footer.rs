@@ -1,10 +1,10 @@
-//! Footer (QLab 5, ganz unten im Fenster): Edit/Show-Segmentschalter,
+//! Footer (ganz unten im Fenster): Edit/Show-Segmentschalter,
 //! Warnungs-Indikator (kaputte Cues), Fehlerzeile, Cue-Anzahl sowie
 //! Icon-Toggles für Sidebar/Inspector und das Zahnrad für die
 //! Workspace Settings (TODO.md Phase 1).
 //!
-//! Im Show-Mode werden alle Edit-Funktionen deaktiviert (QLab-
-//! Sicherheitsfunktion gegen versehentliche Änderungen während der Show).
+//! Im Show-Mode werden alle Edit-Funktionen deaktiviert
+//! (Sicherheitsfunktion gegen versehentliche Änderungen während der Show).
 
 use egui::RichText;
 
@@ -15,7 +15,7 @@ use super::theme::{palette, size};
 /// Zeichnet den Footer (unterster Panel-Bereich, fixe Höhe).
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     ui.horizontal(|ui| {
-        // Edit / Show (QLab: Segment-Schalter, links im Footer).
+        // Edit / Show (Segment-Schalter, links im Footer).
         if ui
             .selectable_label(!app.show_mode, "Edit")
             .on_hover_text("Edit mode – editing enabled")
@@ -30,7 +30,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         {
             app.set_show_mode(true);
         }
-        // Warnungs-Indikator (QLab: Anzahl kaputter Cues; Klick springt zum
+        // Warnungs-Indikator (Anzahl kaputter Cues; Klick springt zum
         // ersten kaputten Cue, Tooltip listet die Gründe).
         let broken = app.broken_count();
         if broken > 0 {
@@ -52,7 +52,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             }
         }
         // Fehleranzeige (nicht-blockierend): Warn-Icon + gekürzte Meldung +
-        // Schließen-Button (QLab zeigt Fehler im Footer-Bereich).
+        // Schließen-Button (zeigt Fehler im Footer-Bereich).
         if let Some(err) = app.last_error() {
             ui.separator();
             let short: String = err.chars().take(80).collect();
@@ -66,7 +66,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             }
         }
         ui.separator();
-        // Mitte: Cue-Anzahl (QLab: „N cues in M lists").
+        // Mitte: Cue-Anzahl („N cues in M lists").
         let total: usize = (0..app.carts.cart_count())
             .map(|i| app.carts.cart_cue_count(i))
             .sum();
@@ -88,7 +88,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         );
         // Rechte Seite (in right_to_left erscheint das Erste ganz rechts):
         // Zahnrad Workspace Settings, dann Inspector- und Sidebar-Toggles
-        // (QLab: Icon-Buttons, keine Text-Toggles).
+        // (Icon-Buttons, keine Text-Toggles).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let gear_tooltip = if app.ui.workspace_settings_open {
                 "Close Workspace Settings"
@@ -156,7 +156,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
 }
 
 /// Icon-Toggle für ein Panel (Footer, rechts): aktives Panel hervorgehoben
-/// (QLab-Verhalten: Zustand an der Farbe ablesbar).
+/// (Zustand an der Farbe ablesbar).
 fn panel_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, active: bool) -> bool {
     let color = if active {
         palette::ACCENT

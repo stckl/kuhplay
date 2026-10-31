@@ -1,11 +1,11 @@
-# Auftrag: UI-Überarbeitung von KuhPlay (QLab-5-Clone in Rust/egui)
+# Auftrag: UI-Überarbeitung von KuhPlay (Rust/egui)
 
 Du bist ein erfahrener Rust-Entwickler mit Erfahrung in `egui`/`eframe` und kennst
-QLab 5 (Figure 53) aus der Praxis im Theater- und Veranstaltungsbetrieb. Deine
+Show-Control-Software aus der Praxis im Theater- und Veranstaltungsbetrieb. Deine
 Aufgabe ist es, die Oberfläche von **KuhPlay** übersichtlicher zu machen und
-gleichzeitig so nah an QLab 5 heranzuführen, dass sich jemand, der QLab kennt,
-**nicht umgewöhnen muss**: gleiche Positionen, gleiche Begriffe, gleiche
-Interaktionen, gleiche Tastenkürzel, gleiche Farbbedeutungen.
+gleichzeitig so vertraut zu gestalten, dass sich erfahrene Operator **nicht
+umgewöhnen müssen**: klare Positionen, branchenübliche Begriffe, Interaktionen,
+Tastenkürzel und Farbbedeutungen.
 
 Arbeite **inkrementell in den unten beschriebenen Phasen**. Nach jeder Phase muss
 `cargo test` und `cargo clippy --all-targets` grün sein, bevor du weitermachst.
@@ -28,13 +28,12 @@ Arbeite **inkrementell in den unten beschriebenen Phasen**. Nach jeder Phase mus
   - `src/gui/theme.rs` – Farbpalette + Status-Farben
   - `src/gui/icons.rs` – Phosphor-Icons (eingebetteter Font) – **für alle Icons verwenden**
   - `src/gui/menu_bar.rs` – File/Edit/View/Cues/Workspace/Help
-  - `docs/qlab5-parity.md` – Parity-Dokumentation (muss am Ende aktualisiert werden)
   - `ROADMAP.md` – Projektstand
 - Tests, die die GUI headless prüfen: `tests/gui_smoke.rs`, `tests/gui_interaction.rs`.
   Sie simulieren Maus-Events. Wenn du Interaktionen bewusst änderst, **passe die
   Tests an und ergänze neue** – lösche keine Tests ersatzlos.
 - Code-Stil: Doku-Kommentare und Kommentare **auf Deutsch**, Modul-Header mit
-  `//!` erklären Layout und QLab-Bezug. Halte diesen Stil ein.
+  `//!` erklären das Layout. Halte diesen Stil ein.
 
 ### Technische Fallstricke, die du kennen musst
 
@@ -56,18 +55,15 @@ Arbeite **inkrementell in den unten beschriebenen Phasen**. Nach jeder Phase mus
 
 ## 2. Leitprinzipien
 
-1. **QLab-Muskelgedächtnis vor eigener Kreativität.** Wenn QLab 5 etwas auf eine
-   bestimmte Art macht, mach es genauso – auch wenn eine andere Lösung „schöner"
-   wäre. Bei Unsicherheit: offizielles Handbuch <https://qlab.app/docs/v5/>
-   (v. a. „The Workspace", „The Inspector", „Keyboard Shortcuts") als Referenz.
-   Erfinde keine QLab-Verhaltensweisen; wenn du dir nicht sicher bist, markiere die
-   Stelle mit `// TODO(qlab-parity): verifizieren` und dokumentiere sie.
-2. **Englische UI-Begriffe exakt wie in QLab** (GO, Standby, Pre Wait, Action,
+1. **Muskelgedächtnis der Operator vor eigener Kreativität.** Branchenübliche Abläufe
+   bleiben erhalten, auch wenn eine andere Lösung „schöner" wäre. Wenn du dir nicht
+   sicher bist, markiere die Stelle und dokumentiere sie.
+2. **Englische UI-Begriffe, einheitlich** (GO, Standby, Pre Wait, Action,
    Post Wait, Continue, Auto-continue, Auto-follow, Inspector, Basics, Triggers,
    Time & Loops, Audio Levels, Geometry, Lists, Carts, Active Cues, Workspace
    Settings, Panic, Pause All, Resume All, Reset All …).
 3. **Weniger, aber klarer**: keine doppelten Bedienelemente, keine Text-Toggles
-   wo QLab Icons hat, keine Funktionen in Panels, wo QLab sie nicht hat.
+   wo Icons reichen, keine Funktionen in Panels, wo sie nicht hingehören.
 4. **Live-Show-Tauglichkeit**: Während der Show muss auf einen Blick erkennbar sein:
    was steht in Standby, was läuft, wie lange noch, was ist kaputt.
 5. **Farben haben Bedeutung, nicht Dekoration** (siehe Phase 2).
@@ -93,7 +89,7 @@ fehlschlagenden Test schreiben, dann fixen.
    (`handle_hotkeys`: der Esc-Zweig prüft `text_input` nicht). Wer im Notes-Feld
    oder Inspector Esc drückt, um die Eingabe abzubrechen, stoppt die ganze Show.
    Fix: Esc nur dann als Panic werten, wenn kein Textfeld Fokus hat (bzw. das
-   QLab-Verhalten aus dem Handbuch übernehmen).
+   das übliche Verhalten übernehmen).
 3. **Menü zeigt „Move Up ⌘↑ / Move Down ⌘↓", die Kürzel existieren aber nicht.**
    Schlimmer: ⌘↑/⌘↓ werden vom Pfeiltasten-Handler als normales ↑/↓ verarbeitet
    (Modifier werden ignoriert) und verschieben den **Playhead** statt den Cue.
@@ -104,7 +100,7 @@ fehlschlagenden Test schreiben, dann fixen.
    Fehlerzeile im Footer mit Schließen-Button), Fehler auch im Warnungs-Zähler.
 5. **`add_cue` erzeugt doppelte Cue-Nummern**: Nummer = `list.len() + 1`.
    Beispiel: Cues 1, 2, 3 → Cue 2 löschen → neuer Cue bekommt „3" (doppelt).
-   QLab vergibt die nächste freie Nummer nach dem selektierten Cue (bzw. höchste
+   Vergeben wird die nächste freie Nummer nach dem selektierten Cue (bzw. höchste
    numerische Nummer + Increment). Fix: eindeutige Nummernvergabe, Test dazu.
 6. **Löschen eines laufenden Cues stoppt ihn nicht** (`delete_selected` in
    `app.rs` und „Delete Cue" im Kontextmenü von `cue_table.rs` entfernen nur aus
@@ -112,7 +108,7 @@ fehlschlagenden Test schreiben, dann fixen.
    noch Panic). Fix: vorher `stop_running(id)` dispatchen – und dafür das Löschen
    **nur** über `ShowApp` laufen lassen (siehe Struktur-Punkt „Aktionen" unten).
 7. **Group-Kinder sind nicht selektierbar**: Klick auf eine Kind-Zeile selektiert
-   die Gruppe. In QLab kann jeder Cue in einer Gruppe selektiert und im Inspector
+   die Gruppe. Jeder Cue kann in einer Gruppe selektiert und im Inspector
    bearbeitet werden. Fix im Zuge von Phase 3 (Selektion über Cue-UUID statt Index).
 8. **Zu prüfen (nicht verifiziert)**: `handle_hotkeys` blockiert Space-GO, solange
    irgendein Widget Fokus hat (`m.focused().is_some()`). Prüfe, ob nach einem
@@ -160,7 +156,7 @@ sondern jeweils in der Phase, die die Datei ohnehin anfasst):
   auf ~20 fps (unnötige CPU-Last auf Show-Rechnern). Nur dann eng takten, wenn
   Cues laufen / Pre-/Post-Wait aktiv sind, sonst z. B. 500 ms (Uhr) – Engine- und
   Remote-Events können `ctx.request_repaint()` auslösen.
-- **Gemischte UI-Sprache**: Die Oberfläche ist Englisch (wie QLab), einzelne
+- **Gemischte UI-Sprache**: Die Oberfläche ist Englisch , einzelne
   Strings sind Deutsch (`"— keine —"` im Inspector, `"Noch keine Screens…"`,
   `"Keine Displays erkannt"`, `"keine Stage zugeordnet"` im Screen-Editor).
   Alle sichtbaren UI-Strings auf Englisch vereinheitlichen; Code-Kommentare
@@ -174,7 +170,7 @@ sondern jeweils in der Phase, die die Datei ohnehin anfasst):
 
 ### Phase 1 – Workspace-Grundlayout bereinigen
 
-Ziel: Layout 1:1 wie QLab 5 „The Workspace".
+Ziel: klares Workspace-Layout.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -195,7 +191,7 @@ Ziel: Layout 1:1 wie QLab 5 „The Workspace".
 
 Konkret:
 - **Doppelte Cue-Typ-Buttons entfernen**: Masthead-Toolbar und Toolbox zeigen
-  heute dieselben Buttons. In QLab 5 legt man Cues über die **Toolbox (links,
+  heute dieselben Buttons. Cues legt man über die **Toolbox (links,
   ein-/ausblendbar)**, das Menü „Cues", Tastenkürzel oder Drag & Drop an. Mach die
   Toolbox zur einzigen Button-Quelle: Icons **mit Beschriftung** (Typ-Name),
   gruppiert (Audio/Video/…, Fade, Control-Cues wie Start/Stop/Pause/GoTo/Arm/Disarm,
@@ -205,29 +201,29 @@ Konkret:
   „Q-Nummer · Name" groß und gut lesbar, darunter das Notes-Feld über die volle
   restliche Breite (nicht fix 420 px). Ganz rechts optional eine schlichte
   Uhrzeit/Laufzeit-Anzeige. Audition-Badge bleibt, aber als dezentes Pill-Label.
-- **Footer** wie QLab 5: links Edit/Show-Segmentschalter; daneben ein
+- **Footer**: links Edit/Show-Segmentschalter; daneben ein
   **Warnungs-Indikator** (Anzahl kaputter Cues, Klick springt zum ersten);
   Mitte „N cues in M lists"; rechts **Icon-Toggle-Buttons** für Sidebar und
   Inspector sowie ein **Zahnrad** für „Workspace Settings". Die Text-Buttons
   „Toolbox: on/off" usw. ersetzen (Toolbox-Toggle nur noch über View-Menü + Kürzel).
-- **Screens aus der Sidebar entfernen**: In QLab 5 liegen Screens/Stages in den
+- **Screens aus der Sidebar entfernen**: Screens/Stages liegen in den
   **Workspace Settings → Video**. Lege ein eigenes `egui::Window` (oder
   Viewport) „Workspace Settings" an, mit linker Navigationsliste
   (General, Audio, Video → Stages/Screens, Network, MIDI, Key Map/Remotes)
   und verschiebe `screen_editor` dorthin. Der Editor bekommt dort deutlich mehr
   Platz. Seiten, die es noch nicht gibt, zeigen einen Platzhalter.
-- **Sidebar** (rechts) hat nur noch die QLab-Tabs **„Lists" / „Carts" / „Active Cues"**
-  (bzw. „Lists & Carts" + „Active Cues", je nach QLab-5-Handbuch – bitte prüfen).
+- **Sidebar** (rechts) hat nur noch die Tabs **„Lists" / „Carts" / „Active Cues"**
+  (bzw. „Lists & Carts" + „Active Cues").
   Die globalen Transport-Buttons (Reset/Pause All/Resume All/Panic) als kompakte
   Icon-Leiste mit Tooltips und Shortcuts-Hinweis; Panic klar rot, aber nicht dominanter als GO.
 - **Layout-Persistenz**: Sichtbarkeit von Toolbox/Sidebar/Inspector, Panel-Breiten
   und -Höhen, aktive Tabs über `eframe`-Persistenz (`App::save` / `storage`)
   speichern. Fehlende Werte → Defaults.
 
-### Phase 2 – Farben und Status-Semantik (wie QLab)
+### Phase 2 – Farben und Status-Semantik
 
 Aktuell wird ein armierter Cue in Standby **rot** dargestellt (`theme::status_color`).
-In QLab bedeutet Rot aber **„kaputt / Problem"** – das ist für QLab-Nutzer
+Rot soll aber **„kaputt / Problem"** bedeuten – das ist für Operator
 irreführend. Neue Semantik:
 
 | Zustand | Darstellung |
@@ -237,16 +233,16 @@ irreführend. Neue Semantik:
 | Playhead / Standby | Playhead-Pfeil in der Statusspalte + gut sichtbarer Rahmen/Hintergrund der Zeile |
 | Pre Wait läuft | Pre-Wait-Zelle zählt sichtbar herunter, Status-Icon orange/gelb |
 | Running | grünes Play-Icon, Fortschrittsbalken in der Action-Spalte |
-| Paused | Pause-Icon (gelb/blau – an QLab orientieren), Fortschritt eingefroren |
+| Paused | Pause-Icon (gelb/blau), Fortschritt eingefroren |
 | Post Wait | Fortschrittsbalken in der Post-Wait-Zelle |
 | **Broken** (fehlende Datei, fehlendes Target, ungültige Stage) | **rotes ✕-Icon + Tooltip mit Grund**, im Footer gezählt |
-| Selektiert | QLab-blaue Zeilenhervorhebung, unabhängig vom Playhead |
+| Selektiert | blaue Zeilenhervorhebung, unabhängig vom Playhead |
 
 - Füge eine reine UI-Funktion `cue_problems(&Cue, &ShowApp) -> Vec<String>`
   (oder ähnlich) hinzu, die Broken-Gründe ermittelt (Datei existiert nicht,
   Target-UUID nicht gefunden, Stage unbekannt). Ergebnis cachen, nicht jeden Frame
   das Dateisystem abfragen (z. B. Neuberechnung bei Änderung oder alle 2 s).
-- **Cue-Farben** (`Cue.color`): wie in QLab als **Tönung der ganzen Zeile**
+- **Cue-Farben** (`Cue.color`): als **Tönung der ganzen Zeile**
   (niedrige Deckkraft) plus farbiger Streifen am linken Rand – nicht nur als Punkt
   in der Name-Spalte.
 - Palette in `theme.rs` aufräumen; alle Farben als benannte Konstanten,
@@ -254,20 +250,20 @@ irreführend. Neue Semantik:
 
 ### Phase 3 – Cue-Liste (wichtigster Bereich)
 
-- **Spalten wie QLab 5**: Status | Type | Number | Name | Target | Pre Wait |
+- **Spalten**: Status | Type | Number | Name | Target | Pre Wait |
   Action (Duration) | Post Wait | Continue. Die Spaltenüberschrift „Duration"
-  in „Action" umbenennen, falls QLab 5 sie so nennt (prüfen).
+  in „Action" umbenennen (prüfen).
 - Spalten **in der Breite veränderbar** (`Column::initial(..).resizable(true)`),
   Breiten persistieren; über Rechtsklick auf den Header ein-/ausblendbar.
 - **Live-Zeiten**: laufende Cues zeigen in der Action-Spalte die **verbleibende
   Zeit** und einen Fortschrittsbalken als Zellenhintergrund; Pre/Post Wait zählen
   in ihrer Zelle herunter. Daten: vorhandene `elapsed_of()`/Engine-Positionen.
-- **Interaktion an QLab angleichen** (das ist eine bewusste Verhaltensänderung –
+- **Interaktion vereinheitlichen** (das ist eine bewusste Verhaltensänderung –
   Tests anpassen):
   - Einfachklick = selektieren (bleibt).
   - **Doppelklick auf Number/Name/Pre Wait/Duration/Post Wait = Inline-Bearbeitung
     dieser Zelle** (Enter übernimmt, Esc bricht ab). Heute toggelt Doppelklick
-    „armed" – das gibt es in QLab so nicht. Arm/Disarm über Inspector, Kontextmenü
+    „armed" – das ist nicht üblich. Arm/Disarm über Inspector, Kontextmenü
     und Tastenkürzel.
   - Playhead setzen: Klick in die Statusspalte (bleibt) **und** Tastatur.
   - **Mehrfachauswahl** mit ⌘-Klick und ⇧-Klick (für Löschen, Verschieben, Gruppieren).
@@ -277,7 +273,7 @@ irreführend. Neue Semantik:
     „Set Color ▸" erweitern.
 - **Auto-Scroll**: Bei GO/Playhead-Wechsel scrollt die Liste so, dass der
   Standby-Cue sichtbar bleibt (`scroll_to_row`).
-- **Continue-Spalte**: Icons wie QLab (Auto-continue / Auto-follow) statt Text,
+- **Continue-Spalte**: Icons (Auto-continue / Auto-follow) statt Text,
   und zwischen verketteten Zeilen ein dezenter Verbindungs-Indikator.
 - Zeilenhöhe so wählen, dass ca. 25–30 Zeilen auf einen 1080p-Bildschirm passen,
   Zahlen in den Zeit-Spalten mit **Monospace/tabular figures** und rechtsbündig,
@@ -290,7 +286,7 @@ typ-spezifischen Feldern – das ist der größte Übersichtlichkeits-Verlust.
 
 - **Kopfzeile** über den Tabs: Typ-Icon, Cue-Nummer und Name des selektierten Cues
   (bei Mehrfachauswahl „N cues selected").
-- **Typabhängige Tabs wie in QLab 5**, z. B.:
+- **Typabhängige Tabs**, z. B.:
   - alle: **Basics**, **Triggers**
   - Audio: **Time & Loops** (Start/End, Loops, Slices, Waveform groß),
     **Audio Levels** (Routing/Kanäle/Pan), ggf. **Audio Trim/Effects**
@@ -299,9 +295,9 @@ typ-spezifischen Feldern – das ist der größte Übersichtlichkeits-Verlust.
   - Fade: **Curve**, **Audio Levels**/**Geometry** je nach Ziel
   - HTML5/Slideshow/Data: eigene Tabs, die die heutigen Felder sinnvoll gruppieren
   - Control-Cues: Target-Auswahl prominent im Basics-Tab
-  Orientiere dich an der Tab-Liste im QLab-5-Handbuch pro Cue-Typ; Tabs, die es in
+  Lege die Tab-Liste pro Cue-Typ fest; Tabs, die es in
   KuhPlay (noch) nicht gibt, weglassen statt leer anzeigen.
-- **Basics zweispaltig wie QLab**: links Number, Name, Target (mit Dateiname/
+- **Basics zweispaltig**: links Number, Name, Target (mit Dateiname/
   Target-Cue + „…"-Button), Pre Wait, Duration, Post Wait, Continue; rechts Color
   und ein großes **Notes**-Feld (mehrzeilig). Armed als Checkbox.
 - Zeitfelder im Format `mm:ss.ss` eingeben/anzeigen (wie die Liste), nicht als
@@ -317,13 +313,13 @@ typ-spezifischen Feldern – das ist der größte Übersichtlichkeits-Verlust.
   `struct Shortcut { action, key, modifiers, label }`) definieren; Menüeinträge
   zeigen ihren Shortcut aus dieser Tabelle an, `handle_hotkeys` liest ebenfalls
   daraus. So sind Menü und Verhalten nie inkonsistent.
-- Belegung an QLab 5 angleichen. Mindestens: Space = GO, Esc = Panic/Stop All,
+- Belegung vereinheitlichen. Mindestens: Space = GO, Esc = Panic/Stop All,
   ↑/↓ = Selektion/Playhead bewegen, ⌘-Zahlen für neue Cue-Typen, Pause All /
   Resume All / Reset All, ⌘I Inspector?, Toolbox, Sidebar, Find (⌘F),
   Delete/⌫ = Cue löschen (nur Edit-Mode), ⌘D Duplicate, ⌘G Group.
-  **Übernimm die exakte Belegung aus dem QLab-5-Handbuch („Keyboard Shortcuts")**
+  **Lege die genaue Belegung zentral fest**
   und weiche nur ab, wenn es auf Linux/Windows nicht anders geht (⌘ → Ctrl).
-  Abweichungen in `docs/qlab5-parity.md` dokumentieren.
+  Abweichungen in `docs/BACKLOG.md` dokumentieren.
 - Ein „Keyboard Shortcuts"-Fenster unter Help, das die Tabelle anzeigt.
 - **Find** (⌘F): kleine Suchleiste über der Cue-Liste, filtert/markiert nach
   Nummer, Name, Notes; Enter springt zum nächsten Treffer.
@@ -332,7 +328,7 @@ typ-spezifischen Feldern – das ist der größte Übersichtlichkeits-Verlust.
 
 - Show-Mode muss **sofort erkennbar** sein: z. B. farbiger Rahmen um den Masthead
   oder eingefärbter Footer + „SHOW" Label; Edit-Funktionen ausgeblendet statt nur
-  deaktiviert, wo QLab das ebenfalls tut.
+  deaktiviert, wo das zur Sicherheit nötig ist.
 - **Active Cues**-Tab: pro laufendem Cue Typ-Icon, Nummer/Name, Fortschrittsbalken,
   elapsed / remaining, Buttons Pause/Resume/Stop – gut klickbar (min. 28 px hoch).
 - Leerzustände: leere Cue-Liste zeigt einen Hinweis („Drag files here or use the
@@ -350,8 +346,8 @@ typ-spezifischen Feldern – das ist der größte Übersichtlichkeits-Verlust.
 - Keine Änderungen an Engine-, Remote- oder Persistenz-Logik ohne zwingenden Grund.
 - Keine neuen Abhängigkeiten außer, wenn unvermeidbar, kleine egui-Ökosystem-Crates
   (vorher begründen). Kein Wechsel auf eine andere egui-Version.
-- Keine erfundenen QLab-Features oder -Begriffe. Keine eigenen „Verbesserungen",
-  die QLab-Nutzer umlernen müssten.
+- Keine erfundenen Features oder Begriffe. Keine eigenen „Verbesserungen",
+  die erfahrene Operator umlernen müssten.
 - Keine Tests löschen, um grün zu werden.
 - Nicht alles in einem riesigen Commit/Diff – pro Phase ein abgeschlossener Stand.
 
@@ -365,13 +361,13 @@ Pro Phase:
 2. Neue/angepasste GUI-Tests in `tests/gui_interaction.rs` bzw. `tests/gui_smoke.rs`
    für jede geänderte Interaktion (z. B. Doppelklick = Inline-Edit, Mehrfachauswahl,
    Drag-Reorder, Broken-Cue-Erkennung, Shortcut-Tabelle ↔ Menü).
-3. `docs/qlab5-parity.md` aktualisiert (GUI-Mapping-Tabelle, Kapitel „The Workspace",
+3. `docs/BACKLOG.md` aktualisiert (GUI-Mapping-Tabelle, Kapitel „The Workspace",
    „The Inspector", „Keyboard Shortcuts", bekannte Abweichungen) und `ROADMAP.md`
    ergänzt.
-4. Kurzer Bericht: was geändert wurde, welche QLab-Verhaltensweisen du verifiziert
-   hast und welche mit `TODO(qlab-parity)` offen sind.
+4. Kurzer Bericht: was geändert wurde, welches Verhalten du verifiziert
+   hast und welches offen ist.
 
-Gesamtziel: Ein QLab-5-Nutzer öffnet KuhPlay, findet GO, Standby, Cue-Liste,
+Gesamtziel: Ein erfahrener Operator öffnet KuhPlay, findet GO, Standby, Cue-Liste,
 Inspector-Tabs, Sidebar und Shortcuts dort, wo er sie erwartet, und sieht während
 einer Show sofort, was läuft, was als Nächstes kommt und was kaputt ist.
 

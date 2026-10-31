@@ -1,4 +1,4 @@
-//! Stage-Editor (QLab 5: „Video → Video Outputs → Edit Stage…“).
+//! Stage-Editor („Video → Video Outputs → Edit Stage…“).
 //!
 //! Eigenes Fenster pro Stage:
 //!

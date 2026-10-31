@@ -5,21 +5,21 @@
 //! (GStreamer `videomixer`/Compositor oder native Window-Layer) bildet
 //! [`StageGeometry`] auf konkrete Render-Pipelines ab.
 //!
-//! ## QLab-Feature-Mapping (Kapitel „Video")
+//! ## Funktionen
 //!
 //! * **Stages & Screens:** Eine [`Stage`] ist die virtuelle Ausgabefläche
 //!   (Canvas-Größe); [`Stage::screen`] mappt sie per ID auf einen Screen
 //!   ([`crate::core::Screen`], Rechteck auf einem Hardware-Output) –
-//!   „Stage → Screen"-Zuordnung wie in QLab.
+//!   „Stage → Screen"-Zuordnung.
 //! * **Surfaces:** Jeder Video-/Diashow-Cue trägt eine [`SurfaceGeometry`]
 //!   (Position/Größe auf der Stage, Layer, Deckkraft, Sichtbarkeit).
 //! * **Area of Interest:** [`SurfaceGeometry::area_of_interest`] ist der
-//!   Zuschnitt der Quelle (QLab „Area of Interest“ / Crop) – als normalisiertes
+//!   Zuschnitt der Quelle („Area of Interest“ / Crop) – als normalisiertes
 //!   Keep-Rechteck ([`Crop`]), live editierbar.
 //! * **Hard Edge Blending:** [`SurfaceGeometry::hard_edge`] weicht die Kante
 //!   einer Surface über eine Breite in Pixeln auf (linear oder Cosinus-Kurve)
 //!   und blendet so die darunterliegende Surface in der Überlappung ein –
-//!   wie QLabs „Hard Edge“-Blending zwischen benachbarten Projektionen.
+//!   „Hard Edge“-Blending zwischen benachbarten Projektionen.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -39,7 +39,7 @@ fn default_opacity() -> f32 {
     1.0
 }
 
-/// Default-Blend-Gamma (sRGB-artige Kurve, QLab „Blend Gamma“).
+/// Default-Blend-Gamma (sRGB-artige Kurve, „Blend Gamma“).
 fn default_gamma() -> f32 {
     2.2
 }
@@ -57,7 +57,7 @@ pub enum EdgeSide {
     Bottom,
 }
 
-/// Kurvenform des Hard-Edge-Fades (QLab: Linear / Cosine).
+/// Kurvenform des Hard-Edge-Fades (Linear / Cosine).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BlendCurve {
     /// Lineare Rampe (hart → weich linear).
@@ -76,7 +76,7 @@ impl EdgeSide {
         EdgeSide::Bottom,
     ];
 
-    /// UI-Label (QLab-Terminologie).
+    /// UI-Label .
     pub fn label(&self) -> &'static str {
         match self {
             EdgeSide::Left => "Left",
@@ -91,7 +91,7 @@ impl BlendCurve {
     /// Alle Kurven (für UI-ComboBoxen).
     pub const ALL: [BlendCurve; 2] = [BlendCurve::Linear, BlendCurve::Cosine];
 
-    /// UI-Label (QLab-Terminologie).
+    /// UI-Label .
     pub fn label(&self) -> &'static str {
         match self {
             BlendCurve::Linear => "Linear",
@@ -100,7 +100,7 @@ impl BlendCurve {
     }
 }
 
-/// Hard-Edge-Blending einer Surface (QLab „Hard Edge“).
+/// Hard-Edge-Blending einer Surface („Hard Edge“).
 ///
 /// In der Überlappungszone zweier Surfaces wird die Kante dieser Surface
 /// über `width` Pixel (auf der Stage-Canvas) von 0 auf 1 eingeblendet –
@@ -151,13 +151,13 @@ impl HardEdge {
         let t = dist / self.width; // 0 an der Kante → 1 innen
         match self.curve {
             BlendCurve::Linear => t,
-            // Cosinus: weicher S-förmiger Verlauf (QLab-Cosine).
+            // Cosinus: weicher S-förmiger Verlauf (Cosine).
             BlendCurve::Cosine => 0.5 - 0.5 * (std::f32::consts::PI * t).cos(),
         }
     }
 }
 
-/// Blend-Modus einer Surface (QLab: Blend Mode, z. B. Multiply/Screen).
+/// Blend-Modus einer Surface (Blend Mode, z. B. Multiply/Screen).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BlendMode {
     /// Normale Alpha-Kompositing (Default).
@@ -223,7 +223,7 @@ pub type SurfaceRect = (f32, f32, f32, f32);
 /// Ausschnitt der Quelle: `x0`, `y0`, `x1`, `y1`.
 pub type SourceRect = (u32, u32, u32, u32);
 
-/// Wie ein Cue auf der Stage liegt (QLab: Geometry-Tab, Mode und Style).
+/// Wie ein Cue auf der Stage liegt (Geometry-Tab, Mode und Style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum GeometryMode {
     /// Ganz sichtbar, Seitenverhältnis bleibt; frei bleibende Fläche ist leer.
@@ -257,7 +257,7 @@ impl GeometryMode {
 
 /// Geometrie einer Surface (eines Video-/Diashow-Cues) auf einer Stage.
 ///
-/// QLab-Pendant: Surface-Zuweisung eines Video-Cues (Position/Größe auf der
+/// Surface-Zuweisung eines Video-Cues (Position/Größe auf der
 /// Stage, Layer, Deckkraft) inkl. **Area of Interest** (Quellen-Zuschnitt)
 /// und **Hard-Edge**-Blending.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -271,10 +271,10 @@ pub struct SurfaceGeometry {
     /// Höhe auf der Stage-Canvas (Pixel, > 0).
     pub height: f32,
     /// Area of Interest: Quellen-Zuschnitt als normalisiertes Keep-Rechteck
-    /// (QLab „Area of Interest“). `None` = volle Quelle.
+    /// („Area of Interest“). `None` = volle Quelle.
     #[serde(default)]
     pub area_of_interest: Option<Crop>,
-    /// Hard-Edge-Blending an einer Kante (QLab „Hard Edge“).
+    /// Hard-Edge-Blending an einer Kante („Hard Edge“).
     #[serde(default)]
     pub hard_edge: Option<HardEdge>,
     /// Deckkraft der Surface (0.0 – 1.0; 1.0 = voll deckend).
@@ -290,7 +290,7 @@ pub struct SurfaceGeometry {
     /// andere Achse mit (Basis ist das Medienformat, sonst das aktuelle Rechteck).
     #[serde(default)]
     pub lock_aspect: bool,
-    /// Blend-Modus der Surface (QLab: Blend Mode).
+    /// Blend-Modus der Surface (Blend Mode).
     #[serde(default)]
     pub blend_mode: BlendMode,
 }
@@ -313,7 +313,7 @@ impl SurfaceGeometry {
         }
     }
 
-    /// Standard für neue Cues: ganz sichtbar, unverzerrt (QLab: Fill Stage, Fit).
+    /// Standard für neue Cues: ganz sichtbar, unverzerrt (Fill Stage, Fit).
     pub fn fit() -> Self {
         Self {
             mode: GeometryMode::Fit,
@@ -554,7 +554,7 @@ pub struct Stage {
     /// Zugeordneter Screen (ID aus [`crate::core::ScreenManager`]).
     ///
     /// `None` = nur virtuelle Vorschau im App-Fenster (kein Hardware-Output).
-    /// QLab-Pendant: „Stage → Screen“-Zuordnung. Die Ausgabe erfolgt randlos
+    /// „Stage → Screen“-Zuordnung. Die Ausgabe erfolgt randlos
     /// und „immer oben" exakt auf dem Screen-Rechteck (ggf. gedreht, siehe
     /// [`crate::core::ScreenRotation`]).
     /// Altes Modell: zugeordneter Screen. Wird nur noch zum Laden alter
@@ -570,14 +570,14 @@ pub struct Stage {
     /// (leer = Stage ohne Ausgabe, z. B. nur Vorschau/Audition).
     #[serde(default)]
     pub regions: Vec<Region>,
-    /// Stage-Layer: höher = oben (QLab „Stage Layer“). Bei gleichem Layer
+    /// Stage-Layer: höher = oben („Stage Layer“). Bei gleichem Layer
     /// liegt der alphabetisch frühere Name oben.
     #[serde(default)]
     pub layer: i32,
     /// Blend-Gamma der Region-Edge-Blends (Default 2.2).
     #[serde(default = "default_gamma")]
     pub blend_gamma: f32,
-    /// Stage zwischen Cues schwarz halten (QLab „Keep Rendering“).
+    /// Stage zwischen Cues schwarz halten („Keep Rendering“).
     #[serde(default)]
     pub keep_rendering: bool,
     /// Stage-Crop (Sichtfenster, normalisiert wie [`Crop`]): Nur dieser
@@ -803,7 +803,7 @@ impl StageManager {
 
     /// Stages in Zeichenreihenfolge (unten zuerst): Layer aufsteigend;
     /// bei gleichem Layer der alphabetisch **spätere** Name zuerst, damit
-    /// der frühere Name oben liegt (QLab-Layer-Regel).
+    /// der frühere Name oben liegt (Layer-Regel).
     pub fn sorted_back_to_front(&self) -> Vec<&Stage> {
         let mut sorted: Vec<&Stage> = self.stages.iter().collect();
         sorted.sort_by(|a, b| a.layer.cmp(&b.layer).then_with(|| b.name.cmp(&a.name)));
@@ -816,7 +816,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn placement_modes_follow_qlab() {
+    fn placement_modes_fit_fill_stretch_custom() {
         let surface = |mode| SurfaceGeometry {
             mode,
             ..SurfaceGeometry::full_canvas()

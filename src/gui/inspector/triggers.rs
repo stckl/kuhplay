@@ -1,8 +1,6 @@
-//! Tab „Triggers" (QLab 5): Timecode-In (Chasing) für den selektierten Cue.
+//! Tab „Triggers": Timecode-In (Chasing) für den selektierten Cue.
 //!
-//! QLab bietet hier zusätzlich MIDI-, OSC- und Network-Trigger – diese sind
-//! geplant (siehe `docs/qlab5-parity.md`, Kapitel „Networking, MIDI, Show
-//! Control").
+//! MIDI-, OSC- und Network-Trigger sind geplant (siehe `docs/BACKLOG.md`).
 
 use std::time::Duration;
 

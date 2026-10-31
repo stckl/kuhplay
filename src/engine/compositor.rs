@@ -1,4 +1,4 @@
-//! Software-Compositor für Video-Stages (QLab-Pendant: Surfaces auf einer
+//! Software-Compositor für Video-Stages (Surfaces auf einer
 //! Stage mit **Area of Interest** und **Hard-Edge-Blending**).
 //!
 //! Pro Stage wird ein Canvas (Größe aus [`Stage::geometry`]) komponiert:

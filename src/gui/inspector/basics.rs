@@ -45,7 +45,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
             app.text_field_ids.insert(r.id);
             ui.end_row();
 
-            // Target-Zeile: je nach Typ (QLab: Target prominent in Basics).
+            // Target-Zeile: je nach Typ (Target prominent in Basics).
             theme::field_label(ui, "Target");
             match cue.cue_type {
                 CueType::Audio | CueType::Video => {
@@ -131,7 +131,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.end_row();
             }
 
-            // Group: Mode + Kinder (QLab-Basics).
+            // Group: Mode + Kinder (Basics).
             if cue.cue_type == CueType::Group {
                 theme::field_label(ui, "Group Mode");
                 let mut mode = cue.group_mode;
@@ -221,7 +221,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                 }
             });
 
-            // QLab „Cue Color": Paletten-Swatches + Entfernen.
+            // „Cue Color": Paletten-Swatches + Entfernen.
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Color").color(theme::palette::TEXT_DIM));
                 ui.spacing_mut().item_spacing.x = theme::size::SPACE_SMALL;
@@ -246,7 +246,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                 }
             });
 
-            // Notes füllen den Rest der Spalte (QLab: rechts in Basics).
+            // Notes füllen den Rest der Spalte (rechts in Basics).
             let r = ui.add(
                 egui::TextEdit::multiline(&mut cue.notes)
                     .hint_text("Notes…")

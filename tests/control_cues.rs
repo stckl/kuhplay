@@ -246,7 +246,7 @@ fn engine_devamp_finishes_an_infinite_loop_immediately() {
     let (mut engine, _clock) = MockMediaEngine::with_virtual_clock(tx);
     let id = Uuid::new_v4();
 
-    // Endloser Loop (QLab: Devamp beendet ihn sofort und springt zum Outro).
+    // Endloser Loop (Devamp beendet ihn sofort und springt zum Outro).
     engine
         .handle(EngineCommand::Play {
             cue_id: id,

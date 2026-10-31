@@ -1,4 +1,4 @@
-//! Toolbox (QLab 5): linke Leiste mit den Cue-Typ-Buttons – die EINZIGE
+//! Toolbox: linke Leiste mit den Cue-Typ-Buttons – die EINZIGE
 //! Button-Quelle für neue Cues (die Masthead-Toolbar entfällt,
 //! TODO.md Phase 1).
 //!
@@ -14,7 +14,7 @@ use super::app::ShowApp;
 use super::icons::{self, Icon};
 use super::theme::{self, palette, size};
 
-/// Cue-Typ-Gruppen der Toolbox (QLab-ähnliche Gruppierung).
+/// Cue-Typ-Gruppen der Toolbox.
 const GROUPS: &[(&str, &[CueType])] = &[
     (
         "Media",
@@ -37,14 +37,14 @@ const GROUPS: &[(&str, &[CueType])] = &[
         ],
     ),
     ("Data", &[CueType::HtmlData]),
-    // Wait/Memo (QLab 5): Timer- und Notiz-Cues ohne eigenes Medium.
+    // Wait/Memo: Timer- und Notiz-Cues ohne eigenes Medium.
     ("Misc", &[CueType::Wait, CueType::Memo, CueType::Timecode]),
-    // Network/MIDI (QLab 5): UDP/TCP-Nachricht bzw. MIDI an Ziele im Show-Netz.
+    // Network/MIDI: UDP/TCP-Nachricht bzw. MIDI an Ziele im Show-Netz.
     (
         "Network",
         &[CueType::Network, CueType::Midi, CueType::Companion],
     ),
-    // Lighting (QLab 5): Art-Net DMX ins Licht-Netz.
+    // Lighting: Art-Net DMX ins Licht-Netz.
     ("Lighting", &[CueType::Light]),
 ];
 

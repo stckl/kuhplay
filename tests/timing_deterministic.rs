@@ -441,7 +441,7 @@ fn pause_freezes_the_playback_clock() {
 }
 
 // ---------------------------------------------------------------------------
-// Wait-Cue (QLab 5): reine Timer-Unit
+// Wait-Cue: reine Timer-Unit
 // ---------------------------------------------------------------------------
 
 fn wait_cmd(cue_id: Uuid, duration_ms: u64, pre_ms: u64, post_ms: u64) -> EngineCommand {
@@ -555,7 +555,7 @@ fn wait_cue_stop_emits_stopped_and_no_finish() {
 }
 
 // ---------------------------------------------------------------------------
-// Timecode-Injection: alle chasing Cues springen mit (QLab-Gruppen-Sprung)
+// Timecode-Injection: alle chasing Cues springen mit (Gruppen-Sprung)
 // ---------------------------------------------------------------------------
 
 fn tc(h: u64, m: u64, sec: u64, f: u64) -> Timecode {

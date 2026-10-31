@@ -1,4 +1,4 @@
-//! Testbild-Renderer (QLab „Test Pattern").
+//! Testbild-Renderer („Test Pattern").
 //!
 //! Das Testbild wird in der **Auflösung des Screens** gezeichnet, nicht in der
 //! der Stage (siehe [`super::compositor`]). Ein Pixel im Bild ist also ein Pixel
@@ -8,7 +8,7 @@
 //! Alle Arten teilen dieselben Elemente: 1 px weißer Rand exakt am Bildrand,
 //! 1 px Kreis in der Mitte und die Beschriftung im weißen Kasten.
 //!
-//! * **Grid** (Aufbau wie das Ausrichtungsraster in QLab 5): monochrom weiß auf
+//! * **Grid** (Aufbau wie das Ausrichtungsraster): monochrom weiß auf
 //!   Schwarz, feines Raster mit Skala am Rand, Mittelachsen, Diagonalen und Kreise
 //!   in den Ecken. Alles 1 px breit.
 //! * **Solid Color**: Fläche in der Screen-Farbe.
@@ -94,7 +94,7 @@ fn draw_text(
     }
 }
 
-/// Raster-Overlay für **eine Region** im Route-Bild (QLab „Region Grid“):
+/// Raster-Overlay für **eine Region** im Route-Bild („Region Grid“):
 /// feines Raster + Beschriftung, nur über dem Bereich dieser Region – die
 /// Region füllt den Route-Raster, also über das ganze Bild. Andere Regionen
 /// auf anderen Routen bleiben unberührt.
@@ -413,7 +413,7 @@ fn draw_solid_color(rgba: &mut [u8], _w: usize, _h: usize, color: [u8; 3]) {
     }
 }
 
-/// SMPTE-Farbbalken: 7 vertikale Streifen (75% Sättigung, QLab-Style).
+/// SMPTE-Farbbalken: 7 vertikale Streifen (75% Sättigung).
 fn draw_color_bars(rgba: &mut [u8], w: usize, h: usize) {
     // SMPTE 75% bars: Weiß, Gelb, Cyan, Grün, Magenta, Rot, Blau
     let bars: [[u8; 3]; 7] = [
@@ -612,7 +612,7 @@ fn draw_circle_at(rgba: &mut [u8], w: usize, h: usize, cx: f32, cy: f32, radius:
     }
 }
 
-/// Zentrierte Beschriftung: schwarze Schrift im weißen Kasten (wie in QLab), damit
+/// Zentrierte Beschriftung: schwarze Schrift im weißen Kasten, damit
 /// sie auf jedem Hintergrund lesbar bleibt. Schriftgröße folgt dem Screen.
 fn draw_label(rgba: &mut [u8], w: usize, h: usize, text: &str) {
     let (unit_w, unit_h) = measure_text(text, 1.0);

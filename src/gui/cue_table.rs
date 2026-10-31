@@ -1,12 +1,11 @@
-//! Cue-Liste als Tabelle (QLab 5 Spalten-Layout) – der „Cue Editor".
+//! Cue-Liste als Tabelle (Spalten-Layout) – der „Cue Editor".
 //!
-//! Spalten (links → rechts, wie QLab 5 „The Workspace"; die Überschrift
-//! „Duration" wurde gegen das QLab-5-Handbuch geprüft und bleibt so):
+//! Spalten (links → rechts):
 //! **Status** (Playhead + Status-Pillen + Broken-✕) | Type (Icon +
 //! Aufklapp-Dreieck bei Gruppen) | Q# | Name | Target | Pre-wait |
 //! Duration (Action) | Post-wait | Continue-Mode.
 //!
-//! ## Interaktion (QLab 5, TODO.md Phase 3)
+//! ## Interaktion (TODO.md Phase 3)
 //!
 //! * Klick auf eine Zeile: selektiert den Cue (auch Group-Kinder,
 //!   UUID-Selektion – Item 7).
@@ -16,26 +15,26 @@
 //! * **Doppelklick** auf Q#/Name/Pre-wait/Duration/Post-wait: Inline-Edit
 //!   der Zelle (Enter oder Klick daneben übernimmt, Esc bricht ab).
 //!   Arm/Disarm läuft NICHT mehr über Doppelklick, sondern über
-//!   Kontextmenü und Inspector (QLab-Verhalten).
+//!   Kontextmenü und Inspector.
 //! * **Drag & Drop**: Top-Level-Cues lassen sich umsortieren; Drop auf
 //!   eine Gruppen-Zeile legt den Cue als letztes Kind hinein.
 //! * Group-Cues: Aufklapp-Dreieck (ein-/ausklappen), Kinder eingerückt.
-//! * Rechtsklick auf den **Header**: Spalten ein-/ausblenden (QLab),
+//! * Rechtsklick auf den **Header**: Spalten ein-/ausblenden,
 //!   Breiten sind veränderbar und werden persistiert (`CueColumnLayout`).
 //! * Rechtsklick auf eine Zeile: Kontextmenü (Set Playhead / Arm / Group /
 //!   Duplicate / Set Color ▸ / Move Up / Move Down / Delete). Bei
 //!   Mehrfachauswahl wirken die Aktionen auf die ganze Selektion.
 //! * Auto-Scroll: Bei Playhead-Wechsel (GO, Pfeiltasten, Klick) scrollt
 //!   die Liste zur Standby-Zeile.
-//! * Disarmte Cues sind ausgegraut (QLab-Verhalten).
+//! * Disarmte Cues sind ausgegraut.
 //! * `editable == false` (Show-Mode): Playhead-Klicks, Doppelklick,
-//!   Drag & Drop und Kontextmenü sind deaktiviert (QLab-Sicherheitsfunktion).
+//!   Drag & Drop und Kontextmenü sind deaktiviert (Sicherheitsfunktion).
 //!
-//! ## Status-Semantik (TODO.md Phase 2, wie QLab)
+//! ## Status-Semantik (TODO.md Phase 2)
 //!
 //! * Standby (auch armiert): **neutral** – die Zeile ist nur über den
-//!   Playhead-Pfeil + dezente Zeilenhervorhebung markiert. Rot bedeutet in
-//!   QLab „kaputt", nicht „armiert".
+//!   Playhead-Pfeil + dezente Zeilenhervorhebung markiert. Rot bedeutet
+//!   „kaputt", nicht „armiert".
 //! * Pre-Wait: amber Status-Icon + die Pre-wait-Zelle zählt sichtbar herunter.
 //! * Playing: grünes Play-Icon + Fortschrittsbalken + **Restzeit** in der
 //!   Duration-Spalte.
@@ -44,9 +43,9 @@
 //!   Post-wait-Zelle.
 //! * **Broken** (fehlende Datei, unbekannte Stage, …): rotes ✕-Icon +
 //!   Tooltip mit Grund (Daten: [`CueRowMeta`], gecacht in `ShowApp`).
-//! * Selektiert: QLab-blaue Zeilenhervorhebung (unabhängig vom Playhead).
+//! * Selektiert: blaue Zeilenhervorhebung (unabhängig vom Playhead).
 //! * Cue-Color: Tönung der ganzen Zeile (niedrige Deckkraft) + farbiger
-//!   Streifen am linken Rand (QLab „Cue Color").
+//!   Streifen am linken Rand („Cue Color").
 //! * Cue-Sequences: dezenter Verbindungs-Strich zwischen verketteten Zeilen.
 //!
 //! ## Technischer Hinweis (Click-Handling)
@@ -86,13 +85,13 @@ use super::icons::{self, Icon};
 use super::state::{CueColumnLayout, FindState, CUE_COLUMN_COUNT, CUE_COLUMN_TITLES};
 use super::theme::{self, palette, size};
 
-/// Zeilenhöhe der Cue-Tabelle (QLab-komfortabel; ~30 Zeilen passen auf
+/// Zeilenhöhe der Cue-Tabelle (komfortabel; ~30 Zeilen passen auf
 /// einen 1080p-Bildschirm inkl. Masthead/Footer/Menüleiste).
 const ROW_HEIGHT: f32 = 28.0;
 /// Höhe der Spalten-Header-Zeile.
 const HEADER_HEIGHT: f32 = 24.0;
 
-/// Spalten-Indizes (Reihenfolge wie QLab 5, siehe `CUE_COLUMN_TITLES`).
+/// Spalten-Indizes (Reihenfolge, siehe `CUE_COLUMN_TITLES`).
 mod col {
     pub const STATUS: usize = 0;
     pub const TYPE: usize = 1;
@@ -245,8 +244,8 @@ pub fn draw(
         }
     };
 
-    // Anzeige-Liste flach: Top-Level-Cues + Group-Kinder (eingerückt,
-    // QLab). Eingeklappte Gruppen zeigen keine Kinder-Zeilen.
+    // Anzeige-Liste flach: Top-Level-Cues + Group-Kinder (eingerückt).
+    // Eingeklappte Gruppen zeigen keine Kinder-Zeilen.
     let mut rows: Vec<RowRef> = Vec::new();
     for (i, cue) in cue_list.cues().iter().enumerate() {
         rows.push(RowRef {
@@ -341,7 +340,7 @@ pub fn draw(
                     }
                     ui.add_space(6.0);
                     if i == col::CONTINUE {
-                        // QLab: Continue-Spalte mit Icon beschriftet.
+                        // Continue-Spalte mit Icon beschriftet.
                         icons::draw(ui, Icon::AutoContinue, 11.0, palette::TEXT_DIM)
                             .on_hover_text("Continue mode");
                     } else if !CUE_COLUMN_TITLES[i].is_empty() {
@@ -359,7 +358,7 @@ pub fn draw(
                         [r.left_bottom(), r.right_bottom()],
                         egui::Stroke::new(1.0_f32, palette::BORDER),
                     );
-                    // Rechtsklick auf den Header: Spalten ein-/ausblenden (QLab).
+                    // Rechtsklick auf den Header: Spalten ein-/ausblenden.
                     let resp = ui.interact(
                         ui.max_rect(),
                         ui.id().with(("cue_col_ctx", i)),
@@ -418,7 +417,7 @@ pub fn draw(
                 let pre_wait_remaining = row_meta.and_then(|m| m.pre_wait_remaining);
 
                 let is_armed = cue.is_armed;
-                // Disarmte Cues ausgegraut (QLab); Kinder zusätzlich abgedunkelt.
+                // Disarmte Cues ausgegraut; Kinder zusätzlich abgedunkelt.
                 let text_color = if is_armed {
                     palette::TEXT
                 } else {
@@ -473,7 +472,7 @@ pub fn draw(
                     } else {
                         return;
                     }
-                    // QLab „Cue Color": farbiger Streifen am linken Zeilenrand.
+                    // „Cue Color": farbiger Streifen am linken Zeilenrand.
                     if let Some([r, g, b]) = cue.color {
                         let strip = egui::Rect::from_min_size(
                             status_rect
@@ -495,7 +494,7 @@ pub fn draw(
                         cue.status.label().to_string()
                     };
                     if is_cursor_row {
-                        // QLab: Playhead = sehr hellgrauer Dreieck-Zeiger am
+                        // Playhead = sehr hellgrauer Dreieck-Zeiger am
                         // linken Rand (Klick setzt den Playhead, s. u.).
                         let icon_rect = egui::Rect::from_min_size(
                             ui.max_rect().left_top() + egui::vec2(6.0, 7.0),
@@ -517,7 +516,7 @@ pub fn draw(
                         }
                     } else if broken && !cue.status.is_active() {
                         // Kaputter Cue: rotes ✕ statt Status-Pille
-                        // (QLab „broken cue").
+                        // („broken cue").
                         let (rect, response) =
                             ui.allocate_exact_size(egui::vec2(30.0, 20.0), Sense::hover());
                         icons::paint_at(
@@ -573,7 +572,7 @@ pub fn draw(
                         return;
                     }
                     if is_group {
-                        // QLab-Aufklapp-Dreieck links vom Icon.
+                        // Aufklapp-Dreieck links vom Icon.
                         let (rect, resp) =
                             ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::click());
                         let icon = if collapsed {
@@ -633,7 +632,7 @@ pub fn draw(
                             .color(text_color),
                     );
                 });
-                // --- Name: Kinder eingerückt (QLab); Doppelklick = Inline-Edit ---
+                // --- Name: Kinder eingerückt; Doppelklick = Inline-Edit ---
                 row.col(|ui| {
                     paint_row_bg(
                         &painter,
@@ -714,7 +713,7 @@ pub fn draw(
                     ) {
                         return;
                     }
-                    // Zeiten rechtsbündig + Monospace (QLab: herunterzählende
+                    // Zeiten rechtsbündig + Monospace (herunterzählende
                     // Zeiten springen nicht).
                     let (text, color) = if cue.status == CueStatus::PreWait {
                         let remaining = pre_wait_remaining.unwrap_or(cue.pre_wait);
@@ -738,7 +737,7 @@ pub fn draw(
                         cue.color,
                         dimmed,
                     );
-                    // QLab: Fortschrittsbalken in der Action-Spalte, hinter
+                    // Fortschrittsbalken in der Action-Spalte, hinter
                     // dem Text; bei Paused eingefroren (Phase 2).
                     if let Some(elapsed) = elapsed {
                         let progress = cue_progress(elapsed, cue.duration);
@@ -774,7 +773,7 @@ pub fn draw(
                     ) {
                         return;
                     }
-                    // QLab: laufende Cues zeigen die verbleibende Zeit. Basis ist
+                    // laufende Cues zeigen die verbleibende Zeit. Basis ist
                     // die Cue-Duration, sonst die erkannte Medien-Dauer (duration=0).
                     let row_meta = meta.get(&cue_id);
                     let media_dur = row_meta.and_then(|m| m.media_duration);
@@ -864,7 +863,7 @@ pub fn draw(
                         ui.label(RichText::new(text).monospace().color(color));
                     });
                 });
-                // --- Continue-Mode: Icon (QLab-Spalte „Continue") ---
+                // --- Continue-Mode: Icon (Spalte „Continue") ---
                 row.col(|ui| {
                     paint_row_bg(
                         &painter,
@@ -886,7 +885,7 @@ pub fn draw(
                             .on_hover_text(format!("Continue: {}", mode.label()));
                     }
                     // Verbindungs-Indikator: Dieser Cue ketten zu einem
-                    // nächsten Top-Level-Cue (QLab „Cue Sequence").
+                    // nächsten Top-Level-Cue („Cue Sequence").
                     if !is_child
                         && mode != ContinueMode::Off
                         && rows[index + 1..].iter().any(|r| r.child.is_none())
@@ -934,7 +933,7 @@ pub fn draw(
                         let from = payload.index;
                         if from != list_index && from < cue_list.len() {
                             if is_group {
-                                // Drop auf eine Gruppe = hineinlegen (QLab).
+                                // Drop auf eine Gruppe = hineinlegen.
                                 actions.move_into_group = Some((from, list_index));
                             } else {
                                 actions.move_to = Some((from, list_index));
@@ -943,7 +942,7 @@ pub fn draw(
                     }
                 }
 
-                // Playhead per Drag in der Status-Spalte verschieben (QLab).
+                // Playhead per Drag in der Status-Spalte verschieben.
                 if response.drag_started() || response.dragged() {
                     if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                         if status_rect.is_some_and(|r| r.contains(pos)) && editable {
@@ -952,7 +951,7 @@ pub fn draw(
                     }
                 }
                 if clicked || double_clicked {
-                    // In welcher Spalte wurde geklickt? (QLab: Status-Spalte
+                    // In welcher Spalte wurde geklickt? (Status-Spalte
                     // setzt den Playhead, der Rest selektiert/editiert.)
                     let pointer_pos = ctx.input(|i| i.pointer.interact_pos());
                     let in_status_column =
@@ -961,7 +960,7 @@ pub fn draw(
                     // `double_clicked` gleichzeitig – der Doppelklick muss
                     // zuerst geprüft werden.
                     if double_clicked && editable {
-                        // Doppelklick auf Q#/Name/Pre/Duration/Post = Inline-Edit (QLab).
+                        // Doppelklick auf Q#/Name/Pre/Duration/Post = Inline-Edit.
                         if let Some(field) =
                             pointer_pos.and_then(|pos| editable_field_at(&cell_rects, pos))
                         {
@@ -995,7 +994,7 @@ pub fn draw(
                         }
                     } else if clicked {
                         if in_status_column {
-                            // Status-Spalte: Playhead setzen (QLab).
+                            // Status-Spalte: Playhead setzen.
                             if editable {
                                 cue_list.set_cursor(list_index);
                             }
@@ -1005,12 +1004,12 @@ pub fn draw(
                                 // ⌘-Klick: Cue zur Selektion hinzufügen/entfernen.
                                 cue_list.toggle_select_id(cue_id);
                             } else if modifiers.shift {
-                                // ⇧-Klick: Bereich vom Anker bis hier (QLab).
+                                // ⇧-Klick: Bereich vom Anker bis hier.
                                 cue_list.select_range_to(cue_id);
                             } else {
                                 // Einfachklick: selektieren (auch Group-Kinder, Item 7).
                                 cue_list.select_id(Some(cue_id));
-                                // QLab: Klick auf die Q#-Spalte bewegt zusätzlich
+                                // Klick auf die Q#-Spalte bewegt zusätzlich
                                 // den Playhead (GO triggert dann ab dieser Zeile).
                                 if editable
                                     && pointer_pos.is_some_and(|pos| {
@@ -1037,7 +1036,7 @@ pub fn draw(
 
                 if editable {
                     // Effektive Auswahl: Zeile Teil einer Mehrfachauswahl →
-                    // Aktionen wirken auf die ganze Selektion (QLab).
+                    // Aktionen wirken auf die ganze Selektion.
                     let effective: Vec<Uuid> =
                         if cue_list.is_selected(cue_id) && cue_list.selection_len() > 1 {
                             cue_list.selection().to_vec()
@@ -1131,7 +1130,7 @@ pub fn draw(
         });
 
     // Nach der Tabelle: Verbindungs-Indikatoren der Continue-Ketten malen
-    // (dezenter Strich über die Zeilengrenze, QLab „Cue Sequence").
+    // (dezenter Strich über die Zeilengrenze, „Cue Sequence").
     for (x, y) in connectors {
         painter.line_segment(
             [
@@ -1269,7 +1268,7 @@ fn render_cell_editor(
     true
 }
 
-/// Start-Text eines Zellen-Editors (QLab: aktueller Wert, Zeiten als
+/// Start-Text eines Zellen-Editors (aktueller Wert, Zeiten als
 /// Timecode `MM:SS.mmm`).
 fn initial_edit_text(field: EditField, cue: &Cue) -> String {
     match field {
@@ -1282,7 +1281,7 @@ fn initial_edit_text(field: EditField, cue: &Cue) -> String {
 }
 
 /// Wendet einen abgeschlossenen Zellen-Edit an (Enter/Fokusverlust).
-/// Ungültige Zeit-Eingaben werden verworfen (QLab: alter Wert bleibt).
+/// Ungültige Zeit-Eingaben werden verworfen (alter Wert bleibt).
 fn apply_cell_edit(cue_list: &mut CueList, edit: &CellEdit) {
     let Some(cue) = cue_list.find_cue_mut(edit.cue_id) else {
         return;
@@ -1325,7 +1324,7 @@ fn editable_field_at(
 }
 
 /// Malt den Zeilen-Hintergrund einer Zelle: Playhead-Zeile hervorheben
-/// (unter der Selektion – QLab: Selektion unabhängig vom Playhead) und
+/// (unter der Selektion – Selektion unabhängig vom Playhead) und
 /// Cue-Color als Tönung über die ganze Zeile (TODO.md Phase 2).
 ///
 /// Lückenlos wie egui_extras' eigene Zell-Hintergründe: um halbes
@@ -1364,7 +1363,7 @@ fn paint_row_bg(
     }
 }
 
-/// Fortschritt 0..=1 für die Fortschrittsbalken (QLab Phase 2).
+/// Fortschritt 0..=1 für die Fortschrittsbalken (Phase 2).
 fn cue_progress(elapsed: Duration, total: Duration) -> f32 {
     if total.is_zero() {
         return 0.0;
@@ -1372,7 +1371,7 @@ fn cue_progress(elapsed: Duration, total: Duration) -> f32 {
     (elapsed.as_secs_f64() / total.as_secs_f64()).clamp(0.0, 1.0) as f32
 }
 
-/// Ziel-Anzeige für die Target-Spalte (QLab: gekürzt, Dateiname bei Medien).
+/// Ziel-Anzeige für die Target-Spalte (gekürzt, Dateiname bei Medien).
 fn target_display(cue: &Cue) -> String {
     match cue.cue_type {
         CueType::Audio | CueType::Video => cue
@@ -1531,7 +1530,7 @@ pub fn find_next_hit(list: &mut CueList, find: &mut FindState) {
 
 /// Zeichnet die Find-Leiste über der Cue-Liste (TODO.md Phase 5).
 ///
-/// Enter = nächster Treffer (QLab: ⌘G = Find Next; ⌘G landet in
+/// Enter = nächster Treffer (⌘G = Find Next; ⌘G landet in
 /// `handle_hotkeys` auf derselben Funktion), Esc schließt die Leiste.
 /// Die Textfeld-ID wird in `text_field_ids` registriert, damit das
 /// Hotkey-Gate (Space/Esc/Panic) tippen in der Leiste nicht blockiert.

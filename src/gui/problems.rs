@@ -1,4 +1,4 @@
-//! Broken-Cue-Erkennung (QLab: „broken cue" – rotes ✕ in der Status-Spalte +
+//! Broken-Cue-Erkennung („broken cue" – rotes ✕ in der Status-Spalte +
 //! Warnungs-Zähler im Footer). Reine UI-Funktion: prüft einen Cue gegen den
 //! App-Zustand (Dateisystem, Stages, Targets), ohne die Engine zu fragen.
 //!
@@ -12,10 +12,10 @@ use crate::core::{Cue, CueList, CueType, HtmlSource};
 
 use super::app::ShowApp;
 
-/// Ermittelt alle „kaputten" Gründe eines Cues (QLab „broken cue"):
+/// Ermittelt alle „kaputten" Gründe eines Cues („broken cue"):
 /// fehlende Datei, unbekannte Stage, fehlendes/unbekanntes Target,
 /// ungültiges JSON. Gruppen-Kinder werden rekursiv mitgeprüft (Präfix mit
-/// der Kinder-Nummer, QLab-Verhalten: kaputtes Kind → Gruppe kaputt).
+/// der Kinder-Nummer, kaputtes Kind → Gruppe kaputt).
 ///
 /// Targets werden über alle Carts gesucht (ein Ziel in einem anderen Cart
 /// würde zwar nicht feuern, wird aber nicht als „kaputt" gemeldet – keine
@@ -150,7 +150,7 @@ fn check_file(path: &str, problems: &mut Vec<String>) {
     }
 }
 
-/// Prüft die Stage eines Video-Cues (QLab: unbekannte Stage = broken).
+/// Prüft die Stage eines Video-Cues (unbekannte Stage = broken).
 fn check_stage(cue: &Cue, app: &ShowApp, problems: &mut Vec<String>) {
     if let Some(stage) = &cue.stage {
         if app.stages.find(stage).is_none() {

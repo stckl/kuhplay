@@ -1,4 +1,4 @@
-//! Tab „Audio Levels" (QLab 5, Audio/Video): Wiedergabe-Lautstärke (mit
+//! Tab „Audio Levels" (Audio/Video): Wiedergabe-Lautstärke (mit
 //! Live-Update laufender Cues) und Routing: Matrix Datei-Kanal → Audio-Kanal.
 //! Die Kanäle liegen in den Workspace Settings (Audio) auf Geräte-Ausgängen.
 

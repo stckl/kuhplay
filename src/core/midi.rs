@@ -1,4 +1,4 @@
-//! MIDI-Cue (QLab 5 „MIDI Cue"): sendet eine MIDI-Nachricht (Note On/Off,
+//! MIDI-Cue („MIDI Cue"): sendet eine MIDI-Nachricht (Note On/Off,
 //! Control Change, Program Change) an das konfigurierte MIDI-Ausgabegerät,
 //! wenn der Cue feuert.
 //!
@@ -7,7 +7,7 @@
 //! Byterepräsentation liegt hier zentral ([`MidiMessage::to_bytes`]).
 //!
 //! Kanal/Note/ Controller/ Velocity werden 0-basiert gespeichert (MIDI-Wire-
-//! Format); die UI zeigt 1-basierte Kanäle (wie QLab).
+//! Format); die UI zeigt 1-basierte Kanäle.
 
 use serde::{Deserialize, Serialize};
 
@@ -125,7 +125,7 @@ impl MidiMessage {
         }
     }
 
-    /// Anzeige-Text (QLab-ähnlich: „Note On ch 1 note 60 vel 100“).
+    /// Anzeige-Text (z. B. „Note On ch 1 note 60 vel 100“).
     pub fn describe(&self) -> String {
         let ch = self.channel + 1;
         match self.kind {

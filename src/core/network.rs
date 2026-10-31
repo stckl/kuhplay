@@ -1,8 +1,8 @@
-//! Network-Cue (QLab 5 „Network Cue"): sendet eine Nachricht per UDP oder
+//! Network-Cue („Network Cue"): sendet eine Nachricht per UDP oder
 //! TCP an `host:port`, wenn der Cue feuert. Use-Case: andere Geräte im
 //! Show-Netz triggern (Medienserver, Projektoren, Companion-Ziele …).
 //!
-//! Der Cue gilt sofort als abgeschlossen (Sofort-Cue wie QLab); das
+//! Der Cue gilt sofort als abgeschlossen (Sofort-Cue); das
 //! eigentliche Senden erledigt die Engine asynchron
 //! ([`crate::engine::EngineCommand::SendNetwork`]) – ein blockierendes Ziel
 //! darf den Engine-Thread nicht aufhalten.

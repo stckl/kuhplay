@@ -6,7 +6,7 @@
   "description": "KuhPlay Show Control – GO, Panic, Cue-Trigger und Status-Feedback über TCP (JSON-lines).",
   "manufacturer": "KuhPlay",
   "products": ["KuhPlay Show Control"],
-  "keywords": ["show control", "cue", "qlab", "playback", "video"],
+  "keywords": ["show control", "cue", "playback", "video"],
   "version": "1.0.0",
   "license": "MIT",
   "runtime": {

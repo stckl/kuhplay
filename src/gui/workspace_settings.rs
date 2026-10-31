@@ -1,8 +1,8 @@
-//! „Workspace Settings"-Fenster (QLab 5: Workspace → Workspace Settings).
+//! „Workspace Settings"-Fenster (Workspace → Workspace Settings).
 //!
 //! Eigenes [`egui::Window`] mit linker Navigationsliste (General, Audio,
-//! Video, Network, MIDI, Key Map). Die Stages/Screens-Verwaltung (QLab 5:
-//! „Video → Stages/Screens") lebt auf der Seite „Video" – der Screen-Editor
+//! Video, Network, MIDI, Key Map). Die Stages/Screens-Verwaltung
+//! lebt auf der Seite „Video" – der Screen-Editor
 //! ([`super::screen_editor`]) ist hierher aus der Sidebar gewandert
 //! (TODO.md Phase 1). Network und MIDI zeigen die aktuelle
 //! Konfiguration nur an, geändert wird sie über Umgebungsvariablen.
@@ -19,7 +19,7 @@ use super::theme;
 use crate::core::ChannelOutput;
 use crate::engine::audio_backend::{default_output_name, output_devices};
 
-/// Seite der Workspace Settings (linke Navigation, QLab-5-Reihenfolge).
+/// Seite der Workspace Settings (linke Navigation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SettingsPage {
     /// Show-Name, Show Mode, Audition Mode.
@@ -48,7 +48,7 @@ impl SettingsPage {
         SettingsPage::KeyMap,
     ];
 
-    /// Anzeige-Label (QLab-Begriffe, Englisch).
+    /// Anzeige-Label (Begriffe, Englisch).
     pub fn label(self) -> &'static str {
         match self {
             SettingsPage::General => "General",
@@ -61,7 +61,7 @@ impl SettingsPage {
     }
 }
 
-/// Unterseite von "Video" (QLab 5: Stages, Output Routing, Devices).
+/// Unterseite von "Video" (Stages, Output Routing, Devices).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VideoTab {
     /// Video Outputs (Stages): Stages mit Regionen.
@@ -96,7 +96,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
         app,
         |_ctx, ui, app| {
             ui.horizontal_top(|ui| {
-                // Linke Navigation (QLab: Seitenliste, docs/UI.md §5.7).
+                // Linke Navigation (Seitenliste, docs/UI.md §5.7).
                 ui.vertical(|ui| {
                     ui.set_width(136.0);
                     for page in SettingsPage::ALL {
@@ -110,7 +110,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
                 ui.vertical(|ui| {
                     ui.set_min_width(CONTENT_MIN_WIDTH);
                     match app.ui.workspace_settings_page {
-                        // QLab 5: „Video → Stages/Screens" (Screen-Editor).
+                        // „Video → Stages/Screens" (Screen-Editor).
                         SettingsPage::Video => {
                             draw_output_mode(ui, app);
                             theme::tab_bar(
@@ -172,7 +172,7 @@ fn draw_general(ui: &mut egui::Ui, app: &mut ShowApp) {
     draw_workspace_templates(ui, app);
 }
 
-/// Abschnitt „Workspace Templates" (QLab 5): aktuelles Layout als benannte
+/// Abschnitt „Workspace Templates": aktuelles Layout als benannte
 /// Vorlage speichern, wieder anwenden oder löschen. Persistenz über eigenen
 /// Storage-Key (siehe [`super::state::UI_TEMPLATES_STORAGE_KEY`]).
 fn draw_workspace_templates(ui: &mut egui::Ui, app: &mut ShowApp) {
@@ -711,7 +711,7 @@ fn draw_stages_table(ui: &mut egui::Ui, app: &mut ShowApp) {
                 }
                 ui.add_space(theme::size::SPACE_SMALL);
             }
-            // „New Stage“ mit Menü (QLab: leer / mit Output / Multi-Output).
+            // „New Stage“ mit Menü (leer / mit Output / Multi-Output).
             egui::ComboBox::from_id_salt("new_stage_menu")
                 .selected_text("+ New Stage")
                 .show_ui(ui, |ui| {

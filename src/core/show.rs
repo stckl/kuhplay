@@ -1,5 +1,5 @@
 //! Show-Dokument: serialisierbarer Gesamtzustand der Anwendung
-//! (QLab-Pendant: ein „Workspace“-Dokument mit Name + allen Cue-Listen +
+//! (ein „Workspace“-Dokument mit Name + allen Cue-Listen +
 //! Stages + Output Routes).
 //!
 //! Datei-IO liegt bewusst in der GUI-Schicht (native Dialoge via `rfd`);
@@ -29,7 +29,7 @@ use crate::core::video_routing::{
 /// Stages + Output Routes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShowDocument {
-    /// Anzeigename der Show (QLab: Workspace-Name in der Titelleiste).
+    /// Anzeigename der Show (Workspace-Name in der Titelleiste).
     pub name: String,
     /// Alle Cue-Listen/Carts der Show.
     pub carts: CartManager,
@@ -39,7 +39,7 @@ pub struct ShowDocument {
     /// Output Routes (logische Ausgänge auf Devices).
     #[serde(default)]
     pub routes: RouteManager,
-    /// Altes Modell (QLab 4-artige „Screens“): nur noch zum Laden alter
+    /// Altes Modell („Screens“): nur noch zum Laden alter
     /// Shows; wird beim Speichern nicht mehr geschrieben (Migration siehe
     /// [`migrate_legacy_screens`]).
     #[serde(default, skip_serializing)]

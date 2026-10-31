@@ -1,4 +1,4 @@
-//! Inspector-Tab „Network" (Network-Cue, QLab 5): Protokoll (UDP/TCP),
+//! Inspector-Tab „Network" (Network-Cue): Protokoll (UDP/TCP),
 //! Ziel `host:port` und die zu sendende Nachricht. Der Cue feuert die
 //! Nachricht asynchron in der Engine (`EngineCommand::SendNetwork`).
 

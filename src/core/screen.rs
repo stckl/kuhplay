@@ -1,11 +1,11 @@
-//! Screens (QLab 5 „Screens"): physische Ausgabebereiche im globalen
+//! Screens: physische Ausgabebereiche im globalen
 //! Display-Koordinatenraum.
 //!
 //! Ein **Screen** ist ein Rechteck `(x, y, width, height)` in dem Koordinaten-
 //! system, das `display-info` liefert (logische Punkte, Ursprung links oben
 //! des primären Displays – identisch mit den winit/egui-Viewport-Koordinaten).
 //!
-//! Im Gegensatz zu einem ganzen Display kann ein Screen (QLab-Verhalten):
+//! Im Gegensatz zu einem ganzen Display kann ein Screen:
 //!
 //! * **nur einen Teil eines Displays** umfassen (z. B. rechte Hälfte für
 //!   eine Soft-Edge-Projektion),
@@ -22,7 +22,7 @@
 //! Zusätzlich kann pro Screen ein **Testbild** aktiviert werden
 //! ([`Screen::test_pattern`]): Rahmen, Kreis, Raster, leichtes Schachbrett-
 //! muster und eine Beschriftung mit Screen-Name und -Größe – zum Einrichten
-//! und Prüfen der Screens (QLab „Test Pattern").
+//! und Prüfen der Screens („Test Pattern").
 //!
 //! ## Erweiterung
 //!
@@ -37,7 +37,7 @@ use super::error::{ShowError, ShowResult};
 
 /// Ein physischer Ausgabebereich (Screen) im globalen Display-Koordinatenraum.
 ///
-/// QLab-Pendant: „Screen" (frei platzierbares Rechteck über einem oder
+/// „Screen" (frei platzierbares Rechteck über einem oder
 /// mehreren Displays).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Screen {
@@ -56,7 +56,7 @@ pub struct Screen {
     pub height: u32,
     /// Drehung des Screens auf dem Output (0/90/180/270°).
     ///
-    /// QLab-Pendant: „Screen Rotation". Das Stage-Canvas wird um diesen
+    /// „Screen Rotation". Das Stage-Canvas wird um diesen
     /// Winkel **im Uhrzeigersinn** gedreht auf dem Screen dargestellt –
     /// z. B. für einen um 90° gedreht montierten Projektor oder eine
     /// hochkant laufende LED-Wand. `90°` bedeutet: die obere Canvas-Kante
@@ -64,7 +64,7 @@ pub struct Screen {
     #[serde(default)]
     pub rotation: ScreenRotation,
     /// Testbild auf diesem Screen anzeigen (Rahmen/Kreis/Raster/Schachbrett/
-    /// Beschriftung) – QLab „Test Pattern".
+    /// Beschriftung) – „Test Pattern".
     #[serde(default)]
     pub test_pattern: bool,
     /// Art des Testbilds (Grid / Solid Color / Color Bars).
@@ -90,11 +90,11 @@ fn default_checker_size() -> u32 {
     64
 }
 
-/// Art des Testbilds (QLab „Test Pattern" – verschiedene Varianten zum
+/// Art des Testbilds („Test Pattern" – verschiedene Varianten zum
 /// Einrichten und Prüfen der Screens).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TestPatternKind {
-    /// Rahmen + Kreis + Raster + Schachbrett + Beschriftung (QLab-Standard).
+    /// Rahmen + Kreis + Raster + Schachbrett + Beschriftung (Standard).
     #[default]
     Grid,
     /// Einfarbige Fläche (Farbe des Screens) + Beschriftung – zum

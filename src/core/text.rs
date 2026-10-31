@@ -1,4 +1,4 @@
-//! Text-Cue-Inhalt (QLab 5 „Text Cue"): reiner Text mit Schriftgröße,
+//! Text-Cue-Inhalt („Text Cue"): reiner Text mit Schriftgröße,
 //! Farbe, Hintergrund und Ausrichtung, der auf einer Video-Stage gerendert
 //! wird.
 //!
@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Horizontale Textausrichtung (QLab Text-Cue „Alignment").
+/// Horizontale Textausrichtung (Text-Cue „Alignment").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TextAlign {
     #[default]
@@ -40,7 +40,7 @@ impl TextAlign {
     }
 }
 
-/// Vertikale Textausrichtung (QLab Text-Cue „Vertical Alignment").
+/// Vertikale Textausrichtung (Text-Cue „Vertical Alignment").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TextVAlign {
     #[default]

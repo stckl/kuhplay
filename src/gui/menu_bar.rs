@@ -1,9 +1,9 @@
-//! Menüleiste (QLab-Style): File / Edit / View / Cues / Help.
+//! Menüleiste: File / Edit / View / Cues / Help.
 //!
 //! ## Erweiterung
 //!
 //! * Weitere Menüeinträge (z. B. „Paste Cue Properties") ergänzen –
-//!   siehe `docs/qlab5-parity.md` (Kapitel „Workflow Tools").
+//!   siehe `docs/BACKLOG.md`.
 //! * Tastenkürzel kommen ALLE aus der zentralen Tabelle
 //!   [`super::shortcuts`] (`menu_label`) – Menüanzeige, Shortcuts-Fenster
 //!   und `ShowApp::handle_hotkeys` lesen dieselbe Quelle (TODO.md
@@ -22,7 +22,7 @@ fn sc(label: &str, action: ShortcutAction) -> String {
     shortcuts::menu_label(label, action)
 }
 
-/// Zeichnet die Menüleiste (oberster Panel-Bereich, QLab-Position).
+/// Zeichnet die Menüleiste (oberster Panel-Bereich).
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     egui::menu::bar(ui, |ui| {
         ui.menu_button("File", |ui| {
@@ -174,7 +174,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             }
         });
         ui.menu_button("View", |ui| {
-            // Panel-Sichtbarkeit (QLab: Checkboxes, Zustand bleibt über
+            // Panel-Sichtbarkeit (Checkboxes, Zustand bleibt über
             // Neustarts erhalten – Persistenz via UiState). Labels mit
             // Kürzel aus der zentralen Tabelle.
             ui.checkbox(
@@ -250,7 +250,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                     egui::Button::new(sc(&label, ShortcutAction::NewCue(cue_type)))
                         .min_size(vec2(210.0, 22.0)),
                 );
-                // Vektor-Icon links im Menü-Eintrag (QLab-Type-Icon).
+                // Vektor-Icon links im Menü-Eintrag (Type-Icon).
                 icons::paint_at(
                     ui,
                     Icon::for_cue_type(cue_type),

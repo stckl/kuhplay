@@ -453,7 +453,7 @@ pub struct RemoteConfig {
     pub osc_port: u16,
     /// OSC-Out-Ziel (`host`, port); `None` = kein Out.
     pub osc_out: Option<(String, u16)>,
-    /// OSC-Adress-Präfix (Default: `/kuhplay`; z. B. `/qlab`).
+    /// OSC-Adress-Präfix (Default: `/kuhplay`; z. B. `/show`).
     pub osc_prefix: String,
     /// PIN der Web-Remote; `None` = keine Anmeldung.
     pub web_pin: Option<String>,

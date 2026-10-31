@@ -1,4 +1,4 @@
-//! Integrationstests fuer die Video-Ausgabe (QLab 5: Stage -> Region ->
+//! Integrationstests fuer die Video-Ausgabe (Stage -> Region ->
 //! Output Route -> Device; Datei hiess frueher screens.rs).
 //!
 //! * **Legacy-Geometrie:** Screen-Rechtecke (altes Modell, nur noch zum

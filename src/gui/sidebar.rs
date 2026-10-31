@@ -1,10 +1,10 @@
-//! Sidebar (QLab 5): Tabs „Lists & Carts" und „Active Cues"
+//! Sidebar: Tabs „Lists & Carts" und „Active Cues"
 //! (docs/UI.md §5.4). Der globale Transport sitzt im Masthead.
 //!
 //! Screens/Stages liegen nicht mehr hier, sondern in den Workspace Settings
-//! → Video (QLab 5, TODO.md Phase 1).
+//! → Video (TODO.md Phase 1).
 //!
-//! ## Active Cues (QLab 5)
+//! ## Active Cues
 //!
 //! Jede laufende Cue-Zeile zeigt:
 //! * links einen Pause/Resume-Button,
@@ -154,8 +154,8 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         (Some(e), d) if d > Duration::ZERO => {
             (e.as_secs_f64() / d.as_secs_f64()).clamp(0.0, 1.0) as f32
         }
-        // Loops / unbekannte Dauer: Balken bleibt leer (QLab zeigt hier
-        // ebenfalls keinen prozentualen Fortschritt).
+        // Loops / unbekannte Dauer: Balken bleibt leer
+        // (kein prozentualer Fortschritt).
         _ => 0.0,
     };
     let color = if status == CueStatus::Paused {
@@ -167,7 +167,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         egui::vec2(ui.available_width(), 48.0),
         egui::Sense::click_and_drag(),
     );
-    // Fortschrittsbalken im Hintergrund (QLab: über die ganze Zeilenbreite).
+    // Fortschrittsbalken im Hintergrund (über die ganze Zeilenbreite).
     ui.painter().rect_filled(rect, 5.0, palette::RAISED);
     let bar_width = rect.width() * progress;
     if bar_width > 0.0 {
@@ -175,7 +175,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         ui.painter()
             .rect_filled(bar, 5.0, theme::progress_fill(color));
     }
-    // Farb-Streifen am linken Rand (QLab: Statusfarbe als linker Balken).
+    // Farb-Streifen am linken Rand (Statusfarbe als linker Balken).
     ui.painter().rect_filled(
         egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())),
         0.0,
@@ -214,7 +214,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             _ => {}
         }
         ui.add_space(size::SPACE_SMALL);
-        // Typ-Icon (QLab: jede Active-Cue-Zeile mit Typ-Icon).
+        // Typ-Icon (jede Active-Cue-Zeile mit Typ-Icon).
         icons::draw(ui, Icon::for_cue_type(cue_type), 16.0, palette::TEXT_DIM)
             .on_hover_text(format!("{} cue", cue_type.label()));
         ui.add_space(size::SPACE_SMALL);
@@ -239,7 +239,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
                     .color(palette::TEXT_DIM),
             );
         });
-        // Rechts: Stop-Button für diesen einzelnen Cue (QLab „Panic this cue").
+        // Rechts: Stop-Button für diesen einzelnen Cue („Panic this cue").
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons::button(
                 ui,
@@ -256,7 +256,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             }
         });
     });
-    // Spulen (QLab „Scrub"): Ziehen/Klick auf der Zeile springt im Medium an
+    // Spulen („Scrub"): Ziehen/Klick auf der Zeile springt im Medium an
     // die Stelle – Bild und Ton bekommen im selben Engine-Command den Seek.
     let total = if duration > Duration::ZERO {
         Some(duration)

@@ -143,7 +143,7 @@ mod glyphs {
 /// Alle verfügbaren KuhPlay-Icons (Mapping auf Phosphor-Glyphs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
-    // Cue-Typen (QLab-Type-Icons)
+    // Cue-Typen (Type-Icons)
     Audio,
     Video,
     Fade,
@@ -166,7 +166,7 @@ pub enum Icon {
     Playing,
     Paused,
     Error,
-    /// Kaputter Cue (QLab „broken cue": rotes ✕ in der Status-Spalte).
+    /// Kaputter Cue („broken cue": rotes ✕ in der Status-Spalte).
     Broken,
     // Playhead / Continue-Modi
     Playhead,
@@ -329,7 +329,7 @@ impl Icon {
         Icon::CaretRight,
     ];
 
-    /// Icon für einen Cue-Typ (QLab-Type-Spalte).
+    /// Icon für einen Cue-Typ (Type-Spalte).
     pub fn for_cue_type(cue_type: CueType) -> Icon {
         match cue_type {
             CueType::Audio => Icon::Audio,
@@ -364,7 +364,7 @@ impl Icon {
         }
     }
 
-    /// Icon für den Continue-Mode (QLab-Spalte „Cont.").
+    /// Icon für den Continue-Mode (Spalte „Cont.").
     pub fn for_continue_mode(mode: ContinueMode) -> Icon {
         match mode {
             ContinueMode::Off => Icon::ContinueOff,
@@ -404,7 +404,7 @@ impl Icon {
             Icon::Playhead => glyphs::CARET_RIGHT,
             Icon::ContinueOff => glyphs::CIRCLE,
             Icon::AutoContinue => glyphs::CARET_DOUBLE_RIGHT,
-            // QLab-Auto-Follow (▶|): „nach diesem Cue folgt der nächste" –
+            // Auto-Follow (▶|): „nach diesem Cue folgt der nächste" –
             // Phosphor `caret-line-right` (|▶) drückt dieselbe Richtung aus.
             Icon::AutoFollow => glyphs::CARET_LINE_RIGHT,
             // Globale Controls
@@ -515,7 +515,7 @@ pub fn button(ui: &mut Ui, icon: Icon, color: Color32, min_size: Vec2, enabled: 
     response
 }
 
-/// Button mit Icon über Text-Label (für die Sidebar-Globals, QLab-Look:
+/// Button mit Icon über Text-Label (für die Sidebar-Globals:
 /// quadratische Kacheln mit Symbol + Beschriftung).
 /// `fill` = Hintergrundfarbe (z. B. `Some(PANIC)` für den Panic-Button).
 pub fn stacked_button(

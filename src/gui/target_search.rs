@@ -1,11 +1,11 @@
-//! File Target Search (QLab 5 „Tools → File Target Search"): Fenster, das
+//! File Target Search („Tools → File Target Search"): Fenster, das
 //! ALLE Datei-Ziele der Show über alle Carts auflistet (Audio/Video-Pfade,
 //! HTML-Dateien, Diashow-Slides) – mit Filter und Klick zum Sprung auf den
 //! Cue. Nützlich beim Umzug einer Show auf einen anderen Rechner (fehlende
 //! Pfade finden) und um zu sehen, welcher Cue welche Datei benutzt.
 //!
-//! Reiner Lesezugriff – Umbenennen/Neu-Zielen von Pfaden ist eine bewusste
-//! Abweichung (notiert in docs/qlab5-parity.md).
+//! Reiner Lesezugriff – Umbenennen/Neu-Zielen von Pfaden ist offen
+//! (siehe docs/BACKLOG.md).
 
 use egui::{Context, RichText};
 use uuid::Uuid;
@@ -173,7 +173,7 @@ pub fn draw(ctx: &Context, app: &mut ShowApp) {
 }
 
 /// Springt zum Cue eines Datei-Ziels: Cart aktivieren, Cue selektieren,
-/// Playhead setzen (Top-Level) – QLab „jump to cue".
+/// Playhead setzen (Top-Level) – „jump to cue".
 fn jump_to_target(app: &mut ShowApp, target: &FileTarget) {
     if app.carts.active_index() != target.cart_index {
         let _ = app.carts.set_active(target.cart_index);

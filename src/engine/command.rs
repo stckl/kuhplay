@@ -91,7 +91,7 @@ pub enum EngineCommand {
     /// Konfiguriert eine Video-Stage (Geometrie/Layer) → `StageConfigured`
     /// oder `Error` bei ungültiger Geometrie.
     ConfigureStage { stage: Stage },
-    /// Konfiguriert die Output Routes (QLab 5 "Output Routing"): logische
+    /// Konfiguriert die Output Routes ("Output Routing"): logische
     /// Ausgänge mit Auflösung, Device, Testbild und Skalierung. Die Engine
     /// rendert pro Route ein Bild in den Route-Frame-Store (Stage ->
     /// Region -> Route; Route-Testbild überdeckt den Inhalt).
@@ -139,7 +139,7 @@ pub enum EngineCommand {
     /// (Sprung > 1 Frame; Media-Backends seeken mit, Wallclock-Kinds nur
     /// ihre Position). Siehe `MediaEngine`-Implementierungen.
     InjectTimecode { tc: crate::core::Timecode },
-    /// Wait-Cue (QLab 5): reine Timer-Unit ohne Medium – die Engine startet
+    /// Wait-Cue: reine Timer-Unit ohne Medium – die Engine startet
     /// nach `pre_wait` und meldet nach `duration` `Finished` (danach
     /// `post_wait`). `duration = 0` → sofortiges Ende nach dem Pre-Wait.
     /// Pausieren/Stoppen/Devamp wirken wie bei normalen Playbacks.
@@ -149,7 +149,7 @@ pub enum EngineCommand {
         pre_wait: Duration,
         post_wait: Duration,
     },
-    /// Network-Cue (QLab 5): sendet `message` per UDP/TCP an `host:port`.
+    /// Network-Cue: sendet `message` per UDP/TCP an `host:port`.
     /// Sofort-Cue – die Engine feuert asynchron (spawned Thread) und meldet
     /// nur Fehler als [`super::EngineEvent::Error`]; der Cue selbst gilt in
     /// der Cue-Liste direkt als abgeschlossen.
@@ -160,12 +160,12 @@ pub enum EngineCommand {
         port: u16,
         message: String,
     },
-    /// MIDI-Cue (QLab 5): sendet `bytes` (Wire-Format, siehe
+    /// MIDI-Cue: sendet `bytes` (Wire-Format, siehe
     /// [`crate::core::MidiMessage::to_bytes`]) an das MIDI-Ausgabegerät.
     /// Sofort-Cue; Fehler (kein Gerät, Send-Fehler) als
     /// [`super::EngineEvent::Error`].
     SendMidi { cue_id: Uuid, bytes: Vec<u8> },
-    /// Light-Cue (QLab 5, Minimal): sendet ein Art-Net-DMX-Paket
+    /// Light-Cue (Minimal): sendet ein Art-Net-DMX-Paket
     /// (OpDmx, [`crate::core::LightMessage::to_artnet`]) per UDP an
     /// `host:6454`. Sofort-Cue; Fehler als [`super::EngineEvent::Error`].
     SendDmx {
@@ -184,7 +184,7 @@ pub enum EngineCommand {
         port: u16,
         path: String,
     },
-    /// Script-Cue (QLab 5 „Script Cue"): führt `script` (JavaScript) in einer
+    /// Script-Cue („Script Cue"): führt `script` (JavaScript) in einer
     /// eigenen WebView-Instanz aus (ohne Stage, unsichtbar). Nach dem Laden
     /// (Script-Ende) kommt `Finished` – der Cue ist damit eine Play-artige
     /// Unit. Ohne WebView-Binary → `EngineEvent::Error`.

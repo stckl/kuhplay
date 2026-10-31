@@ -1,4 +1,4 @@
-//! Waveform-Peaks für Audio-Cues (QLab „Waveform"-Vorschau im Inspector).
+//! Waveform-Peaks für Audio-Cues („Waveform"-Vorschau im Inspector).
 //!
 //! Dekodiert eine Audiodatei mit **symphonia** (derselbe Stack wie das
 //! Audio-Backend, siehe [`super::audio_backend`]), mischt auf Mono und

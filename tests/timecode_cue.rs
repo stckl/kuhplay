@@ -1,4 +1,4 @@
-//! Timecode-Cue (QLab 5): feuert, wenn externer Timecode den Trigger erreicht.
+//! Timecode-Cue: feuert, wenn externer Timecode den Trigger erreicht.
 //! Eingang z. B. OSC `/kuhplay/timecode "01:00:00:00" 25` → RemoteCommand →
 //! CueList::receive_timecode feuert alle armed Standby-Cues mit Trigger ≤ tc.
 

@@ -1,4 +1,4 @@
-//! Inspector-Tab „MIDI" (MIDI-Cue, QLab 5): Nachrichtentyp (Note On/Off,
+//! Inspector-Tab „MIDI" (MIDI-Cue): Nachrichtentyp (Note On/Off,
 //! Control Change, Program Change), Kanal (1–16), Datenbytes. Die Engine
 //! sendet die Wire-Bytes an das MIDI-Ausgabegerät (`EngineCommand::SendMidi`,
 //! Gerät via `KUHPLAY_MIDI_OUT_DEVICE`).
@@ -43,7 +43,7 @@ pub fn draw_midi(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.end_row();
 
         theme::field_label(ui, "Channel");
-        // UI zeigt 1-basiert (wie QLab), gespeichert wird 0-basiert.
+        // UI zeigt 1-basiert, gespeichert wird 0-basiert.
         let mut ch = msg.channel + 1;
         ui.add(egui::DragValue::new(&mut ch).speed(1.0).range(1..=16));
         msg.channel = (ch - 1).clamp(0, 15);
