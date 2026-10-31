@@ -267,6 +267,14 @@ pub struct RealMediaEngine {
     /// Zusätzliche Audio-Streams (weitere Ausgabegeräte parallel); teilen den
     /// Mixer des primären Backends. Pro Gerät höchstens einer (device_name).
     extra_audio: Vec<AudioBackend>,
+    /// DMX-Stand pro Universe (Art-Net und sACN getrennt über Protokoll im
+    /// Schlüssel): Light-Cues mit start_channel > 1 mischen sich hinein, statt
+    /// Kanäle davor auf 0 zu setzen.
+    dmx_state: HashMap<(crate::core::LightProtocol, u16), [u8; crate::core::light::DMX_CHANNELS]>,
+    /// Laufende sACN-Sequenznummer pro Universe.
+    sacn_seq: HashMap<u16, u8>,
+    /// Feste sACN-CID dieser KuhPlay-Instanz (pro Start generiert).
+    sacn_cid: [u8; 16],
     /// Zuletzt angewendeter Audio-Patch (überlebt Gerätewechsel des Primären).
     audio_patch: crate::core::AudioPatch,
     /// Decklink-Hardware-Ausgabe (optional, siehe [`Self::start_decklink_from_env`]).
@@ -322,6 +330,9 @@ impl RealMediaEngine {
             stage_frames,
             events,
             started_at: Instant::now(),
+            dmx_state: HashMap::new(),
+            sacn_seq: HashMap::new(),
+            sacn_cid: *Uuid::new_v4().as_bytes(),
             active: HashMap::new(),
             fades: HashMap::new(),
             chasing: HashMap::new(),
@@ -1105,7 +1116,12 @@ fn spawn_udp_send(
 ) {
     std::thread::spawn(move || {
         let result = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
-            .and_then(|socket| socket.send_to(&bytes, (host.as_str(), port)).map(|_| ()))
+            .and_then(|socket| {
+                // Broadcast-Ziele (255.255.255.255) brauchen SO_BROADCAST,
+                // sonst EACCES/Permission denied (Default-Host der Light-Cues).
+                socket.set_broadcast(true)?;
+                socket.send_to(&bytes, (host.as_str(), port)).map(|_| ())
+            })
             .map_err(|err| err.to_string());
         finish_send(events, cue_id, label, result);
     });
@@ -1847,15 +1863,44 @@ impl MediaEngine for RealMediaEngine {
                     finish_send(events, cue_id, "network cue", result);
                 });
             }
-            EngineCommand::SendDmx {
-                cue_id,
-                host,
-                port,
-                packet,
-            } => {
-                debug!(%cue_id, %host, port, packet_len = packet.len(), "send dmx (real)");
+            EngineCommand::SendDmx { cue_id, message } => {
+                // Paket aus dem Universe-Stand bauen (start_channel wird
+                // eingemischt, Kanäle davor bleiben auf ihrem letzten Wert).
+                let state = self
+                    .dmx_state
+                    .entry((message.protocol, message.universe))
+                    .or_insert([0u8; crate::core::light::DMX_CHANNELS]);
+                message.apply_to(state);
+                let (packet, port) = match message.protocol {
+                    crate::core::LightProtocol::ArtNet => (
+                        crate::core::light::artnet_packet(message.universe, state, 0),
+                        message.protocol.port(),
+                    ),
+                    crate::core::LightProtocol::Sacn => {
+                        let seq = self.sacn_seq.entry(message.universe).or_insert(0);
+                        *seq = seq.wrapping_add(1);
+                        (
+                            crate::core::light::sacn_packet(
+                                message.universe,
+                                state,
+                                *seq,
+                                &self.sacn_cid,
+                                "KuhPlay",
+                            ),
+                            message.protocol.port(),
+                        )
+                    }
+                };
+                debug!(%cue_id, host = %message.host, port, packet_len = packet.len(), "send dmx (real)");
                 // Art-Net/sACN: UDP an Protokoll-Port, fire-and-forget wie Network-UDP.
-                spawn_udp_send(self.events.clone(), cue_id, "light cue", host, port, packet);
+                spawn_udp_send(
+                    self.events.clone(),
+                    cue_id,
+                    "light cue",
+                    message.host.clone(),
+                    port,
+                    packet,
+                );
             }
             EngineCommand::SendMidi { cue_id, bytes } => {
                 debug!(%cue_id, ?bytes, "send midi (real)");

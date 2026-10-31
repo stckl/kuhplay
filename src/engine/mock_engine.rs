@@ -1061,13 +1061,8 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
             EngineCommand::SendMidi { cue_id, bytes } => {
                 debug!(%cue_id, ?bytes, "send midi (mock)");
             }
-            EngineCommand::SendDmx {
-                cue_id,
-                host,
-                port,
-                packet,
-            } => {
-                debug!(%cue_id, %host, port, packet_len = packet.len(), "send dmx (mock)");
+            EngineCommand::SendDmx { cue_id, message } => {
+                debug!(%cue_id, desc = message.describe(), "send dmx (mock)");
             }
             EngineCommand::InjectTimecode { tc } => {
                 self.receive_timecode(tc);

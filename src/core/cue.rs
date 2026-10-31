@@ -1218,14 +1218,9 @@ impl Cue {
                 cue_id: self.id,
                 bytes: m.to_bytes(),
             }),
-            CueType::Light => self.light.as_ref().map(|l| {
-                let (packet, port) = l.packet();
-                EngineCommand::SendDmx {
-                    cue_id: self.id,
-                    host: l.host.clone(),
-                    port,
-                    packet,
-                }
+            CueType::Light => self.light.as_ref().map(|l| EngineCommand::SendDmx {
+                cue_id: self.id,
+                message: l.clone(),
             }),
             CueType::Companion => self
                 .companion

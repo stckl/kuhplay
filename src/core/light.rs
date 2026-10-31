@@ -19,7 +19,7 @@ pub const SACN_PORT: u16 = 5568;
 pub const DMX_CHANNELS: usize = 512;
 
 /// Protokoll des Light-Cues: Art-Net (ArtDmx) oder sACN (E1.31).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum LightProtocol {
     /// Art-Net (Port 6454, OpDmx 0x5000).
     #[default]
@@ -127,23 +127,28 @@ impl LightMessage {
         Ok(())
     }
 
-    /// Baut das Art-Net-ArtDmx-Paket (OpCode 0x5000, Protokoll v14).
+    /// Mischt die Kanalwerte ab `start_channel` in einen DMX-Universe-Stand
+    /// (512 Kanäle, ab Kanal 1). Aufruf in der Engine pro Universe, damit ein
+    /// Cue mit `start_channel > 1` nicht alle Kanäle davor auf 0 setzt.
+    /// Panicfrei für beliebige (auch ungültige) Eingaben.
+    pub fn apply_to(&self, state: &mut [u8; DMX_CHANNELS]) {
+        let start = (self.start_channel.clamp(1, DMX_CHANNELS as u16) - 1) as usize;
+        let end = (start + self.values.len()).min(DMX_CHANNELS);
+        if start < end {
+            state[start..end].copy_from_slice(&self.values[..end - start]);
+        }
+    }
+
+    /// Baut das Art-Net-ArtDmx-Paket (OpCode 0x5000, Protokoll v14) aus einem
+    /// vollständigen Universe-Stand (immer 512 Datenbytes – gerade Länge,
+    /// Daten ab Kanal 1; `start_channel` ist im Stand bereits eingemischt).
     ///
-    /// Layout: `"Art-Net\0"`, OpCode LE, ProtVer 14 LE, Sequence 0,
-    /// Physical 0, SubUni, Net, Length (BE, 2–512), Data.
+    /// Layout: `"Art-Net\0"`, OpCode LE, ProtVer 14 LE, Sequence,
+    /// Physical 0, SubUni, Net, Length (BE, 512), Data.
     pub fn to_artnet(&self) -> Vec<u8> {
-        let len = self.values.len().clamp(2, DMX_CHANNELS) as u16;
-        let mut packet = Vec::with_capacity(18 + len as usize);
-        packet.extend_from_slice(b"Art-Net\0");
-        packet.extend_from_slice(&0x5000u16.to_le_bytes()); // OpDmx
-        packet.extend_from_slice(&14u16.to_le_bytes()); // Protocol version
-        packet.push(0); // Sequence (0 = nicht sequenziert)
-        packet.push(0); // Physical input
-        packet.push((self.universe & 0xFF) as u8); // SubUni (low)
-        packet.push((self.universe >> 8) as u8); // Net (high)
-        packet.extend_from_slice(&len.to_be_bytes()); // Data length
-        packet.extend_from_slice(&self.values[..len as usize]);
-        packet
+        let mut state = [0u8; DMX_CHANNELS];
+        self.apply_to(&mut state);
+        artnet_packet(self.universe, &state, 0)
     }
 
     /// Baut das sACN-(E1.31)-DMP-Paket (UDP-Port 5568).
@@ -158,36 +163,9 @@ impl LightMessage {
     /// First-Property 0, Increment 1, Count = dmx_len, Startcode 0x00,
     /// DMX-Daten.
     pub fn to_sacn(&self) -> Vec<u8> {
-        // DMX-Block inkl. Startcode (min. 2, max. 513 lt. E1.31).
-        let dmx_len = (self.values.len() + 1).clamp(2, DMX_CHANNELS + 1) as u16;
-        // Längen inkl. des jeweiligen 2-Byte-Flags/Laengen-Felds.
-        let dmp_len = 10 + dmx_len as u32; // 2 + 8 (DMP-Header) + dmx_len
-        let data_len = 77 + dmp_len; // 2 + 75 (E1.31-Header) + dmp_len
-        let root_len = 22 + data_len; // 2 + 4 (Vector) + 16 (CID) + data_len
-        let mut p = Vec::with_capacity(126 + dmx_len as usize);
-        p.extend_from_slice(&0x0010u16.to_be_bytes()); // Preamble
-        p.extend_from_slice(&0x0000u16.to_be_bytes()); // Postamble
-        p.extend_from_slice(b"ASC-E1.31\0\0\0"); // ACN-Identifier (12 B)
-        p.extend_from_slice(&(0x7000 | root_len as u16).to_be_bytes());
-        p.extend_from_slice(&0x00000004u32.to_be_bytes()); // VECTOR_ROOT_E131_DATA
-        p.extend_from_slice(&[0u8; 16]); // CID
-        p.extend_from_slice(&(0x7000 | data_len as u16).to_be_bytes());
-        p.extend_from_slice(&0x00000004u32.to_be_bytes()); // VECTOR_E131_DATA_PACKET
-        p.extend_from_slice(&[0u8; 64]); // Source-Name
-        p.push(100); // Priority
-        p.extend_from_slice(&0u16.to_be_bytes()); // Sync-Address
-        p.push(0); // Sequence
-        p.push(0); // Options
-        p.extend_from_slice(&self.universe.to_be_bytes()); // Universe
-        p.extend_from_slice(&(0x7000 | dmp_len as u16).to_be_bytes());
-        p.push(0x02); // VECTOR_DMP_DATA
-        p.push(0xA1); // Address-Type & Data-Type
-        p.extend_from_slice(&0x0000u16.to_be_bytes()); // First Property Address
-        p.extend_from_slice(&0x0001u16.to_be_bytes()); // Address Increment
-        p.extend_from_slice(&dmx_len.to_be_bytes()); // Property Value Count
-        p.push(0x00); // DMX-Startcode
-        p.extend_from_slice(&self.values[..(dmx_len - 1) as usize]);
-        p
+        let mut state = [0u8; DMX_CHANNELS];
+        self.apply_to(&mut state);
+        sacn_packet(self.universe, &state, 0, &[0u8; 16], "KuhPlay")
     }
 
     /// Baut das Paket zum gewählten Protokoll und liefert den Zielport.
@@ -240,6 +218,67 @@ impl LightMessage {
     }
 }
 
+/// Art-Net-ArtDmx-Paket aus einem vollständigen Universe-Stand (512 B, ab Kanal 1).
+pub fn artnet_packet(universe: u16, state: &[u8; DMX_CHANNELS], sequence: u8) -> Vec<u8> {
+    let mut packet = Vec::with_capacity(18 + DMX_CHANNELS);
+    packet.extend_from_slice(b"Art-Net\0");
+    packet.extend_from_slice(&0x5000u16.to_le_bytes()); // OpDmx
+    packet.extend_from_slice(&14u16.to_le_bytes()); // Protocol version
+    packet.push(sequence); // Sequence
+    packet.push(0); // Physical input
+    packet.push((universe & 0xFF) as u8); // SubUni (low)
+    packet.push((universe >> 8) as u8); // Net (high)
+    packet.extend_from_slice(&(DMX_CHANNELS as u16).to_be_bytes()); // Data length (512, gerade)
+    packet.extend_from_slice(state);
+    packet
+}
+
+/// sACN-(E1.31)-DMP-Paket (UDP-Port 5568) aus einem vollständigen Universe-Stand.
+///
+/// Wie bisher, aber: Sequenz läuft (Engine vergibt pro Universe), CID ist fest
+/// (nicht Null) und der Source-Name ist gesetzt.
+#[allow(clippy::too_many_arguments)]
+pub fn sacn_packet(
+    universe: u16,
+    state: &[u8; DMX_CHANNELS],
+    sequence: u8,
+    cid: &[u8; 16],
+    source_name: &str,
+) -> Vec<u8> {
+    let dmx_len = (DMX_CHANNELS + 1) as u16; // 512 Daten + Startcode = 513
+    let dmp_len = 10 + dmx_len as u32; // 2 + 8 (DMP-Header) + dmx_len
+    let data_len = 77 + dmp_len; // 2 + 75 (E1.31-Header) + dmp_len
+    let root_len = 22 + data_len; // 2 + 4 (Vector) + 16 (CID) + data_len
+    let mut p = Vec::with_capacity(126 + dmx_len as usize);
+    p.extend_from_slice(&0x0010u16.to_be_bytes()); // Preamble
+    p.extend_from_slice(&0x0000u16.to_be_bytes()); // Postamble
+    p.extend_from_slice(b"ASC-E1.31\0\0\0"); // ACN-Identifier (12 B)
+    p.extend_from_slice(&(0x7000 | root_len as u16).to_be_bytes());
+    p.extend_from_slice(&0x00000004u32.to_be_bytes()); // VECTOR_ROOT_E131_DATA
+    p.extend_from_slice(cid); // CID (16 B, fest pro KuhPlay-Instanz)
+    p.extend_from_slice(&(0x7000 | data_len as u16).to_be_bytes());
+    p.extend_from_slice(&0x00000004u32.to_be_bytes()); // VECTOR_E131_DATA_PACKET
+    let mut name = [0u8; 64];
+    let src = source_name.as_bytes();
+    let n = src.len().min(64);
+    name[..n].copy_from_slice(&src[..n]);
+    p.extend_from_slice(&name); // Source-Name (64 B)
+    p.push(100); // Priority
+    p.extend_from_slice(&0u16.to_be_bytes()); // Sync-Address
+    p.push(sequence); // Sequence (läuft pro Universe)
+    p.push(0); // Options
+    p.extend_from_slice(&universe.to_be_bytes()); // Universe
+    p.extend_from_slice(&(0x7000 | dmp_len as u16).to_be_bytes());
+    p.push(0x02); // VECTOR_DMP_DATA
+    p.push(0xA1); // Address-Type & Data-Type
+    p.extend_from_slice(&0x0000u16.to_be_bytes()); // First Property Address
+    p.extend_from_slice(&0x0001u16.to_be_bytes()); // Address Increment
+    p.extend_from_slice(&dmx_len.to_be_bytes()); // Property Value Count
+    p.push(0x00); // DMX-Startcode
+    p.extend_from_slice(state);
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,9 +298,66 @@ mod tests {
         assert_eq!(u16::from_le_bytes([p[10], p[11]]), 14, "ProtVer");
         assert_eq!(p[14], 1, "SubUni = universe low");
         assert_eq!(p[15], 0, "Net = universe high");
-        assert_eq!(u16::from_be_bytes([p[16], p[17]]), 3, "Data length");
-        assert_eq!(&p[18..], &[255, 128, 0]);
-        assert_eq!(p.len(), 21);
+        // Vollständiges Universe (512 B, gerade Länge); start_channel=5 wird
+        // eingemischt: Werte landen ab Daten-Index 4.
+        assert_eq!(u16::from_be_bytes([p[16], p[17]]), 512, "Data length");
+        assert_eq!(&p[18 + 4..18 + 7], &[255, 128, 0]);
+        assert_eq!(p.len(), 18 + 512);
+    }
+
+    #[test]
+    fn packet_panicfrei_fuer_jede_eingabe() {
+        // Regression: früher panikte to_artnet/to_sacn bei < 2 Werten.
+        for values in [vec![], vec![255], vec![1, 2, 3]] {
+            for start in [1u16, 100, 512] {
+                let msg = LightMessage {
+                    start_channel: start,
+                    values: values.clone(),
+                    ..Default::default()
+                };
+                let _ = msg.packet();
+                let _ = msg.to_artnet();
+                let msg = LightMessage {
+                    protocol: LightProtocol::Sacn,
+                    universe: 1,
+                    start_channel: start,
+                    values: values.clone(),
+                    ..Default::default()
+                };
+                let _ = msg.packet();
+                let _ = msg.to_sacn();
+            }
+        }
+    }
+
+    #[test]
+    fn start_channel_wird_eingemischt() {
+        let msg = LightMessage {
+            start_channel: 100,
+            values: vec![7],
+            ..Default::default()
+        };
+        let p = msg.to_artnet();
+        assert_eq!(p[18 + 99], 7, "Wert landet auf Kanal 100 (Index 99)");
+        assert_eq!(p[18], 0, "Kanal 1 bleibt 0 (Zero-State)");
+        // apply_to mischt in vorhandenen Stand ein:
+        let mut state = [0u8; DMX_CHANNELS];
+        state[0] = 9;
+        msg.apply_to(&mut state);
+        assert_eq!(state[0], 9, "bestehender Kanal 1 bleibt erhalten");
+        assert_eq!(state[99], 7);
+    }
+
+    #[test]
+    fn artnet_datenlaenge_immer_gerade() {
+        let msg = LightMessage {
+            values: vec![1],
+            ..Default::default()
+        };
+        let p = msg.to_artnet();
+        let len = u16::from_be_bytes([p[16], p[17]]);
+        assert_eq!(len % 2, 0, "Art-Net verlangt gerade Länge");
+        assert!((2..=512).contains(&len));
     }
 
     #[test]
@@ -286,27 +382,31 @@ mod tests {
             host: "127.0.0.1".to_string(),
         };
         let p = msg.to_sacn();
-        // dmx_len = 3 Werte + Startcode = 4 → Paket = 125 + dmx_len = 129 Bytes.
-        assert_eq!(p.len(), 129);
+        // dmx_len = 512 + Startcode = 513 → Paket = 125 + 513 = 638 Bytes.
+        assert_eq!(p.len(), 638);
         assert_eq!(&p[4..16], b"ASC-E1.31\0\0\0");
         let root_len = u16::from_be_bytes([p[16], p[17]]) & 0x0FFF;
-        assert_eq!(root_len as usize, 113); // 22 + 77 + 14
+        assert_eq!(root_len as usize, 22 + 77 + 10 + 513);
         assert_eq!(u32::from_be_bytes([p[18], p[19], p[20], p[21]]), 0x00000004);
+        // CID + Source-Name gesetzt (Legacy-Test hatte Null-CID/leeren Namen).
+        let cid = [0x11u8; 16];
+        let p = sacn_packet(5, &[0u8; DMX_CHANNELS], 7, &cid, "KuhPlay");
+        assert_eq!(&p[22..38], &cid, "CID fest");
+        assert_eq!(&p[44..51], b"KuhPlay", "Source-Name");
+        assert_eq!(p[111], 7, "Sequence");
         let data_len = u16::from_be_bytes([p[38], p[39]]) & 0x0FFF;
-        assert_eq!(data_len as usize, 91); // 77 + 14
+        assert_eq!(data_len as usize, 77 + 10 + 513);
         assert_eq!(u32::from_be_bytes([p[40], p[41], p[42], p[43]]), 0x00000004);
         assert_eq!(p[108], 100, "Priority");
         assert_eq!(u16::from_be_bytes([p[113], p[114]]), 5, "Universe BE");
         let dmp_len = u16::from_be_bytes([p[115], p[116]]) & 0x0FFF;
-        assert_eq!(dmp_len as usize, 14); // 10 + 4
+        assert_eq!(dmp_len as usize, 10 + 513);
         assert_eq!(p[117], 0x02);
         assert_eq!(p[118], 0xA1);
-        assert_eq!(
-            u16::from_be_bytes([p[123], p[124]]),
-            4,
-            "Property count inkl. Startcode"
-        );
+        assert_eq!(u16::from_be_bytes([p[123], p[124]]), 513);
         assert_eq!(p[125], 0x00, "Startcode");
+        // Werte landen ab Kanal 1 im DMX-Block (msg.to_sacn mit Zero-State):
+        let p = msg.to_sacn();
         assert_eq!(&p[126..129], &[10, 20, 30]);
         // Protokoll-Port + Paket-Auswahl.
         assert_eq!(LightProtocol::Sacn.port(), SACN_PORT);

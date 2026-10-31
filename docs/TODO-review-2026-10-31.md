@@ -35,7 +35,7 @@ cargo check --target x86_64-pc-windows-msvc --features webview
 
 ## Block A: Light-Cues (ein Commit)
 
-- [ ] **1. Absturz bei einem oder keinem Kanalwert** (kritisch)
+- [x] **1. Absturz bei einem oder keinem Kanalwert** (kritisch)
   - Ort: `LightMessage::to_artnet` (`src/core/light.rs:135`, `:145`), `to_sacn` (`:162`, `:189`).
   - Problem: Die Länge wird auf mindestens 2 geklemmt, dann wird `self.values[..len]`
     gelesen. Die Vorgabe ist `vec![255]`, also ein Wert. Der Inspector ruft `packet()` bei
@@ -44,7 +44,7 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     und sACN.
   - Fix: Fehlende Werte mit 0 auffüllen statt zu slicen. `packet()` darf für keine
     Eingabe panicen, weil das Werte-Feld im Inspector auch leer sein kann.
-- [ ] **2. Startkanal wird ignoriert**
+- [x] **2. Startkanal wird ignoriert**
   - Ort: `to_artnet`, `to_sacn`.
   - Beleg: Pakete mit `start_channel` 1 und 100 sind identisch; die Werte landen ab
     Kanal 1, der Inspector zeigt aber „ab Ch X“.
@@ -53,15 +53,15 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     immer ab Kanal 1. Saubere Lösung: letzten Stand pro Universe in der Engine halten und
     die Werte hineinmischen. Falls das zu groß ist, das Verhalten im Inspector klar
     anzeigen und im Commit nennen.
-- [ ] **3. Vorgabe-Host `255.255.255.255` schlägt immer fehl**
+- [x] **3. Vorgabe-Host `255.255.255.255` schlägt immer fehl**
   - Ort: `spawn_udp_send` (`src/engine/real_engine.rs:1107`).
   - Beleg: `send_to` liefert `Permission denied (os error 13)`.
   - Fix: `socket.set_broadcast(true)` vor dem Senden. Der Network-Cue über UDP nutzt
     dieselbe Funktion.
-- [ ] **4. Art-Net: ungerade Datenlänge** (nur Spezifikation, nicht an Hardware getestet)
+- [x] **4. Art-Net: ungerade Datenlänge** (nur Spezifikation, nicht an Hardware getestet)
   - Die Art-Net-Spezifikation verlangt eine gerade Länge von 2–512; aktuell sind ungerade
     Längen möglich. Mit einem Nullbyte auf gerade Länge auffüllen.
-- [ ] **5. sACN: Sequenznummer immer 0** (nur Spezifikation, nicht an Hardware getestet)
+- [x] **5. sACN: Sequenznummer immer 0** (nur Spezifikation, nicht an Hardware getestet)
   - Ort: `to_sacn` (`src/core/light.rs:179`). Empfänger dürfen wiederholte Sequenznummern
     derselben Quelle verwerfen, außerdem sind CID und Source-Name leer.
   - Fix: Laufende Sequenz pro Universe in der Engine (`to_sacn` selbst ist zustandslos),
@@ -127,6 +127,15 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     besten über eine gemeinsame Funktion. Aus dem Code gilt dasselbe für Control-Cues; mit
     testen. `go_single` und `trigger_by_number` enthalten dieselbe Logik doppelt.
 
+- [ ] **11c. Web-Remote: Inspector-Tabs neuer Cue-Typen fehlen**
+  - Ort: `renderInsp` (`src/remote/web_ui.html:502`), Tab-Liste `TABS` (`:185`).
+  - Problem (aus dem Code, nicht im Browser getestet): `TABS` nennt Text, Network, MIDI,
+    Light, Companion, Timecode und Script, die Zuordnung in Zeile 502 kennt sie aber nicht und
+    es gibt keine passenden `tab…`-Funktionen. Der Aufruf von `undefined(c)` wirft einen
+    TypeError, sobald so ein Tab offen ist.
+  - Fix: Die fehlenden Tabs mit denselben Feldern wie die GUI bauen. Die Web-Remote soll alle
+    Funktionen der GUI bieten. Der Test sollte jeden Eintrag in `TABS` gegen die Zuordnung prüfen.
+
 ## Block E: Erst nachweisen, dann beheben
 
 - [ ] **12. Script-Cues werden vermutlich zu früh beendet**
@@ -142,6 +151,9 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     geändert gelten. Mit zwei Stages messen, dann pro Stage verwalten.
 - [ ] **14. Doku korrigieren**
   - `docs/TODO-offen.md` nennt `feature/video-routing` als Stand und 541 statt 636 Tests.
+  - `docs/HTML-Templates.md` §1 nennt 100 ms / 10 Hz, im Code sind es 33 ms
+    (`WEBVIEW_SNAPSHOT_INTERVAL`). §1 nennt außerdem nicht, dass die Rate nur der angeforderte
+    Takt ist; die tatsächliche Bildrate ist nicht gemessen.
 
 ## Block F: Look and Feel wie QLab 5 (zum Schluss, nach den Blöcken A–E)
 

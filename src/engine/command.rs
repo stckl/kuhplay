@@ -10,8 +10,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::core::{
-    AudioRoute, FadeCurve, FadeParam, HtmlSource, LoopMode, MediaSlice, RouteManager, SlideNav,
-    SlideShow, Stage, SurfaceGeometry, Timecode,
+    AudioRoute, FadeCurve, FadeParam, HtmlSource, LightMessage, LoopMode, MediaSlice, RouteManager,
+    SlideNav, SlideShow, Stage, SurfaceGeometry, Timecode,
 };
 
 /// Eine Anweisung an die Playback-Engine.
@@ -170,10 +170,9 @@ pub enum EngineCommand {
     /// `host:6454`. Sofort-Cue; Fehler als [`super::EngineEvent::Error`].
     SendDmx {
         cue_id: Uuid,
-        host: String,
-        /// Zielport (Art-Net 6454 / sACN 5568, siehe `LightProtocol::port`).
-        port: u16,
-        packet: Vec<u8>,
+        /// Licht-Nachricht; die Engine baut das Paket (hält pro Universe den
+        /// DMX-Stand und die sACN-Sequenz, siehe Block A des Review-Docs).
+        message: LightMessage,
     },
     /// Companion-Cue: HTTP POST an `http://host:port/path` (leerer Body) –
     /// Bitfocus Companion Remote-Control-API. Sofort-Cue; die Real-Engine
