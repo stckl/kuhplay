@@ -195,7 +195,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   - **Hinweis zu Block E:** Script-Cues enden ohne Done-Event nach 1000 ms
     (`KUHPLAY_SCRIPT_SETTLE_MS`). Längeres JS kann damit weiterhin abgeschnitten werden, und der Fix
     ist nur mit einer Fake-WebView getestet. Das ist mit dem CEF-Umbau neu zu prüfen.
-- [ ] **G1. Farbraum korrigieren** (zuerst, klein und eigener Commit)
+- [x] **G1. Farbraum korrigieren** (zuerst, klein und eigener Commit)
   - Ort: `rgba_to_uyvy422` (`src/engine/decklink.rs`) rechnet immer mit BT.601.
   - Fix: BT.709 für HD und UHD, BT.601 nur für SD. Tests mit bekannten Farbwerten.
 - [ ] **G2. 29,97 und 59,94 fps korrigieren**

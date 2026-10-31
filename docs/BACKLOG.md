@@ -30,7 +30,15 @@ Zusage. Geplante größere Umbauten stehen in `docs/KONZEPT-html-templates.md` u
 **DMX-Fernsteuerung (gewünscht)**
 
 KuhPlay lässt sich vom Lichtpult über Art-Net und sACN (E1.31) steuern.
-- **Empfang:** beide Protokolle, Universe und Startkanal einstellbar, sACN auch per Multicast.
+- **Empfang:** Protokoll (Art-Net oder sACN), Universe und Startadresse des KuhPlay-„Fixtures“ sind
+  einstellbar, in denselben Wertebereichen und mit denselben Feldern wie beim Light-Cue
+  (Art-Net 0–32767, sACN 1–63999, Adresse 1–512). sACN auch per Multicast. Die Steuerkanäle folgen
+  ab der Startadresse in fester Reihenfolge; der gesamte Kanalblock muss bis Adresse 512 passen.
+- **Art-Net-Universe in beiden Darstellungen:** Gesamtwert (0–32767) und die drei Blöcke Net (0–127),
+  Sub-Net (0–15), Universe (0–15) stehen nebeneinander und sind beide editierbar, Änderungen
+  gleichen sich sofort ab (`gesamt = net * 256 + subnet * 16 + universe`). Gilt für den Eingang und
+  ebenso für den Light-Cue. sACN zeigt nur den Gesamtwert. Manche Pulte zählen Universes ab 1 statt
+  ab 0; ein kurzer Hinweis am Feld verhindert die Verwechslung.
 - **Steuerkanäle:** Zuordnung frei einstellbar, mindestens GO, Panic, Pause, Resume, Reset und ein
   Kanal für die Cue-Nummer.
 - **Auslösen nur bei steigender Flanke:** Ein Befehl feuert einmal beim Überschreiten von etwa
@@ -48,7 +56,7 @@ KuhPlay lässt sich vom Lichtpult über Art-Net und sACN (E1.31) steuern.
     am Pult direkt lesbar sind: Slot 34 ist 34 %. Umrechnung `prozent = round(dmx * 100 / 255)`,
     das verträgt auch abweichendes Runden der Pulte. Das ergibt 100 Bänke mit je 100 Slots,
     also 10.000 Cues.
-  - Slot 0 % bedeutet „kein Cue“. Ohne eigenen Trigger-Kanal würde ein Fade am Pult beim
+  - Bank 0 % oder Slot 0 % bedeutet „kein Cue“. Ohne eigenen Trigger-Kanal würde ein Fade am Pult beim
     Durchlaufen alle Cues dazwischen auslösen.
   - Vorschlag zusätzlich: ein festes Layer-Profil pro Stage mit Intensity, Stop und Pause, dazu
     eine exportierbare Kanalliste oder ein Fixture-Profil für das Pult.

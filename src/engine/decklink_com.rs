@@ -26,7 +26,7 @@ use windows_core::{interface, IUnknown, IUnknown_Vtbl, Interface, BSTR, GUID, HR
 
 use crate::core::{ShowError, ShowResult};
 use crate::engine::decklink::{
-    bmd_display_mode, rgba_to_uyvy422, DecklinkConfig, BMD_FORMAT_8BIT_YUV,
+    bmd_display_mode, rgba_to_uyvy422_cs, ColorSpace, DecklinkConfig, BMD_FORMAT_8BIT_YUV,
 };
 use crate::engine::frame::VideoFrame;
 
@@ -253,7 +253,9 @@ impl ComDeckLinkOutput {
                 frame.width, frame.height, self.width, self.height
             )));
         }
-        rgba_to_uyvy422(frame, &mut self.uyvy);
+        // Review G1: Farbraum aus der Auflösung (HD/UHD → BT.709, SD → BT.601).
+        let cs = ColorSpace::from_height(self.height);
+        rgba_to_uyvy422_cs(frame, &mut self.uyvy, cs);
         unsafe {
             let mut buf: *mut c_void = std::ptr::null_mut();
             self.frame

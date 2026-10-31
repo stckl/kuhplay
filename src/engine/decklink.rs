@@ -276,14 +276,40 @@ pub fn bmd_display_mode(width: u32, height: u32, fps: u32) -> Option<u32> {
     Some(m)
 }
 
+/// Wie [`rgba_to_uyvy422_cs`] mit BT.601 (bisheriges Verhalten).
+pub fn rgba_to_uyvy422(src: &VideoFrame, dst: &mut [u8]) {
+    rgba_to_uyvy422_cs(src, dst, ColorSpace::Bt601)
+}
+
 /// BMD-Pixelformat FourCC: 8-Bit-YUV (UYVY, '2vuy') – das Standardformat der
 /// SDI-Decklink-Karten.
 pub const BMD_FORMAT_8BIT_YUV: u32 = 0x32767579;
 
-/// Konvertiert ein RGBA-Frame in UYVY 4:2:2 (BT.601 Studio-Range).
+/// Farbraum für die RGB→YUV-Konvertierung (Review G1): BT.709 für HD/UHD,
+/// BT.601 nur für SD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorSpace {
+    /// BT.601 (SD, bis 576 Zeilen).
+    Bt601,
+    /// BT.709 (HD ab 720 Zeilen und UHD).
+    Bt709,
+}
+
+impl ColorSpace {
+    /// Farbraum aus der Frame-Höhe: SD (< 720 Zeilen) → BT.601, sonst BT.709.
+    pub fn from_height(height: u32) -> Self {
+        if height < 720 {
+            ColorSpace::Bt601
+        } else {
+            ColorSpace::Bt709
+        }
+    }
+}
+
+/// Konvertiert ein RGBA-Frame in UYVY 4:2:2 (Studio-Range, Farbraum über `cs`).
 /// `dst` muss `width*height*2` Bytes haben. Alpha wird ignoriert (Fill opaque);
 /// für den Key-Ausgang vorher [`alpha_to_luma`] anwenden (Y = Alpha).
-pub fn rgba_to_uyvy422(src: &VideoFrame, dst: &mut [u8]) {
+pub fn rgba_to_uyvy422_cs(src: &VideoFrame, dst: &mut [u8], cs: ColorSpace) {
     let w = src.width as usize;
     let h = src.height as usize;
     assert!(dst.len() >= w * h * 2, "UYVY-Zielpuffer zu klein");
@@ -301,18 +327,24 @@ pub fn rgba_to_uyvy422(src: &VideoFrame, dst: &mut [u8]) {
                 f32::from(src.rgba[i1 + 1]),
                 f32::from(src.rgba[i1 + 2]),
             );
-            // BT.601 Studio: Y in [16,235], U/V in [16,240]; U/V gemittelt über
-            // das Pixelpaar (4:2:2), Y pro Pixel.
+            // Studio-Range: Y in [16,235], U/V in [16,240]; U/V gemittelt über
+            // das Pixelpaar (4:2:2), Y pro Pixel. Eingaben normiert 0..1,
+            // Koeffizienten je Farbraum (Review G1): BT.601 (SD) vs. BT.709 (HD/UHD).
+            let (kr, kg, kb) = match cs {
+                ColorSpace::Bt601 => (0.299, 0.587, 0.114),
+                ColorSpace::Bt709 => (0.2126, 0.7152, 0.0722),
+            };
             let lum = |r: f32, g: f32, b: f32| {
-                16.0 + (65.481 * r + 128.553 * g + 24.966 * b) * (219.0 / 255.0)
+                let (rn, gn, bn) = (r / 255.0, g / 255.0, b / 255.0);
+                16.0 + 219.0 * (kr * rn + kg * gn + kb * bn)
             };
             let lum0 = lum(r0, g0, b0);
             let lum1 = lum(r1, g1, b1);
-            let r = (r0 + r1) / 2.0;
-            let g = (g0 + g1) / 2.0;
-            let b = (b0 + b1) / 2.0;
-            let u = 128.0 + (-37.797 * r - 74.203 * g + 112.0 * b) * (224.0 / 255.0);
-            let v = 128.0 + (112.0 * r - 93.786 * g - 18.214 * b) * (224.0 / 255.0);
+            let (rn, gn, bn) = ((r0 + r1) / 510.0, (g0 + g1) / 510.0, (b0 + b1) / 510.0);
+            let u = 128.0
+                + 224.0 * (-kr / (2.0 * (1.0 - kb)) * rn - kg / (2.0 * (1.0 - kb)) * gn + 0.5 * bn);
+            let v = 128.0
+                + 224.0 * (0.5 * rn - kg / (2.0 * (1.0 - kr)) * gn - kb / (2.0 * (1.0 - kr)) * bn);
             let o = (y * w + x) * 2;
             dst[o] = u.clamp(16.0, 240.0) as u8;
             dst[o + 1] = lum0.clamp(16.0, 235.0) as u8;
@@ -535,5 +567,74 @@ mod keyfill_tests {
         let mut stage = stage;
         stage.key_fill = Some(crate::core::KeyFillRoutes { fill: a, key: a });
         assert!(stage.validate().is_err(), "fill == key ist ungültig");
+    }
+}
+
+#[cfg(test)]
+mod review_g1_tests {
+    use super::*;
+
+    fn uyvy_of(rgb: [u8; 3], cs: ColorSpace) -> [u8; 4] {
+        let frame = VideoFrame::new(
+            2,
+            1,
+            vec![rgb[0], rgb[1], rgb[2], 255, rgb[0], rgb[1], rgb[2], 255],
+        );
+        let mut dst = vec![0u8; 4];
+        rgba_to_uyvy422_cs(&frame, &mut dst, cs);
+        dst.try_into().unwrap()
+    }
+
+    #[test]
+    fn g1_reines_rot_bt601_vs_bt709() {
+        // BT.601: Y≈81, U≈90, V≈240 – BT.709: Y≈63, U≈102, V≈240 (Studio-Range).
+        let bt601 = uyvy_of([255, 0, 0], ColorSpace::Bt601);
+        let bt709 = uyvy_of([255, 0, 0], ColorSpace::Bt709);
+        assert!(
+            (bt601[1] as i32 - 81).abs() <= 2,
+            "BT.601 Y rot = 81, got {}",
+            bt601[1]
+        );
+        assert!(
+            (bt601[0] as i32 - 90).abs() <= 2,
+            "BT.601 U rot = 90, got {}",
+            bt601[0]
+        );
+        assert!(
+            (bt709[1] as i32 - 63).abs() <= 2,
+            "BT.709 Y rot = 63, got {}",
+            bt709[1]
+        );
+        assert!(
+            (bt709[0] as i32 - 102).abs() <= 2,
+            "BT.709 U rot = 102, got {}",
+            bt709[0]
+        );
+        assert!(
+            (bt601[2] as i32 - 240).abs() <= 2 && (bt709[2] as i32 - 240).abs() <= 2,
+            "V rot = 240"
+        );
+    }
+
+    #[test]
+    fn g1_weiss_und_schwarz_gleich_in_beiden_farbraeumen() {
+        for cs in [ColorSpace::Bt601, ColorSpace::Bt709] {
+            let w = uyvy_of([255, 255, 255], cs);
+            assert!(
+                (w[1] as i32 - 235).abs() <= 2
+                    && (w[0] as i32 - 128).abs() <= 2
+                    && (w[2] as i32 - 128).abs() <= 2
+            );
+            let b = uyvy_of([0, 0, 0], cs);
+            assert!((b[1] as i32 - 16).abs() <= 2 && (b[0] as i32 - 128).abs() <= 2);
+        }
+    }
+
+    #[test]
+    fn g1_from_height_sd_vs_hd() {
+        assert_eq!(ColorSpace::from_height(576), ColorSpace::Bt601);
+        assert_eq!(ColorSpace::from_height(720), ColorSpace::Bt709);
+        assert_eq!(ColorSpace::from_height(1080), ColorSpace::Bt709);
+        assert_eq!(ColorSpace::from_height(2160), ColorSpace::Bt709);
     }
 }
