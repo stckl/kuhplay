@@ -100,6 +100,32 @@ impl VideoBackend {
         }
     }
 
+    /// Woher kommt das ffmpeg-Binary?
+    /// 1. `KUHPLAY_FFMPEG` (voller Pfad),
+    /// 2. `ffmpeg`/`ffmpeg.exe` **neben unserer eigenen exe** (gebundelt mit ausliefern),
+    /// 3. `ffmpeg` aus dem PATH.
+    pub fn ffmpeg_binary() -> String {
+        if let Ok(path) = std::env::var("KUHPLAY_FFMPEG") {
+            if !path.trim().is_empty() {
+                return path;
+            }
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let name = if cfg!(windows) {
+                    "ffmpeg.exe"
+                } else {
+                    "ffmpeg"
+                };
+                let sibling = dir.join(name);
+                if sibling.is_file() {
+                    return sibling.display().to_string();
+                }
+            }
+        }
+        "ffmpeg".to_string()
+    }
+
     /// Startet einen Player für `path` (ffmpeg-Dekodierung).
     /// `seek` = Startposition. Liefert die Metadaten.
     pub fn play(&mut self, cue_id: Uuid, path: &str, seek: Duration) -> Result<VideoInfo, String> {
@@ -135,7 +161,7 @@ impl VideoBackend {
         control: crossbeam_channel::Receiver<VideoControl>,
         child_slot: Arc<Mutex<Option<Child>>>,
     ) {
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = Command::new(Self::ffmpeg_binary());
         for arg in ffmpeg_decode_args(seek, path, hwaccel_enabled()) {
             cmd.arg(arg);
         }
@@ -498,5 +524,21 @@ mod hwaccel_tests {
         let args = ffmpeg_decode_args(Duration::ZERO, "/tmp/x.mp4", false);
         assert!(!args.contains(&"-hwaccel".to_string()));
         assert!(args.contains(&"-ss".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod ffmpeg_binary_tests {
+    use super::VideoBackend;
+
+    #[test]
+    fn ffmpeg_binary_env_override() {
+        // Wenn KUHPLAY_FFMPEG gesetzt ist, gewinnt das.
+        std::env::set_var("KUHPLAY_FFMPEG", "/opt/custom/ffmpeg");
+        assert_eq!(VideoBackend::ffmpeg_binary(), "/opt/custom/ffmpeg");
+        std::env::remove_var("KUHPLAY_FFMPEG");
+        // Ohne env: sibling neben der exe ODER PATH-Fallback "ffmpeg".
+        let b = VideoBackend::ffmpeg_binary();
+        assert!(b == "ffmpeg" || b.ends_with("ffmpeg") || b.ends_with("ffmpeg.exe"));
     }
 }

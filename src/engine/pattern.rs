@@ -126,16 +126,17 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
         TestPatternKind::ColorBars => draw_color_bars(rgba, w, h),
         TestPatternKind::LedWall => draw_led_wall(rgba, w, h, spec),
     }
+    // Wasserzeichen: Kuh großflächig und sehr transparent (10 %) über das Muster,
+    // in der Screen-/Routenfarbe getönt – wie ein Hintergrund-Branding.
+    draw_logo(rgba, w, h, spec.color, 0.10);
     draw_circle(rgba, w, h);
+    // Beschriftung IMMER oben (lesbar), dann der Rand.
     draw_label(rgba, w, h, &spec.label);
-    // Branding: KuhPlay-Logo mittig und groß, in der Screen-/Routenfarbe getönt.
-    draw_logo(rgba, w, h, spec.color);
-    // Zuletzt: Der Rand ist immer vollständig sichtbar.
     draw_frame(rgba, w, h, [255; 3]);
 }
 
-/// Eingebettetes KuhPlay-Logo (aus `assets/kuhlogo.png`, Graustufen).
-static LOGO_PNG: &[u8] = include_bytes!("../../assets/kuhlogo.png");
+/// Eingebettete Kuh (aus `assets/kuh.png`, Graustufen).
+static LOGO_PNG: &[u8] = include_bytes!("../../assets/kuh.png");
 
 /// Dekodiertes Logo (RGBA), einmalig dekodiert.
 fn logo_rgba() -> &'static (u32, u32, Vec<u8>) {
@@ -149,9 +150,10 @@ fn logo_rgba() -> &'static (u32, u32, Vec<u8>) {
     })
 }
 
-/// Zeichnet das Logo zentriert und groß (ca. 55 % der kleineren Canvas-Kante),
-/// in `color` getönt: Grauwert × Farbe/255, Alpha bleibt.
-fn draw_logo(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
+/// Zeichnet die Kuh zentriert und groß (ca. 55 % der kleineren Canvas-Kante)
+/// als Wasserzeichen mit Zusatz-Alpha `strength` (0..1, z. B. 0.10 = dezent),
+/// in `color` getönt: Grauwert × Farbe/255.
+fn draw_logo(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3], strength: f32) {
     let (lw, lh, lrgba) = logo_rgba();
     let (lw, lh) = (*lw as usize, *lh as usize);
     let target = ((w.min(h) as f32 * 0.55) as usize).max(8);
@@ -166,18 +168,18 @@ fn draw_logo(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
         for dx in 0..dw {
             let sx = (dx as f32 / dw as f32 * lw as f32) as usize;
             let si = (sy * lw + sx) * 4;
-            let alpha = lrgba[si + 3] as u16;
-            if alpha == 0 {
+            let alpha = lrgba[si + 3] as f32 / 255.0 * strength.clamp(0.0, 1.0);
+            if alpha <= 0.0 {
                 continue;
             }
             // Grauwert des Logos (ist in Graustufen gebaut).
             let gray = lrgba[si] as u16;
             let di = ((y0 + dy) * w + (x0 + dx)) * 4;
             // Getönt: gray * color / 255, dann Source-Over auf den Hintergrund.
-            let r = (gray * cr / 255) as u16;
-            let g = (gray * cg / 255) as u16;
-            let b = (gray * cb / 255) as u16;
-            let a = alpha as f32 / 255.0;
+            let r = gray * cr / 255;
+            let g = gray * cg / 255;
+            let b = gray * cb / 255;
+            let a = alpha;
             let dst = &mut rgba[di..di + 4];
             dst[0] = (r as f32 * a + dst[0] as f32 * (1.0 - a)).min(255.0) as u8;
             dst[1] = (g as f32 * a + dst[1] as f32 * (1.0 - a)).min(255.0) as u8;
@@ -1046,12 +1048,12 @@ mod region_grid_color_tests {
 }
 
 #[cfg(test)]
-mod logo_tests {
+mod watermark_tests {
     use super::{draw_test_pattern, TestPatternSpec};
     use crate::core::TestPatternKind;
 
     #[test]
-    fn test_pattern_draws_tinted_logo_centered() {
+    fn test_pattern_draws_faint_watermark_in_background() {
         let (w, h) = (400usize, 300usize);
         let mut rgba = vec![0u8; w * h * 4];
         let spec = TestPatternSpec {
@@ -1063,12 +1065,33 @@ mod logo_tests {
             index: 0,
             checker_size: 32,
         };
+        // Baseline ohne Wasserzeichen: Muster + Kreis + Label + Rand (alles außer Kuh).
+        let mut plain = vec![0u8; w * h * 4];
+        super::draw_solid_color(&mut plain, w, h, spec.color);
+        super::draw_circle(&mut plain, w, h);
+        super::draw_label(&mut plain, w, h, &spec.label);
+        super::draw_frame(&mut plain, w, h, [255; 3]);
         draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
-        // Mitte: Logo-Pixel in Rottönen (r deutlich > g/b), nicht schwarz.
-        let i = (h / 2 * w + w / 2) * 4;
-        let px = [rgba[i], rgba[i + 1], rgba[i + 2]];
-        assert!(px[0] > 40 && px[0] > px[1] * 2 && px[0] > px[2] * 2, "Logo-Mitte soll rot getönt sein: {px:?}");
-        // Ecke (außerhalb des Logos): bleibt die Solid-Color-Farbe.
+        // Wasserzeichen dezent: auf reinen Hintergrundpixeln (plain == Grundton,
+        // also ohne Rand/Kreis/Label) weicht das Ergebnis leicht ab — sichtbar,
+        // aber nicht dominant.
+        let mut max_diff = 0i32;
+        for i in 0..w * h {
+            if plain[i * 4] == spec.color[0]
+                && plain[i * 4 + 1] == spec.color[1]
+                && plain[i * 4 + 2] == spec.color[2]
+            {
+                let d = (rgba[i * 4] as i32 - plain[i * 4] as i32).abs()
+                    + (rgba[i * 4 + 1] as i32 - plain[i * 4 + 1] as i32).abs()
+                    + (rgba[i * 4 + 2] as i32 - plain[i * 4 + 2] as i32).abs();
+                max_diff = max_diff.max(d);
+            }
+        }
+        assert!(
+            max_diff > 0 && max_diff < 200,
+            "Wasserzeichen soll dezent sichtbar sein, max_diff={max_diff}"
+        );
+        // Ecke (außerhalb der Kuh): bleibt die Solid-Color-Farbe.
         let j = (5 * w + 5) * 4;
         assert_eq!([rgba[j], rgba[j + 1], rgba[j + 2]], [255, 0, 0]);
     }
