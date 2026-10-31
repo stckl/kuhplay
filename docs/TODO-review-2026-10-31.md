@@ -142,18 +142,18 @@ cargo check --target x86_64-pc-windows-msvc --features webview
 
 ## Block E: Erst nachweisen, dann beheben
 
-- [ ] **12. Script-Cues werden vermutlich zu früh beendet**
+- [x] **12. Script-Cues werden vermutlich zu früh beendet**
   - Ort: `tick` (`src/engine/real_engine.rs:2288-2315`), `handle_message` in
     `src/bin/kuhplay-webview.rs`.
   - Vermutung: `loaded` heißt nur „Load-Befehl angenommen“. Die Instanz wird danach
     entfernt und `Drop` beendet den Prozess, längeres oder asynchrones JS würde abgebrochen.
   - Nachweis: Test mit `--features webview` und einem Script, das verzögert ein Ergebnis
     meldet. Das öffnet ein Fenster, daher nur nach Absprache lokal ausführen.
-- [ ] **13. Dirty-Tracking bei mehreren Stages**
+- [x] **13. Dirty-Tracking bei mehreren Stages**
   - Ort: `Compositor::note_composited` (`src/engine/compositor.rs:105-107`).
   - Vermutung: Das `retain` löscht die Einträge der anderen Stages, die dadurch immer als
     geändert gelten. Mit zwei Stages messen, dann pro Stage verwalten.
-- [ ] **14. Doku korrigieren**
+- [x] **14. Doku korrigieren**
   - `docs/TODO-offen.md` nennt `feature/video-routing` als Stand und 541 statt 636 Tests.
   - `docs/HTML-Templates.md` §1 nennt 100 ms / 10 Hz, im Code sind es 33 ms
     (`WEBVIEW_SNAPSHOT_INTERVAL`). §1 nennt außerdem nicht, dass die Rate nur der angeforderte

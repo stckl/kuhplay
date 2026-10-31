@@ -1,10 +1,11 @@
 # Übergabe: Offene TODOs nach dem Video-Routing-Umbau
 
-**Stand:** Branch `feature/video-routing`, 636 Tests grün auf dem Mac (2× full suite,
-keine Flakes), Clippy ohne Warnung (auch `--features webview` und Windows
-`--all-targets`), `cargo check --target x86_64-pc-windows-msvc --features webview
---all-targets` warning-frei. ZBOOK (Windows, rustc 1.99.1): Release-Build OK,
-617 Tests passed / 0 failed (19 unix-only), Web-Remote live erreichbar. Alles
+**Stand:** Branch `main` (alles gemerged), zuletzt Review-Blöcke A–E abgearbeitet.
+662 Tests grün auf dem Mac, Clippy ohne Warnung (auch `--features webview` und
+Windows `--all-targets`), Windows-Check warning-frei. ZBOOK (Windows, rustc 1.99.1):
+Release-Build OK, 617 Tests passed / 0 failed (19 unix-only), Web-Remote live
+erreichbar. ACS-Sol-Media19 (192.168.89.210, UltraStudio Mini 3G): Rust+ffmpeg
+installiert, DeckLinkAPI64.dll registriert, COM-Live-Test siehe Git-Log. Alles
 gepusht (HEAD siehe Git-Log).
 
 Der ursprüngliche Arbeitsauftrag `docs/TODO-video-routing.md` (QLab-5-Video-Routing:

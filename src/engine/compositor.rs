@@ -51,10 +51,12 @@ pub fn canvas_size(stages: &HashMap<String, Stage>, stage_name: &str) -> (u32, u
 
 /// Software-Compositor mit Dirty-Tracking (Ptr-Vergleich der Quell-Frames).
 pub struct Compositor {
-    /// Zuletzt komponiertes Frame pro Cue (Ptr-Vergleich → Dirty-Erkennung).
-    last_frames: HashMap<Uuid, Arc<VideoFrame>>,
-    /// Zuletzt verwendete Deckkraft pro Cue.
-    last_opacities: HashMap<Uuid, f32>,
+    /// Zuletzt komponiertes Frame pro Cue, pro Stage (sonst löscht die
+    /// Aufräumlogik einer Stage die Einträge der anderen → die gelten dann
+    /// immer als geändert, Review E13).
+    last_frames: HashMap<String, HashMap<Uuid, Arc<VideoFrame>>>,
+    /// Zuletzt verwendete Deckkraft pro Cue, pro Stage.
+    last_opacities: HashMap<String, HashMap<Uuid, f32>>,
     /// Stages, die seit dem letzten Tick neu komponiert werden müssen.
     dirty: HashSet<String>,
 }
@@ -92,32 +94,44 @@ impl Compositor {
         frames: &HashMap<Uuid, Arc<VideoFrame>>,
         opacities: &HashMap<Uuid, f32>,
     ) {
+        let frames_of_stage = self.last_frames.entry(stage_name.to_string()).or_default();
+        let opacities_of_stage = self
+            .last_opacities
+            .entry(stage_name.to_string())
+            .or_default();
         for (cue_id, _, _, _, _) in surfaces {
             if let Some(frame) = frames.get(cue_id) {
-                self.last_frames.insert(*cue_id, frame.clone());
+                frames_of_stage.insert(*cue_id, frame.clone());
             } else {
-                self.last_frames.remove(cue_id);
+                frames_of_stage.remove(cue_id);
             }
             let opacity = opacities.get(cue_id).copied().unwrap_or(1.0);
-            self.last_opacities.insert(*cue_id, opacity);
+            opacities_of_stage.insert(*cue_id, opacity);
         }
-        // Verwaiste Einträge aufräumen.
+        // Verwaiste Einträge dieser Stage aufräumen (andere Stages bleiben unangetastet).
         let live: HashSet<Uuid> = surfaces.iter().map(|(id, _, _, _, _)| *id).collect();
-        self.last_frames.retain(|id, _| live.contains(id));
-        self.last_opacities.retain(|id, _| live.contains(id));
-        let _ = stage_name;
+        frames_of_stage.retain(|id, _| live.contains(id));
+        opacities_of_stage.retain(|id, _| live.contains(id));
     }
 
     /// Prüft, ob sich ein Cue-Frame oder eine Opacity seit der letzten
     /// Komposition geändert hat → Stage dirty.
-    pub fn is_dirty(&self, cue_id: Uuid, frame: Option<&Arc<VideoFrame>>, opacity: f32) -> bool {
-        let frame_changed = match (frame, self.last_frames.get(&cue_id)) {
+    pub fn is_dirty(
+        &self,
+        stage: &str,
+        cue_id: Uuid,
+        frame: Option<&Arc<VideoFrame>>,
+        opacity: f32,
+    ) -> bool {
+        let frames_of_stage = self.last_frames.get(stage);
+        let frame_changed = match (frame, frames_of_stage.and_then(|m| m.get(&cue_id))) {
             (Some(frame), Some(last)) => !Arc::ptr_eq(last, frame),
             (Some(_), None) => true,
             (None, Some(_)) => true,
             (None, None) => false,
         };
-        let opacity_changed = self.last_opacities.get(&cue_id) != Some(&opacity);
+        let opacity_changed =
+            self.last_opacities.get(stage).and_then(|m| m.get(&cue_id)) != Some(&opacity);
         frame_changed || opacity_changed
     }
 
@@ -531,7 +545,7 @@ mod tests {
         let f2 = Arc::new(VideoFrame::new(2, 2, vec![255; 16]));
         let opacities = HashMap::new();
         // Erstes Mal = dirty.
-        assert!(comp.is_dirty(id, Some(&f1), 1.0));
+        assert!(comp.is_dirty("S", id, Some(&f1), 1.0));
         let mut frames = HashMap::new();
         frames.insert(id, f1.clone());
         comp.note_composited(
@@ -541,11 +555,11 @@ mod tests {
             &opacities,
         );
         // Gleiches Frame + Opacity = nicht dirty.
-        assert!(!comp.is_dirty(id, Some(&f1), 1.0));
+        assert!(!comp.is_dirty("S", id, Some(&f1), 1.0));
         // Neues Frame (anderer Ptr) = dirty.
-        assert!(comp.is_dirty(id, Some(&f2), 1.0));
+        assert!(comp.is_dirty("S", id, Some(&f2), 1.0));
         // Opacity geändert = dirty.
-        assert!(comp.is_dirty(id, Some(&f1), 0.5));
+        assert!(comp.is_dirty("S", id, Some(&f1), 0.5));
     }
 }
 
@@ -822,5 +836,46 @@ mod review_c_tests {
             255,
             "Pixel 25 in der Mitte voll deckend"
         );
+    }
+}
+
+#[cfg(test)]
+mod review_e_tests {
+    use super::*;
+    use crate::core::{GeometryMode, SurfaceGeometry};
+
+    fn entry(id: Uuid, frame: Arc<VideoFrame>) -> SurfaceEntry {
+        let surface = SurfaceGeometry {
+            mode: GeometryMode::Custom,
+            ..SurfaceGeometry::full_canvas()
+        };
+        (id, 0, surface, Some(frame), 1.0)
+    }
+
+    /// Review E13: note_composited einer Stage darf die Dirty-Stände einer
+    /// anderen Stage nicht löschen (sonst gilt deren Cue immer als geändert).
+    #[test]
+    fn e13_dirty_tracking_pro_stage_getrennt() {
+        let mut comp = Compositor::new();
+        let id_a = Uuid::new_v4();
+        let id_b = Uuid::new_v4();
+        let f = Arc::new(VideoFrame::new(2, 2, [255, 0, 0, 255].repeat(4)));
+        let mut frames = HashMap::new();
+        frames.insert(id_a, f.clone());
+        frames.insert(id_b, f.clone());
+        let opacities: HashMap<Uuid, f32> = HashMap::new();
+
+        comp.note_composited("A", &[entry(id_a, f.clone())], &frames, &opacities);
+        // Stage B komponieren – darf Stage A nicht wipen.
+        comp.note_composited("B", &[entry(id_b, f.clone())], &frames, &opacities);
+        assert!(
+            !comp.is_dirty("A", id_a, Some(&f), 1.0),
+            "Stage A darf nach Komposition von Stage B nicht dirty sein (E13)"
+        );
+        assert!(!comp.is_dirty("B", id_b, Some(&f), 1.0));
+        // Neuer Frame in Stage A → dirty; Stage B bleibt clean.
+        let f2 = Arc::new(VideoFrame::new(2, 2, [0, 255, 0, 255].repeat(4)));
+        assert!(comp.is_dirty("A", id_a, Some(&f2), 1.0));
+        assert!(!comp.is_dirty("B", id_b, Some(&f), 1.0));
     }
 }

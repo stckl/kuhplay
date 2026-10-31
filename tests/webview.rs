@@ -451,3 +451,94 @@ fn engine_fallback_virtuell_wenn_binary_fehlt() {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+/// Fake-WebView, das nach `loaded` verzögert einen JS-Fehler meldet
+/// (simuliert asynchrones Script-JS: setTimeout/fetch nach Page-Load).
+#[cfg(unix)]
+fn write_fake_webview_late_error(dir: &std::path::Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("fake-webview-late.sh");
+    let script = r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"load"'*)
+      printf '%s\n' '{"loaded":true}'
+      ( sleep 0.3; printf '%s\n' '{"js_executed":true}' ) &
+      ;;
+    *'"close"'*) exit 0 ;;
+  esac
+done
+"#;
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Review E12: Script-Cue darf nicht beim `loaded`-Event enden – sonst wird
+/// asynchrones JS abgeschnitten (Instanz per Drop gekillt). Stattdessen
+/// Settle-Frist; späte Fehler innerhalb der Frist werden noch gemeldet.
+#[cfg(unix)]
+#[test]
+fn e12_script_cue_settle_faengt_spaete_js_fehler() {
+    std::env::set_var("KUHPLAY_SCRIPT_SETTLE_MS", "3000");
+    let dir = tempfile::tempdir().unwrap();
+    let bin = write_fake_webview_late_error(dir.path());
+    let (evt_tx, evt_rx) = crossbeam_channel::unbounded();
+    let mut engine = RealMediaEngine::new(
+        new_frame_store(),
+        new_opacity_store(),
+        new_stage_frame_store(),
+        new_route_frame_store(),
+        evt_tx,
+    )
+    .with_webview_bin(bin);
+    let cue_id = uuid::Uuid::new_v4();
+    engine
+        .handle(EngineCommand::RunScript {
+            cue_id,
+            script: "setTimeout(() => { throw new Error('late'); }, 100)".into(),
+        })
+        .unwrap();
+
+    // Phase 1: 500 ms ticken – loaded und das späte js_executed sind da,
+    // Finished darf noch nicht kommen (pre-fix: Finished sofort nach loaded,
+    // Instanz per Drop gekillt, js_executed käme nie an).
+    let mut saw_finished_early = false;
+    let mut saw_late_js = false;
+    for _ in 0..25 {
+        engine.tick();
+        while let Ok(e) = evt_rx.try_recv() {
+            match e {
+                EngineEvent::Finished { cue_id: id } if id == cue_id => saw_finished_early = true,
+                EngineEvent::JsExecuted { cue_id: id, .. } if id == cue_id => saw_late_js = true,
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        saw_late_js,
+        "spätes JS-Event innerhalb der Settle-Frist fehlt"
+    );
+    assert!(
+        !saw_finished_early,
+        "Finished direkt nach loaded – asynchrones JS würde abgeschnitten (E12)"
+    );
+
+    // Phase 2: nach Ablauf der Settle-Frist (3 s) kommt Finished.
+    let mut saw_finished = false;
+    for _ in 0..220 {
+        engine.tick();
+        while let Ok(e) = evt_rx.try_recv() {
+            if matches!(e, EngineEvent::Finished { cue_id: id } if id == cue_id) {
+                saw_finished = true;
+            }
+        }
+        if saw_finished {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::env::remove_var("KUHPLAY_SCRIPT_SETTLE_MS");
+    assert!(saw_finished, "Finished nach Ablauf der Settle-Frist fehlt");
+}

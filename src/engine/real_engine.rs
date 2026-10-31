@@ -206,6 +206,27 @@ struct ActiveFade {
 
 /// Aktive WebView-Instanz eines HTML5-Cues: echtes Subprocess-Backend
 /// (`webview`), wenn verfügbar, sonst virtueller Fallback (`None`).
+/// Laufender Script-Cue: WebView-Instanz + Settle-Deadline. `Loaded` allein
+/// beendet den Cue nicht sofort – sonst würde asynchrones JS (setTimeout, fetch)
+/// abgeschnitten, wenn die Instanz per Drop gekillt wird (Review E12).
+struct ScriptState {
+    webview: super::webview_backend::WebviewInstance,
+    /// Ab wann der Cue als fertig gilt (nach Loaded + Settle-Frist).
+    finish_at: Option<Duration>,
+}
+
+/// Settle-Frist nach `loaded`, bevor ein Script-Cue endet
+/// (Default 1000 ms, `KUHPLAY_SCRIPT_SETTLE_MS`).
+const SCRIPT_SETTLE: Duration = Duration::from_millis(1000);
+
+fn script_settle() -> Duration {
+    std::env::var("KUHPLAY_SCRIPT_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(SCRIPT_SETTLE)
+}
+
 struct ActiveHtml {
     #[allow(dead_code)]
     source: HtmlSource,
@@ -297,7 +318,7 @@ pub struct RealMediaEngine {
     midi_out: Option<super::midi_out::MidiOutputGuard>,
     /// Laufende Script-Cues: WebView-Instanz (führt das JS aus) + Post-Wait.
     /// Nach `Loaded`/Fehler → `Finished` und Entfernen (Tick pollt Events).
-    scripts: HashMap<Uuid, (super::webview_backend::WebviewInstance, Duration)>,
+    scripts: HashMap<Uuid, ScriptState>,
 }
 
 impl RealMediaEngine {
@@ -800,7 +821,7 @@ impl RealMediaEngine {
             }
             let frame = frames.get(cue_id);
             let opacity = opacities.get(cue_id).copied().unwrap_or(1.0);
-            if self.compositor.is_dirty(*cue_id, frame, opacity) {
+            if self.compositor.is_dirty(stage, *cue_id, frame, opacity) {
                 let stage = stage.clone();
                 self.compositor.mark_dirty(&stage);
             }
@@ -1954,7 +1975,13 @@ impl MediaEngine for RealMediaEngine {
                     &crate::core::HtmlSource::Inline(html),
                 ) {
                     Ok(instance) => {
-                        self.scripts.insert(cue_id, (instance, Duration::ZERO));
+                        self.scripts.insert(
+                            cue_id,
+                            ScriptState {
+                                webview: instance,
+                                finish_at: None,
+                            },
+                        );
                     }
                     Err(err) => {
                         self.emit(EngineEvent::Error {
@@ -2332,21 +2359,45 @@ impl MediaEngine for RealMediaEngine {
         // Script fertig → Finished + PostWaitElapsed (Cue endet).
         let script_ids: Vec<Uuid> = self.scripts.keys().copied().collect();
         for cue_id in script_ids {
-            let mut done = false;
+            let mut finish_now = false;
             let mut error: Option<String> = None;
-            if let Some((webview, _post_wait)) = self.scripts.get_mut(&cue_id) {
-                while let Some(event) = webview.poll_event() {
+            if let Some(state) = self.scripts.get_mut(&cue_id) {
+                while let Some(event) = state.webview.poll_event() {
                     match event {
-                        super::webview_backend::WebviewEvent::Loaded => done = true,
+                        // Review E12: Loaded startet nur die Settle-Frist –
+                        // asynchrones JS läuft in der Frist weiter, die Instanz
+                        // wird erst danach per Drop beendet.
+                        super::webview_backend::WebviewEvent::Loaded => {
+                            if state.finish_at.is_none() {
+                                state.finish_at = Some(now + script_settle());
+                            }
+                        }
+                        super::webview_backend::WebviewEvent::Done => finish_now = true,
+                        // Späte JS-Events (z. B. asynchrones Script-JS) werden
+                        // an die UI durchgereicht, solange die Instanz lebt (E12).
+                        super::webview_backend::WebviewEvent::JsExecuted => {
+                            out.push(EngineEvent::JsExecuted {
+                                cue_id,
+                                script: String::new(),
+                                at: now,
+                            });
+                        }
                         super::webview_backend::WebviewEvent::Error(msg) => {
-                            done = true;
+                            finish_now = true;
                             error = Some(msg);
                         }
                         _ => {}
                     }
                 }
+                if !finish_now {
+                    if let Some(deadline) = state.finish_at {
+                        if now >= deadline {
+                            finish_now = true;
+                        }
+                    }
+                }
             }
-            if done {
+            if finish_now {
                 self.scripts.remove(&cue_id);
                 if let Some(message) = error {
                     out.push(EngineEvent::Error {

@@ -40,6 +40,8 @@ pub enum WebviewEvent {
     Loaded,
     /// `{"js_executed": true}` – `eval` ausgeführt.
     JsExecuted,
+    /// `{"done": true}` – Script-Cue meldet sich fertig (window.kuhplay.done()).
+    Done,
     /// `{"json_received": true}` – `push_json` zugestellt.
     JsonReceived,
     /// `{"frame": {…}}` – RGBA-Snapshot für das Stage-Compositing
@@ -152,6 +154,9 @@ pub fn parse_event_line(line: &str) -> Option<WebviewEvent> {
     }
     if value.get("js_executed").and_then(|v| v.as_bool()) == Some(true) {
         return Some(WebviewEvent::JsExecuted);
+    }
+    if value.get("done").and_then(|v| v.as_bool()) == Some(true) {
+        return Some(WebviewEvent::Done);
     }
     if value.get("json_received").and_then(|v| v.as_bool()) == Some(true) {
         return Some(WebviewEvent::JsonReceived);

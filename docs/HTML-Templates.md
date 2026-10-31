@@ -13,9 +13,12 @@ docs/HTML-Templates.md").
 1. **HTML5-Cue** lädt die Quelle (Inline / Datei / URL) in eine **echte
    WebView** (Subprocess `kuhplay-webview`, Feature `webview`). Es öffnet sich
    **kein sichtbares Fenster** – die WebView rendert offscreen.
-2. Die Engine fordert nach dem Laden **alle 100 ms einen Snapshot** an und
-   legt ihn in den Stage-Compositor (Stage → Region → Route → Device). Das
-   HTML skaliert dadurch **automatisch auf die Stage-Auflösung**.
+2. Die Engine fordert nach dem Laden **alle 33 ms einen Snapshot** an
+   (`WEBVIEW_SNAPSHOT_INTERVAL`, ca. 30 Hz; bei Snapshot-Fehlern Backoff auf
+   500 ms) und legt ihn in den Stage-Compositor (Stage → Region → Route →
+   Device). Das HTML skaliert dadurch **automatisch auf die Stage-Auflösung**.
+   33 ms ist der *angeforderte* Takt – die tatsächlich erzielte Bildrate
+   hängt von Rendering-Aufwand und Hardware ab und ist nicht gemessen.
 3. **HTML-Data-Cue** pusht ein JSON-Payload an die laufende WebView. Die
    Bridge ruft im Page-Kontext auf:
    ```js
@@ -24,9 +27,10 @@ docs/HTML-Templates.md").
 4. **JS-Trigger** (EvalJs, z. B. „Test"-Button im Inspector oder Script-Cue)
    führt arbitrary JS in der WebView aus: `webview.evaluate_script(...)`.
 
-**Konsequenz für Animationen:** DOM/CSS-Animationen werden mit **10 Hz**
-(100 ms Snapshot-Takt) in die Stage übernommen. Für flüssige 60-fps-Motion
-→ Video-Cue. Für Overlays (Texte, Logos, Countdown, Timetable) reicht das.
+**Konsequenz für Animationen:** DOM/CSS-Animationen werden mit **ca. 30 Hz**
+(33 ms Snapshot-Takt, angefordert) in die Stage übernommen. Für flüssige
+60-fps-Motion → Video-Cue. Für Overlays (Texte, Logos, Countdown, Timetable)
+reicht das.
 
 ## 2. Die Bridge (fixer Vertragsbestandteil)
 
