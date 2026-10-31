@@ -1,8 +1,11 @@
 # Übergabe: Offene TODOs nach dem Video-Routing-Umbau
 
-**Stand:** Branch `feature/video-routing` (kein Push!), 541 Tests grün (Baseline vor
-dem Umbau: 503), Clippy ohne Warnung, `cargo check --target x86_64-pc-windows-msvc
---features webview` OK. Arbeitsbaum sauber, alles committet (HEAD `c42d405`).
+**Stand:** Branch `feature/video-routing`, 636 Tests grün auf dem Mac (2× full suite,
+keine Flakes), Clippy ohne Warnung (auch `--features webview` und Windows
+`--all-targets`), `cargo check --target x86_64-pc-windows-msvc --features webview
+--all-targets` warning-frei. ZBOOK (Windows, rustc 1.99.1): Release-Build OK,
+617 Tests passed / 0 failed (19 unix-only), Web-Remote live erreichbar. Alles
+gepusht (HEAD siehe Git-Log).
 
 Der ursprüngliche Arbeitsauftrag `docs/TODO-video-routing.md` (QLab-5-Video-Routing:
 Stage → Region → Output Route → Device) ist **komplett umgesetzt und getestet** —
@@ -183,6 +186,22 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
   dir=in action=allow protocol=TCP localport=18080` (Port 8080 war schon freigegeben).
 - Achtung cmd: `set VAR=18080` (Leerzeichen!) landet als "18080 " → Port-Parsing schlägt
   fehl → default 8080. Immer `set "VAR=18080"` in .bat-Dateien.
+- **Re-Test 2026-10-31 (HEAD 6dc8b13+):** `cargo build --release --locked --features
+  webview` OK (4m29s), `cargo test --no-fail-fast --release` **617 passed / 0 failed**
+  (19 Tests sind `#[cfg(unix)]`/macOS-only). Windows `--all-targets`-Check clean nach
+  Fix der f32-Literal-Warnings (stage_editor) und unused-imports in tests/webview.rs +
+  tests/decklink.rs (cfg_attr allow für non-unix).
+- **Firewall-Falle auf dem ZBOOK:** es existierten **Blockieren-Regeln für
+  `kuhplay.exe`** (überschreiben Allow-Regeln!). Lösung: `netsh advfirewall firewall
+  delete rule name="kuhplay.exe"` + Allow-Regel `localport=18080 profile=any`.
+  Symptom: Port 22/SSH geht, 18080 timed out.
+- **Headless-Hinweis:** in ssh-Session 0 bzw. Scheduled-Task ohne sichtbares Fenster
+  tick der winit-Eventloop nicht → Web-Remote antwortet (HTTP 200, Commands werden
+  gequeueued), aber Status-Broadcasts bleiben aus. Interaktiv (sichtbares Fenster)
+  funktioniert der volle Pfad — verifiziert lokal auf dem Mac: `POST /api/command
+  {"action":"go"}` → `/api/status` liefert playhead/standby/running als JSON.
+  **⬜ später:** echter Headless-Modus (Remote-Server ohne eframe-Fenster, z. B.
+  `KUHPLAY_HEADLESS=1`) für Server-/Task-Szenarien.
 
 ---
 
