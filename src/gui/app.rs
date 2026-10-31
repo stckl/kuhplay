@@ -102,6 +102,8 @@ pub enum InspectorTab {
     Network,
     /// MIDI (Typ/Kanal/Note/Velocity) – MIDI-Cues.
     Midi,
+    /// Light (Universe/Kanal/Werte/Host) – Light-Cues (Art-Net DMX).
+    Light,
 }
 
 impl InspectorTab {
@@ -120,6 +122,7 @@ impl InspectorTab {
             InspectorTab::Text => "Text",
             InspectorTab::Network => "Network",
             InspectorTab::Midi => "MIDI",
+            InspectorTab::Light => "Light",
         }
     }
 }
@@ -140,6 +143,12 @@ pub struct ShowApp {
     /// Reiner UI-Zustand (Panel-Sichtbarkeit, Tabs, Fenster) – serde-fähig
     /// für die Layout-Persistenz via `eframe::Storage` (TODO.md Phase 0b).
     pub ui: super::state::UiState,
+    /// Workspace-Templates (QLab 5 „Workspace Templates"): benannte
+    /// Layout-Vorlagen, Persistenz über eigenen Storage-Key.
+    pub workspace_templates: Vec<super::state::WorkspaceTemplate>,
+    /// Eingabe-Puffer für den Namen eines neuen Workspace-Templates
+    /// (Settings → General). Reiner Laufzeit-Zustand.
+    pub template_name_buffer: String,
     /// Aktuell geöffnete Datei (für „Save Show" ohne Dialog).
     current_file: Option<PathBuf>,
     /// Space-GO wurde gedrückt (Ausführung nach den Panels, damit Hotkeys
@@ -511,6 +520,11 @@ impl ShowApp {
             .and_then(|s| s.get_string(super::state::UI_STATE_STORAGE_KEY))
             .map(|json| super::state::UiState::from_json(&json))
             .unwrap_or_default();
+        // Workspace-Templates aus Storage laden (fehlend/ungültig → leer).
+        let workspace_templates = storage
+            .and_then(|s| s.get_string(super::state::UI_TEMPLATES_STORAGE_KEY))
+            .map(|json| super::state::templates_from_json(&json))
+            .unwrap_or_default();
         let mut app = Self {
             carts,
             engine,
@@ -518,6 +532,8 @@ impl ShowApp {
             show_mode: false,
             audition_mode: false,
             ui,
+            workspace_templates,
+            template_name_buffer: String::new(),
             current_file: None,
             pending_go: false,
             last_error: None,
@@ -1081,6 +1097,10 @@ impl ShowApp {
         if cue_type == CueType::Midi {
             cue.midi = Some(crate::core::MidiMessage::default());
         }
+        // Light-Cue: Universe 0, Kanal 1 auf 255 (Broadcast) als Vorgabe.
+        if cue_type == CueType::Light {
+            cue.light = Some(crate::core::LightMessage::default());
+        }
         list.insert(at, cue);
         list.select(Some(at));
     }
@@ -1273,6 +1293,47 @@ impl ShowApp {
     pub fn load_ui_state(&mut self, storage: &dyn eframe::Storage) {
         if let Some(json) = storage.get_string(super::state::UI_STATE_STORAGE_KEY) {
             self.ui = super::state::UiState::from_json(&json);
+        }
+    }
+
+    /// Speichert die Workspace-Templates als JSON im `eframe::Storage`
+    /// (wird von `eframe::App::save` aufgerufen).
+    pub fn save_ui_templates(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(
+            super::state::UI_TEMPLATES_STORAGE_KEY,
+            super::state::templates_to_json(&self.workspace_templates),
+        );
+    }
+
+    /// Speichert das aktuelle UI-Layout als Workspace-Template (QLab 5
+    /// „Workspace Templates"). Gleicher Name → ersetzt (Rename-Semantik);
+    /// leerer Name → ignoriert.
+    pub fn save_workspace_template(&mut self, name: String) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let layout = self.ui.clone();
+        self.workspace_templates.retain(|t| t.name != name);
+        self.workspace_templates
+            .push(super::state::WorkspaceTemplate { name, layout });
+    }
+
+    /// Wendet ein Workspace-Template an (QLab: Layout wiederherstellen).
+    /// Laufzeit-Zustand (Find-Leiste) bleibt erhalten.
+    pub fn apply_workspace_template(&mut self, index: usize) {
+        if let Some(template) = self.workspace_templates.get(index) {
+            let find = self.ui.find.clone();
+            let mut layout = template.layout.clone();
+            layout.find = find;
+            self.ui = layout;
+        }
+    }
+
+    /// Löscht ein Workspace-Template.
+    pub fn delete_workspace_template(&mut self, index: usize) {
+        if index < self.workspace_templates.len() {
+            self.workspace_templates.remove(index);
         }
     }
 
@@ -3134,5 +3195,6 @@ impl eframe::App for ShowApp {
     /// Beenden (QLab: Workspace bleibt über Neustarts erhalten).
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_ui_state(storage);
+        self.save_ui_templates(storage);
     }
 }

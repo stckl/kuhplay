@@ -168,6 +168,71 @@ fn draw_general(ui: &mut egui::Ui, app: &mut ShowApp) {
         }
         ui.end_row();
     });
+
+    draw_workspace_templates(ui, app);
+}
+
+/// Abschnitt „Workspace Templates" (QLab 5): aktuelles Layout als benannte
+/// Vorlage speichern, wieder anwenden oder löschen. Persistenz über eigenen
+/// Storage-Key (siehe [`super::state::UI_TEMPLATES_STORAGE_KEY`]).
+fn draw_workspace_templates(ui: &mut egui::Ui, app: &mut ShowApp) {
+    ui.add_space(theme::size::SPACE_MEDIUM_LARGE);
+    ui.horizontal(|ui| {
+        ui.add_space(theme::size::SPACE_SMALL);
+        theme::section_label(ui, "Workspace Templates");
+    });
+    ui.add_space(theme::size::SPACE_SMALL);
+
+    if app.workspace_templates.is_empty() {
+        ui.label(egui::RichText::new("No templates saved yet").color(theme::palette::TEXT_FAINT));
+    }
+    let mut apply = None;
+    let mut delete = None;
+    for (index, template) in app.workspace_templates.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.add_space(theme::size::SPACE_SMALL);
+            ui.label(&template.name);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Delete").clicked() {
+                    delete = Some(index);
+                }
+                if ui
+                    .small_button("Apply")
+                    .on_hover_text("Restore this workspace layout")
+                    .clicked()
+                {
+                    apply = Some(index);
+                }
+            });
+        });
+    }
+    if let Some(index) = apply {
+        app.apply_workspace_template(index);
+    }
+    if let Some(index) = delete {
+        app.delete_workspace_template(index);
+    }
+
+    // Neues Template aus dem aktuellen Layout speichern.
+    ui.horizontal(|ui| {
+        ui.add_space(theme::size::SPACE_SMALL);
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut app.template_name_buffer)
+                .desired_width(220.0)
+                .hint_text("Template name"),
+        );
+        app.text_field_ids.insert(r.id);
+        if ui
+            .button("Save current layout")
+            .on_hover_text("Save the current workspace layout as a template")
+            .clicked()
+            && !app.template_name_buffer.trim().is_empty()
+        {
+            let name = app.template_name_buffer.trim().to_string();
+            app.save_workspace_template(name);
+            app.template_name_buffer.clear();
+        }
+    });
 }
 
 /// Seite „Audio": Auswahl des Ausgabegeräts.

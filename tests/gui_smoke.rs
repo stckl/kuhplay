@@ -430,6 +430,51 @@ fn ui_state_persists_via_storage() {
 }
 
 #[test]
+fn workspace_templates_save_apply_delete_and_persist() {
+    let mut app = demo_app();
+    app.ui.toolbox_visible = false;
+    app.ui.sidebar_tab = SidebarTab::ActiveCues;
+
+    // Aktuelles Layout als Template speichern (Rename bei gleichem Namen).
+    app.save_workspace_template("Stage".to_string());
+    app.save_workspace_template("Setup".to_string());
+    app.save_workspace_template("Stage".to_string()); // ersetzt, nicht doppelt
+    assert_eq!(app.workspace_templates.len(), 2);
+    // Rename-Semantik: „Stage" wurde ans Ende geschoben.
+    assert_eq!(app.workspace_templates[0].name, "Setup");
+    assert_eq!(app.workspace_templates[1].name, "Stage");
+    assert!(!app.workspace_templates[1].layout.toolbox_visible);
+
+    // Leerer Name wird ignoriert.
+    app.save_workspace_template("   ".to_string());
+    assert_eq!(app.workspace_templates.len(), 2);
+
+    // Persistenz: save → frische App lädt die Templates.
+    let mut storage = MemStorage(std::collections::HashMap::new());
+    app.save_ui_state(&mut storage);
+    app.save_ui_templates(&mut storage);
+    let mut loaded = demo_app();
+    assert!(loaded.workspace_templates.is_empty());
+    let templates_json =
+        eframe::Storage::get_string(&storage, kuhplay::gui::state::UI_TEMPLATES_STORAGE_KEY)
+            .expect("Templates persistiert");
+    loaded.workspace_templates = kuhplay::gui::state::templates_from_json(&templates_json);
+    assert_eq!(loaded.workspace_templates, app.workspace_templates);
+
+    // Apply: Layout wird wiederhergestellt, Find-Laufzeitzustand bleibt.
+    loaded.ui.toolbox_visible = true;
+    loaded.ui.find.query = "abc".to_string();
+    loaded.apply_workspace_template(1); // „Stage"
+    assert!(!loaded.ui.toolbox_visible, "Template-Layout angewendet");
+    assert_eq!(loaded.ui.find.query, "abc", "Find bleibt Laufzeit-Zustand");
+
+    // Delete.
+    loaded.delete_workspace_template(0); // löscht „Setup"
+    assert_eq!(loaded.workspace_templates.len(), 1);
+    assert_eq!(loaded.workspace_templates[0].name, "Stage");
+}
+
+#[test]
 fn footer_shows_cue_count_and_broken_indicator() {
     let ctx = egui::Context::default();
     let mut app = demo_app();

@@ -13,6 +13,10 @@ use super::workspace_settings::SettingsPage;
 /// Storage-Key des UI-Zustands in `eframe::Storage`.
 pub const UI_STATE_STORAGE_KEY: &str = "kuhplay.ui_state";
 
+/// Storage-Key der Workspace-Templates (QLab 5 „Workspace Templates") in
+/// `eframe::Storage` – benannte Layout-Vorlagen (Snapshots des [`UiState`]).
+pub const UI_TEMPLATES_STORAGE_KEY: &str = "kuhplay.ui_templates";
+
 /// Anzahl der Spalten der Cue-Tabelle (TODO.md Phase 3).
 /// Reihenfolge: Status | Type | Q# | Name | Target | Pre-wait | Duration |
 /// Post-wait | Continue.
@@ -162,6 +166,26 @@ impl UiState {
     }
 }
 
+/// Eine benannte Workspace-Vorlage (QLab 5 „Workspace Templates"): Snapshot
+/// des UI-Layouts, das jederzeit wieder angewendet werden kann.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkspaceTemplate {
+    /// Anzeigename der Vorlage.
+    pub name: String,
+    /// Gespeichertes Layout (Panel-Sichtbarkeit, Tabs, Spaltenbreiten …).
+    pub layout: UiState,
+}
+
+/// Serialisiert die Template-Liste als JSON (für `eframe::Storage`).
+pub fn templates_to_json(templates: &[WorkspaceTemplate]) -> String {
+    serde_json::to_string(templates).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Lädt die Template-Liste aus JSON; ungültig/fehlend → leer.
+pub fn templates_from_json(json: &str) -> Vec<WorkspaceTemplate> {
+    serde_json::from_str(json).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +202,29 @@ mod tests {
         };
         let json = state.to_json();
         assert_eq!(UiState::from_json(&json), state);
+    }
+
+    #[test]
+    fn workspace_templates_json_roundtrip_and_legacy() {
+        let templates = vec![
+            WorkspaceTemplate {
+                name: "Bühne".to_string(),
+                layout: UiState {
+                    toolbox_visible: false,
+                    ..Default::default()
+                },
+            },
+            WorkspaceTemplate {
+                name: "Einrichten".to_string(),
+                layout: UiState::default(),
+            },
+        ];
+        let json = templates_to_json(&templates);
+        assert_eq!(templates_from_json(&json), templates);
+        // Ungültig/fehlend → leer (abwärtskompatibel).
+        assert!(templates_from_json("").is_empty());
+        assert!(templates_from_json("kaputt").is_empty());
+        assert!(templates_from_json("{}").is_empty());
     }
 
     /// Phase 5: Find-Zustand ist reiner Laufzeit-Zustand (`serde(skip)`) –
