@@ -600,6 +600,22 @@ pub struct Stage {
     /// Unabhängig von den Region→Route-Mappings (additiv bei der Ausgabe).
     #[serde(default)]
     pub placements: Vec<StagePlacement>,
+    /// Key/Fill-Ausgabe dieser Stage (pro Stage separat aktivierbar):
+    /// Fill-Route (Farbe, flach) + Key-Route (Alpha; Route-Flag `alpha`).
+    /// `None` = kein Key/Fill. Geräte: z. B. zwei Decklink-Ports (Fill/Key
+    /// als zwei SDI-Ausgänge) oder ein key/fill-fähiger Ausgang (Hardware
+    /// keyt intern, wenn Frames mit Alpha an einem Ausgang anliegen).
+    #[serde(default)]
+    pub key_fill: Option<KeyFillRoutes>,
+}
+
+/// Fill- + Key-Route einer Stage für Key/Fill-Ausgabe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyFillRoutes {
+    /// Route mit dem Fill-Bild (Farbe, Alpha wird flachgerechnet).
+    pub fill: Uuid,
+    /// Route mit dem Key-Bild (Alpha bleibt erhalten, Route-Flag `alpha`).
+    pub key: Uuid,
 }
 
 /// Platzierung einer Stage auf einem Display.
@@ -671,6 +687,7 @@ impl Stage {
             edge: EdgeBlend::ZERO,
             soft_edge: true,
             placements: Vec::new(),
+            key_fill: None,
         }
     }
 
@@ -691,6 +708,13 @@ impl Stage {
         self.edge.validate()?;
         for placement in &self.placements {
             placement.validate()?;
+        }
+        if let Some(kf) = &self.key_fill {
+            if kf.fill == kf.key {
+                return Err(ShowError::InvalidParameter(
+                    "key/fill: fill and key route must differ".to_string(),
+                ));
+            }
         }
         if !self.blend_gamma.is_finite() || !(0.1..=10.0).contains(&self.blend_gamma) {
             return Err(ShowError::InvalidParameter(format!(

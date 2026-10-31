@@ -134,10 +134,9 @@ impl Compositor {
     ) {
         let (cw, ch) = (canvas.0.max(1), canvas.1.max(1));
         let mut out = vec![0u8; (cw as usize) * (ch as usize) * 4];
-        // Hintergrund: undurchsichtiges Schwarz.
-        for px in out.chunks_exact_mut(4) {
-            px[3] = 255;
-        }
+        // Hintergrund: transparent (Alpha 0) – Key/Fill braucht echte Alpha-
+        // Werte; Fill-Routen flatten später auf Schwarz (render_region_into).
+        // (vec![0u8; …] ist bereits RGBA 0,0,0,0 = transparent.)
 
         // Layer aufsteigend (niedrigste zuerst).
         let mut ordered: Vec<&SurfaceEntry> = surfaces.iter().collect();
@@ -194,18 +193,31 @@ impl Compositor {
                     let dst = &mut out
                         [((dy0 as usize + dy) * cw as usize + dx0 as usize + dx) * 4..][..4];
                     let mode = surface.blend_mode;
-                    if a >= 1.0 && mode == crate::core::BlendMode::SourceOver {
-                        // Deckend + SourceOver: direkter Copy.
+                    // Effektive Source-Alpha (Surface-Deckkraft × Frame-Alpha × Edge).
+                    let sa = (src[3] as f32 / 255.0) * a;
+                    if sa <= 0.0 {
+                        continue;
+                    }
+                    // Dest-Alpha (Stage-Canvas startet transparent → echtes Over).
+                    let da = dst[3] as f32 / 255.0;
+                    let oa = sa + da * (1.0 - sa);
+                    if a >= 1.0 && mode == crate::core::BlendMode::SourceOver && sa >= 1.0 {
+                        // Vollauf deckend + SourceOver: direkter Copy.
                         dst.copy_from_slice(src);
                     } else {
-                        // Blend-Modus: Farbe mischen, dann mit Alpha aufbringen.
+                        // Farbe evtl. mischen (Blend-Modus), dann "over" mit Alpha.
                         for c in 0..3 {
                             let s = src[c] as f32;
                             let d = dst[c] as f32;
                             let blended = mode.mix(d, s);
-                            dst[c] = (blended * a + d * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                            dst[c] = if oa > 0.0 {
+                                ((blended * sa + d * da * (1.0 - sa)) / oa).round()
+                            } else {
+                                0.0
+                            }
+                            .clamp(0.0, 255.0) as u8;
                         }
-                        dst[3] = dst[3].max((src[3] as f32 * a).clamp(0.0, 255.0) as u8);
+                        dst[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
                     }
                 }
             }
@@ -343,10 +355,18 @@ mod tests {
         // Pixel-Center-Sampling: Pixel x=4 liegt mit seinem Mittelpunkt bei
         // 4.5 → 0.5 px inside the 2 px blend → factor 0.25 (linear).
         let edge_px = px_at(4);
-        assert_eq!(edge_px, &[63, 0, 191, 255], "x=4: alpha 0.25 über blau");
+        assert_eq!(
+            edge_px,
+            &[64, 0, 191, 255],
+            "x=4: alpha 0.25 über blau (gerundet)"
+        );
         // x=5: Mittelpunkt 5.5 → 1.5 px innen → factor 0.75.
         let mid = px_at(5);
-        assert_eq!(mid, &[191, 0, 63, 255], "x=5: alpha 0.75 über blau");
+        assert_eq!(
+            mid,
+            &[191, 0, 64, 255],
+            "x=5: alpha 0.75 über blau (gerundet)"
+        );
         // Ab x=6 (2.5 px ≥ width): voll deckend rot.
         assert_eq!(px_at(6), &[255, 0, 0, 255]);
         assert_eq!(px_at(7), &[255, 0, 0, 255]);
@@ -389,8 +409,8 @@ mod tests {
         let canvas2 = store2.lock().unwrap().get("S2").cloned().unwrap();
         assert_eq!(
             &canvas2.rgba[..4],
-            &[0, 0, 0, 255],
-            "unsichtbar = schwarzer Canvas"
+            &[0, 0, 0, 0],
+            "unsichtbar = transparenter Canvas (Key/Fill-Alpha)"
         );
     }
 
@@ -408,11 +428,13 @@ mod tests {
         let comp = Compositor::new();
         comp.composite("S", (2, 2), &surfaces, &store);
         let canvas = store.lock().unwrap().get("S").cloned().unwrap();
-        // 50 % Weiß über Schwarz = Grau.
+        // 50 % Weiß über transparent = Weiß mit Alpha 127 (un-premultiplied,
+        // Key/Fill braucht die echte Alpha).
         let px = &canvas.rgba[..4];
+        assert_eq!(px[0], 255, "Farbe bleibt un-premultiplied: {px:?}");
         assert!(
-            (px[0] as i32 - 128).abs() <= 1,
-            "Deckkraft 0.5 → Grau: {px:?}"
+            (px[3] as i32 - 127).abs() <= 1,
+            "Deckkraft 0.5 → Alpha 127: {px:?}"
         );
     }
 

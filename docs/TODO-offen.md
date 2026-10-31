@@ -218,7 +218,7 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 
 ---
 
-## Key/Fill-Ausgabe mit Alpha-Layer — Feature für später (Auftraggeber)
+## Key/Fill-Ausgabe mit Alpha-Layer — UMGESETZT (Commit siehe Git-Log)
 
 Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
 - **Bevorzugt Hardware:** Blackmagic (z. B. Ultrastudio) macht Key/Fill
@@ -230,7 +230,7 @@ Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
   (zwei Prozesse/Fenster), für statische Overlays ausreichend.
 - Modell-Vorschlag: Stage/Route bekommt `key_fill: Option<...>` (Fill-Route +
   Key-Route mit Alpha), Renderer rendert Alpha in den Key-Stream.
-- Status: ⬜ TODO — nicht begonnen.
+- Status: 🟡 umgesetzt — Software-Kette komplett (Alpha aus Video/Bild/HTML), 2-Kabel-Decklink (Fill + Key-Luma) lauffähig; Hardware-Keying auf einem Port (BGRA an key/fill-fähigen Ausgang, framesync in der Karte) ⬜ später. Live-Test auf dem Windows-Notebook (ZBOOK) mit Decklink-Karte siehe Git-Log.
 
 ---
 

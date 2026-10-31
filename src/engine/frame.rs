@@ -39,7 +39,13 @@ impl VideoFrame {
     }
 
     /// Schwarzes Frame (Fallback, wenn noch kein Frame dekodiert wurde).
+    /// Achtung: RGBA 0,0,0,0 = transparent schwarz (Alpha 0).
     pub fn black(width: u32, height: u32) -> Self {
+        Self::new(width, height, vec![0u8; (width * height * 4) as usize])
+    }
+
+    /// Transparenter Frame (Alpha 0) – Key/Fill-Key-Canvas.
+    pub fn transparent(width: u32, height: u32) -> Self {
         Self::new(width, height, vec![0u8; (width * height * 4) as usize])
     }
 

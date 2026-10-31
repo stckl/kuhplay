@@ -68,10 +68,14 @@ fn main() {
         )))
         .with_decorations(false)
         .with_resizable(false)
+        // Key/Fill: HTML default = transparenter Hintergrund (Seite ohne
+        // eigenes body-background liefert Alpha 0 → Key-Signal).
+        .with_transparent(true)
         .build(&event_loop)
         .expect("webview window must build");
     let webview = WebViewBuilder::new()
         .with_initialization_script(BRIDGE_JS)
+        .with_transparent(true)
         .build(&window)
         .expect("webview must build");
 

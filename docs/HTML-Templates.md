@@ -62,9 +62,9 @@ window.kuhplay.onShowControlData = (data) => {
   ```
 - Alles, was "oben/unten/links/rechts" sitzen soll, über Flexbox/Grid mit
   `vh`/`vw`-Abständen. Beispiel Schriftgröße: `font-size: 6vh`.
-- Hintergrund default **deckend** (Stage zeigt sonst Schwarz durch), z. B.
-  `background: #0d1117` oder ein Bild. Transparenz ist möglich
-  (`background: transparent`), kostet aber Alpha-Blending im Compositor.
+- Hintergrund default **transparent** (Key/Fill: HTML liefert das Key-Signal;
+  die WebView ist transparent geschaltet). Wer ein deckendes Overlay will, setzt
+  explizit `background: #0d1117` o. ä. auf `html,body`.
 - Text immer mit Kontrast/Schatten lesbar halten (`text-shadow`).
 
 ## 4. Datenmodell-Konvention (Default + Merge)

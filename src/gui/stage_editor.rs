@@ -90,6 +90,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
                     ui.separator();
                     ui.scope(|ui| draw_placements(ui, app, stage_id));
                     ui.separator();
+                    ui.scope(|ui| draw_key_fill(ui, app, stage_id));
+                    ui.separator();
                     ui.scope(|ui| draw_canvas(ui, app, stage_id));
                 });
         },
@@ -1554,5 +1556,160 @@ fn draw_placements(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                 );
             }
         });
+    }
+}
+
+// ------------------------------------------------------------------
+// Key/Fill pro Stage: Fill-Route + Key-Route (Alpha) wählen.
+// ------------------------------------------------------------------
+
+/// Section „Key/Fill“: pro Stage aktivierbar; Fill- und Key-Route per Combo.
+/// Die Key-Route bekommt das Flag `alpha` (Route rendert mit Alpha).
+fn draw_key_fill(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
+    theme::section_label(ui, "Key/Fill (Alpha-Ausgabe)");
+    ui.label(
+        egui::RichText::new(
+            "Pro Stage separat aktiv. Fill = Farbbild (flach), Key = Alpha-Bild (Route-Flag „Key (Alpha)“).              Alpha kommt aus Videos (z. B. ProRes 4444), Bildern (PNG mit Alpha) und HTML (default transparent).              Geräte: zwei Decklink-Ports (Fill/Key als 2× SDI) oder ein key/fill-fähiger Ausgang.",
+        )
+        .small()
+        .color(palette::TEXT_DIM),
+    );
+    ui.add_space(theme::size::SPACE_SMALL);
+
+    let routes: Vec<(uuid::Uuid, String)> = app
+        .routes
+        .routes()
+        .iter()
+        .map(|r| (r.id, format!("{} ({}×{})", r.name, r.width, r.height)))
+        .collect();
+    if routes.is_empty() {
+        ui.label(
+            egui::RichText::new("No routes yet – create one in Settings → Video → Output Routing")
+                .color(palette::TEXT_FAINT),
+        );
+        return;
+    }
+
+    let mut enabled = app
+        .stages
+        .stages()
+        .iter()
+        .find(|s| s.id == stage_id)
+        .and_then(|s| s.key_fill)
+        .is_some();
+    if ui
+        .checkbox(&mut enabled, "Key/Fill output for this stage")
+        .changed()
+    {
+        if let Some(st) = app
+            .stages
+            .stages_mut()
+            .iter_mut()
+            .find(|s| s.id == stage_id)
+        {
+            if enabled {
+                // Default: erste zwei Routen (bzw. eine doppelt ist verboten → nimm erste + zweite).
+                let fill = routes[0].0;
+                let key = routes.get(1).map(|r| r.0).unwrap_or(routes[0].0);
+                st.key_fill = if fill == key {
+                    None
+                } else {
+                    Some(crate::core::KeyFillRoutes { fill, key })
+                };
+                if st.key_fill.is_some() {
+                    // Key-Route als Alpha markieren.
+                    if let Some(r) = app.routes.find_mut(key) {
+                        r.alpha = true;
+                    }
+                }
+            } else {
+                // Beim Deaktivieren Alpha-Flag der Key-Route zurücksetzen.
+                if let Some(kf) = st.key_fill {
+                    if let Some(r) = app.routes.find_mut(kf.key) {
+                        r.alpha = false;
+                    }
+                }
+                st.key_fill = None;
+            }
+        }
+    }
+
+    if !enabled {
+        return;
+    }
+    let mut kf = app
+        .stages
+        .stages()
+        .iter()
+        .find(|s| s.id == stage_id)
+        .and_then(|s| s.key_fill)
+        .unwrap_or(crate::core::KeyFillRoutes {
+            fill: routes[0].0,
+            key: routes[0].0,
+        });
+    theme::form_grid("stage_key_fill").show(ui, |ui| {
+        theme::field_label(ui, "Fill route");
+        egui::ComboBox::from_id_salt("kf_fill")
+            .selected_text(
+                routes
+                    .iter()
+                    .find(|r| r.0 == kf.fill)
+                    .map(|r| r.1.clone())
+                    .unwrap_or_default(),
+            )
+            .show_ui(ui, |ui| {
+                for (id, label) in &routes {
+                    ui.selectable_value(&mut kf.fill, *id, label);
+                }
+            });
+        ui.end_row();
+        theme::field_label(ui, "Key route (alpha)");
+        egui::ComboBox::from_id_salt("kf_key")
+            .selected_text(
+                routes
+                    .iter()
+                    .find(|r| r.0 == kf.key)
+                    .map(|r| r.1.clone())
+                    .unwrap_or_default(),
+            )
+            .show_ui(ui, |ui| {
+                for (id, label) in &routes {
+                    ui.selectable_value(&mut kf.key, *id, label);
+                }
+            });
+        ui.end_row();
+    });
+    if kf.fill == kf.key {
+        ui.label(
+            egui::RichText::new("Fill and key route must differ (two outputs)")
+                .color(palette::ERROR),
+        );
+    }
+    // Änderungen zurückschreiben + Key-Route alpha setzen.
+    if let Some(st) = app
+        .stages
+        .stages_mut()
+        .iter_mut()
+        .find(|s| s.id == stage_id)
+    {
+        if st.key_fill != Some(kf) && kf.fill != kf.key {
+            st.key_fill = Some(kf);
+        }
+    }
+    if let Some(r) = app.routes.find_mut(kf.key) {
+        r.alpha = true;
+    }
+    if let Some(kf_old) = app
+        .stages
+        .stages()
+        .iter()
+        .find(|s| s.id == stage_id)
+        .and_then(|s| s.key_fill)
+    {
+        if kf_old.key != kf.key {
+            if let Some(r) = app.routes.find_mut(kf_old.key) {
+                r.alpha = false;
+            }
+        }
     }
 }

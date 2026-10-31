@@ -18,7 +18,7 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 | **Ablauf** | Playhead und GO, mehrere Cue-Listen (Carts), Gruppen (Simultaneous, Sequential, Timeline, Loop, Shuffle), Timecode-Chasing (LTC/MTC) |
 | **Audio** | Dekodierung mit symphonia, Ausgabe mit cpal, Geräteauswahl, Fades (Volume, Rate, Opacity; linear oder dB), Slices mit Play-Count |
 | **Audio-Routing** | Pro Cue: Datei-Kanal → 16 benannte Kanäle; Patch-Matrix in den Workspace Settings: Kanal → mehrere Ausgänge UND mehrere Ausgabegeräte parallel; Umlegen wirkt live |
-| **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing wie QLab 5: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand) |
+| **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing wie QLab 5: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand); **Key/Fill pro Stage** (Fill-Route + Key-Route mit Alpha; Alpha aus Video/Bild/HTML, HTML default transparent) |
 | **Ausgabe** | Ein randloses Fenster pro belegtem Display (alle Routen des Displays, auch Teilbereiche) oder Vorschau-Fenster pro Route, ideal für die Arbeit am Laptop; Stage-Monitor pro Stage |
 | **HTML5** | Eigene WebView (Feature `webview`), JavaScript-Trigger und JSON-Push für Lower-Thirds, Spielstände, Countdowns |
 | **Fernsteuerung** | Web-Remote, Bitfocus Companion, OSC, MIDI |
@@ -79,6 +79,7 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_MIDI_MAP` | Noten, z. B. `go=36,panic=37,pause=38,resume=39,reset=40` | Noten 0–4 |
 | `KUHPLAY_MIDI_OUT_DEVICE` | MIDI-Ausgabegerät für MIDI-Cues (Teilstring) | erstes Output-Device |
 | `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS`, `_PIXFMT` | Decklink-Ausgabe über ffmpeg: Die Stage liefert über ihre Region das Route-Bild auf die Karte | aus |
+| `KUHPLAY_DECKLINK_KEY_DEVICE` | Zweiter Decklink-Port für Key/Fill: Key-Route der Stage (Alpha) als Luma auf SDI | aus |
 | `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
 
 ## Release bauen

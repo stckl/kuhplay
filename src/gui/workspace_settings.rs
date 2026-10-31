@@ -1108,6 +1108,18 @@ fn draw_routes_table(ui: &mut egui::Ui, app: &mut ShowApp) {
                                 updated.test_pattern = pattern;
                             }
                             ui.end_row();
+                            theme::field_label(ui, "Key (Alpha)");
+                            let mut alpha = updated.alpha;
+                            if ui
+                                .checkbox(&mut alpha, "")
+                                .on_hover_text(
+                                    "Key-Route für Key/Fill: Alpha bleibt im Route-Bild erhalten                                      (Stage-Canvas transparent, echtes Over-Alpha). Fill-Routen bleiben flach.",
+                                )
+                                .changed()
+                            {
+                                updated.alpha = alpha;
+                            }
+                            ui.end_row();
                             theme::field_label(ui, "Actions");
                             ui.horizontal(|ui| {
                                 if ui.button("Edit").clicked() {

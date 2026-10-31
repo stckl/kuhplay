@@ -271,6 +271,9 @@ pub struct RealMediaEngine {
     audio_patch: crate::core::AudioPatch,
     /// Decklink-Hardware-Ausgabe (optional, siehe [`Self::start_decklink_from_env`]).
     decklink: Option<DecklinkOutput>,
+    /// Zweiter Decklink-Ausgang für den Key-SDI (Key/Fill, 2-Kabel):
+    /// `KUHPLAY_DECKLINK_KEY_DEVICE`. Push: Alpha der Key-Route als Luma.
+    decklink_key: Option<DecklinkOutput>,
     /// Stage, deren Compositor-Frames auf die Decklink-Karte gehen.
     decklink_stage: String,
     /// Decklink-Framerate (Pacing der Frame-Pushes).
@@ -333,6 +336,7 @@ impl RealMediaEngine {
             extra_audio: Vec::new(),
             audio_patch: crate::core::AudioPatch::default(),
             decklink: None,
+            decklink_key: None,
             decklink_stage: String::new(),
             decklink_fps: 25,
             decklink_next_push: Duration::ZERO,
@@ -366,6 +370,22 @@ impl RealMediaEngine {
         let Some((config, stage)) = DecklinkConfig::from_env() else {
             return;
         };
+        // Key-Ausgang (Key/Fill): eigener Decklink-Port, Alpha → Luma.
+        if let Ok(key_device) = std::env::var("KUHPLAY_DECKLINK_KEY_DEVICE") {
+            if !key_device.trim().is_empty() {
+                let key_config = DecklinkConfig {
+                    device: key_device.clone(),
+                    ..config.clone()
+                };
+                match DecklinkOutput::start(&key_config) {
+                    Ok(out) => {
+                        info!(device = %key_device, "decklink key output gestartet");
+                        self.decklink_key = Some(out);
+                    }
+                    Err(err) => warn!(%err, "decklink key output fehlgeschlagen"),
+                }
+            }
+        }
         match DecklinkOutput::start(&config) {
             Ok(output) => {
                 info!(
@@ -423,13 +443,27 @@ impl RealMediaEngine {
         // Route-Bild statt Stage-Bild: Die konfigurierte Stage (KUHPLAY_DECKLINK_STAGE)
         // liefert ueber ihre erste Region die Route, deren gerendertes Bild auf
         // die Karte geht. Ohne Route: schwarz (wie vorher ohne Canvas).
-        let stored = self
+        // Key/Fill: Hat die Stage ein key_fill, geht die Fill-Route auf den
+        // Haupt-Ausgang, die Key-Route (Alpha) als Luma auf den Key-Ausgang.
+        let (fill_route, key_route) = self
             .stages
             .get(&self.decklink_stage)
-            .and_then(|stage| stage.regions.iter().find_map(|r| r.route))
-            .and_then(|route| self.route_frames.lock().unwrap().get(&route).cloned());
+            .map(|stage| {
+                let first = stage.regions.iter().find_map(|r| r.route);
+                match stage.key_fill {
+                    Some(kf) => (Some(kf.fill), Some(kf.key)),
+                    None => (first, None),
+                }
+            })
+            .unwrap_or((None, None));
+        let route_frames = self.route_frames.clone();
+        let frame_of = |route_id: Option<uuid::Uuid>| -> Option<Arc<VideoFrame>> {
+            route_id.and_then(|id| route_frames.lock().unwrap().get(&id).cloned())
+        };
+        let fill_frame = frame_of(fill_route);
+        let key_frame = frame_of(key_route);
         let black = Arc::new(VideoFrame::black(width, height));
-        let frame = stored.as_ref().unwrap_or(&black);
+        let frame = fill_frame.as_ref().unwrap_or(&black);
         // Route-Bild ≠ Karten-Auflösung → Nearest-Neighbor-Scaling.
         let scaled;
         let frame = if frame.width == width && frame.height == height {
@@ -443,6 +477,20 @@ impl RealMediaEngine {
         if let Err(err) = result {
             warn!(%err, "decklink push fehlgeschlagen – Ausgabe deaktiviert");
             self.decklink = None;
+        }
+        // Key-SDI (Key/Fill): Alpha der Key-Route als Luma auf den Key-Port.
+        if let Some(key_out) = self.decklink_key.as_mut() {
+            if let Some(kf) = key_frame {
+                let key_luma = if kf.width == width && kf.height == height {
+                    super::decklink::alpha_to_luma(&kf)
+                } else {
+                    super::decklink::alpha_to_luma(&scale_nearest(&kf, width, height))
+                };
+                if let Err(err) = key_out.push(&Arc::new(key_luma)) {
+                    warn!(%err, "decklink key push fehlgeschlagen – Key-Ausgabe deaktiviert");
+                    self.decklink_key = None;
+                }
+            }
         }
     }
 
@@ -2235,6 +2283,7 @@ impl MediaEngine for RealMediaEngine {
     fn shutdown(&mut self) {
         // Alle Backends sauber herunterfahren (keine hängenden Prozesse).
         self.scripts.clear();
+        self.decklink_key = None;
         let ids: Vec<Uuid> = self.active.keys().copied().collect();
         if let Some(audio) = self.audio.as_mut() {
             for cue_id in &ids {

@@ -56,6 +56,8 @@ impl DecklinkConfig {
     /// * `KUHPLAY_DECKLINK_WIDTH` / `KUHPLAY_DECKLINK_HEIGHT` / `KUHPLAY_DECKLINK_FPS`
     ///   (Default 1920×1080@25)
     /// * `KUHPLAY_DECKLINK_PIXFMT` – Pixelformat des Muxers (Default „uyvy422")
+    /// * `KUHPLAY_DECKLINK_KEY_DEVICE` – zweiter Decklink-Port für den Key-SDI
+    ///   (Key/Fill): Alpha der Key-Route wird als Luma darauf ausgegeben.
     ///
     /// Rückgabe: `None` wenn deaktiviert, sonst `(Config, Stage-Name)`.
     pub fn from_env() -> Option<(Self, String)> {
@@ -106,6 +108,20 @@ pub fn ffmpeg_decklink_args(config: &DecklinkConfig) -> Vec<String> {
 
 /// Skaliert ein RGBA-Frame per Nearest-Neighbor auf `width`×`height`
 /// (Stage-Canvas ≠ Karten-Auflösung; CPU-Scaling, V1 – kein GPU-Upscale).
+/// Wandelt ein RGBA-Frame in ein Key-Signal (Luma = Alpha): RGB = Alpha-Wert.
+/// Für den Key-SDI-Ausgang beim 2-Kabel-Key/Fill (Fill auf anderem Port).
+pub fn alpha_to_luma(src: &VideoFrame) -> VideoFrame {
+    let mut out = vec![0u8; src.rgba.len()];
+    for (dst, src4) in out.chunks_exact_mut(4).zip(src.rgba.chunks_exact(4)) {
+        let a = src4[3];
+        dst[0] = a;
+        dst[1] = a;
+        dst[2] = a;
+        dst[3] = 255;
+    }
+    VideoFrame::new(src.width, src.height, out)
+}
+
 pub fn scale_nearest(src: &VideoFrame, width: u32, height: u32) -> VideoFrame {
     if src.width == width && src.height == height {
         return VideoFrame::new(width, height, src.rgba.clone());
@@ -301,5 +317,36 @@ mod tests {
         // Gleiche Größe → Inhalt identisch.
         let same = scale_nearest(&src, 2, 2);
         assert_eq!(same.rgba, src.rgba);
+    }
+}
+
+#[cfg(test)]
+mod keyfill_tests {
+    use super::*;
+
+    #[test]
+    fn alpha_to_luma_maps_alpha_to_rgb() {
+        let frame = VideoFrame::new(2, 1, vec![10, 20, 30, 0, 200, 100, 50, 255]);
+        let key = alpha_to_luma(&frame);
+        assert_eq!(&key.rgba[..4], &[0, 0, 0, 255], "Alpha 0 → schwarz");
+        assert_eq!(&key.rgba[4..], &[255, 255, 255, 255], "Alpha 255 → weiß");
+    }
+
+    #[test]
+    fn key_fill_routes_serde_and_validate() {
+        let a = uuid::Uuid::new_v4();
+        let b = uuid::Uuid::new_v4();
+        let kf = crate::core::KeyFillRoutes { fill: a, key: b };
+        let json = serde_json::to_string(&kf).unwrap();
+        let back: crate::core::KeyFillRoutes = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, kf);
+
+        // Stage: key_fill default None (alte Shows), validate bei fill==key → Fehler.
+        let stage = crate::core::Stage::new("S", crate::core::StageGeometry::new(100.0, 100.0));
+        assert!(stage.key_fill.is_none());
+        assert!(stage.validate().is_ok());
+        let mut stage = stage;
+        stage.key_fill = Some(crate::core::KeyFillRoutes { fill: a, key: a });
+        assert!(stage.validate().is_err(), "fill == key ist ungültig");
     }
 }

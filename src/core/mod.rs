@@ -83,8 +83,8 @@ pub use screen::{
 pub use show::ShowDocument;
 pub use slideshow::{Slide, SlideNav, SlideShow, SlideTransition};
 pub use stage::{
-    BlendCurve, BlendMode, Crop, EdgeSide, GeometryMode, HardEdge, Stage, StageGeometry,
-    StageManager, StagePlacement, SurfaceGeometry,
+    BlendCurve, BlendMode, Crop, EdgeSide, GeometryMode, HardEdge, KeyFillRoutes, Stage,
+    StageGeometry, StageManager, StagePlacement, SurfaceGeometry,
 };
 pub use text::{TextAlign, TextContent, TextVAlign};
 pub use timecode::{Fps, Timecode};

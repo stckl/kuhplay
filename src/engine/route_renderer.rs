@@ -59,6 +59,7 @@ pub fn render_region_into(
     stage_crop: Option<(f32, f32, f32, f32)>,
     stage_edge: &EdgeBlend,
     stage_soft_edge: bool,
+    keep_alpha: bool,
 ) {
     debug_assert_eq!((target.width, target.height), (route_w, route_h));
     let (tw, th) = (route_w.max(1), route_h.max(1));
@@ -149,8 +150,29 @@ pub fn render_region_into(
             let src = &stage_frame.rgba[(sy * stride + sx) * 4..][..4];
             let dst = &mut target.rgba[(py as usize * tw as usize + px as usize) * 4..][..4];
             let a = factor.clamp(0.0, 1.0);
-            if a >= 1.0 {
+            if keep_alpha {
+                // Key-Route: echte Alpha-Komposition (over), Alpha bleibt erhalten.
+                let sa = (f32::from(src[3]) / 255.0) * a;
+                if sa <= 0.0 {
+                    continue;
+                }
+                let da = f32::from(dst[3]) / 255.0;
+                let oa = sa + da * (1.0 - sa);
+                for c in 0..3 {
+                    let s = f32::from(src[c]);
+                    let d = f32::from(dst[c]);
+                    dst[c] = if oa > 0.0 {
+                        ((s * sa + d * da * (1.0 - sa)) / oa).round()
+                    } else {
+                        0.0
+                    }
+                    .clamp(0.0, 255.0) as u8;
+                }
+                dst[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
+            } else if a >= 1.0 {
+                // Fill-Route: deckend kopieren, Alpha flach auf 255.
                 dst.copy_from_slice(src);
+                dst[3] = 255;
             } else {
                 for c in 0..3 {
                     let s = f32::from(src[c]);
@@ -178,7 +200,12 @@ pub fn render_route(
     stage_frames: &HashMap<String, Arc<VideoFrame>>,
 ) -> VideoFrame {
     let (rw, rh) = (route.width.max(1), route.height.max(1));
-    let mut out = VideoFrame::black(rw, rh);
+    // Key-Route (alpha=true): Canvas startet transparent, Alpha bleibt erhalten.
+    let mut out = if route.alpha {
+        VideoFrame::transparent(rw, rh)
+    } else {
+        VideoFrame::black(rw, rh)
+    };
     // Unten zuerst malen (Layer-Regel aus Abschnitt 4).
     let mut ordered: Vec<&Stage> = stages.iter().collect();
     ordered.sort_by(|a, b| a.layer.cmp(&b.layer).then_with(|| b.name.cmp(&a.name)));
@@ -228,6 +255,7 @@ pub fn render_route(
                 stage_crop,
                 &stage.edge,
                 stage.soft_edge,
+                route.alpha,
             );
             if region.grid {
                 let label = format!(
@@ -835,6 +863,7 @@ mod tests {
             None,
             &EdgeBlend::ZERO,
             true,
+            false,
         );
         assert_eq!(target.rgba, frame.rgba);
     }
@@ -888,6 +917,7 @@ mod stage_crop_edge_tests {
             Some((0.0, 0.0, 100.0, 100.0)),
             &EdgeBlend::ZERO,
             true,
+            false,
         );
         assert!(pixel(&target, 50, 50) > 200, "Crop zeigt die rote Haelfte");
     }
@@ -913,6 +943,7 @@ mod stage_crop_edge_tests {
             Some((300.0, 0.0, 400.0, 100.0)),
             &EdgeBlend::ZERO,
             true,
+            false,
         );
         assert_eq!(pixel(&target, 50, 50), 0, "Crop daneben = schwarz");
     }
@@ -944,6 +975,7 @@ mod stage_crop_edge_tests {
             None,
             &stage.edge,
             false,
+            false,
         );
         // x=0: volle Helligkeit; x=190 (10 px vor dem Rand): Faktor ~0.1.
         assert!(pixel(&target, 5, 50) > 240, "links unveraendert");
@@ -965,10 +997,47 @@ mod stage_crop_edge_tests {
             None,
             &stage.edge,
             true,
+            false,
         );
         assert!(
             pixel(&soft_target, 150, 50) > pixel(&target, 150, 50),
             "Soft Edge liegt ueber Hard Edge"
+        );
+    }
+
+    #[test]
+    fn key_route_preserves_alpha_fill_route_flattens() {
+        // Stage-Frame: Weiß mit Alpha 128 (halbtransparentes Overlay).
+        let frame = Arc::new(VideoFrame::new(4, 4, [255, 255, 255, 128].repeat(16)));
+        let mut stage = Stage::new("S", StageGeometry::new(4.0, 4.0));
+        let mut region = Region::full_stage(4.0, 4.0);
+        let route = OutputRoute::new("R", 4, 4);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+
+        let mut frames = HashMap::new();
+        frames.insert("S".to_string(), frame);
+
+        // Key-Route (alpha = true): Alpha bleibt erhalten.
+        let mut key_route = OutputRoute::new("K", 4, 4);
+        key_route.alpha = true;
+        let mut kstage = stage.clone();
+        kstage.regions[0].route = Some(key_route.id);
+        let out = render_route(&key_route, &[kstage], &frames);
+        assert_eq!(
+            &out.rgba[..4],
+            &[255, 255, 255, 128],
+            "Key: Alpha 128 bleibt"
+        );
+
+        // Fill-Route (alpha = false): flach auf 255.
+        let mut fstage = stage.clone();
+        fstage.regions[0].route = Some(route.id);
+        let out = render_route(&route, &[fstage], &frames);
+        assert_eq!(
+            &out.rgba[..4],
+            &[255, 255, 255, 255],
+            "Fill: Alpha flach 255"
         );
     }
 }

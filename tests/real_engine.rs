@@ -726,21 +726,24 @@ fn stage_canvas_reflects_opacity_fade() {
     );
     assert!(converged, "expected opacity store to converge to ~0.5");
 
-    // Canvas-Pixel: grün über schwarz mit alpha 0.5 → Grün-Kanal ≈ 127.
+    // Canvas-Pixel: grün mit Deckkraft 0.5 auf transparentem Canvas (Key/Fill-
+    // Semantik) → un-premultiplied: Grün-Kanal 255, Alpha ≈ 127. Fill-Routen
+    // flatten später auf Schwarz (dort wäre Grün ≈ 127).
     let blended = wait_until(
         || {
             let store = engine.stage_frames.lock().unwrap();
             store.get("FadeStage").is_some_and(|f| {
                 let center = ((32 * f.width + 32) * 4) as usize;
                 let g = f.rgba[center + 1];
-                (110..=145).contains(&g)
+                let a = f.rgba[center + 3];
+                g == 255 && (110..=145).contains(&a)
             })
         },
         Duration::from_secs(4),
     );
     assert!(
         blended,
-        "expected stage canvas pixel green channel ≈127 after opacity fade (got blend over black)"
+        "expected stage canvas pixel green=255 alpha≈127 after opacity fade (transparent canvas, Key/Fill)"
     );
 }
 

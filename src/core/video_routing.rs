@@ -127,6 +127,11 @@ pub struct OutputRoute {
     pub width: u32,
     /// Höhe in echten Pixeln (1 bis 30000).
     pub height: u32,
+    /// Key-Route (Key/Fill): Alpha bleibt im gerenderten Route-Bild erhalten
+    /// (Canvas startet transparent, Compositor rechnet echtes Over-Alpha).
+    /// Fill-Routen bleiben flach auf Schwarz. `false` = normal (Fill).
+    #[serde(default)]
+    pub alpha: bool,
     /// Zielgerät (`None` = fehlt bzw. noch nicht zugewiesen).
     #[serde(default)]
     pub device: Option<DeviceRef>,
@@ -174,6 +179,7 @@ impl OutputRoute {
             name: name.into(),
             width,
             height,
+            alpha: false,
             device: None,
             device_area: DeviceArea::Full,
             rotation: ScreenRotation::Deg0,
