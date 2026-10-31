@@ -33,8 +33,28 @@ Voraussetzungen: [Rust](https://rustup.rs) und für Video-Cues `ffmpeg` samt
 ```sh
 git clone https://github.com/stckl/kuhplay.git
 cd kuhplay
-cargo run --release
+cargo run --release --features webview
 ```
+
+### Release-Build / Dist
+
+```sh
+cargo build --release --locked --features webview
+# Ergebnis: target/release/kuhplay + target/release/kuhplay-webview
+# WICHTIG: beide Binaries müssen im selben Ordner liegen (HTML5/WebView-Sibling),
+# alternativ Pfad via KUHPLAY_WEBVIEW_BIN setzen.
+```
+
+Fertige Builds liegen zum Testen bereit:
+- **macOS:** `/Users/stocke/Desktop/KuhPlay-macOS/` (kuhplay + kuhplay-webview)
+- **Windows (ZBOOK):** `C:\Users\wolfb\kuhplay-dist\` (kuhplay.exe + kuhplay-webview.exe)
+
+Web-Remote läuft default auf Port 8080; der PIN wird beim ersten Start generiert
+und liegt in `%APPDATA%\KuhPlay\remote_pin` (Windows) bzw.
+`~/Library/Application Support/KuhPlay/remote_pin` (macOS) — oder
+`KUHPLAY_REMOTE_PIN=off` zum Abschalten. Windows-Firewall: nach dem ersten Start
+kann Windows eine **Blockieren**-Regel für `kuhplay.exe` angelegt haben — die
+überschreibt Allow-Regeln (`netsh advfirewall firewall delete rule name="kuhplay.exe"`).
 
 Beim ersten Start öffnet sich eine Demo-Show. Ihre Medien liegen nicht bei,
 Audio- und Video-Cues sind dort deshalb als kaputt markiert. Eigene Dateien
