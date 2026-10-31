@@ -667,11 +667,37 @@ mod tests {
         ] {
             assert!(ALL.iter().any(|s| s.action == action), "fehlt: {action:?}");
         }
-        for t in CueType::ALL {
+        // ⌘0–⌘9 belegen exakt die zehn QLab-Cue-Typen (jede Ziffer genau
+        // einmal). Weitere Cue-Typen (Wait/Memo/Text) haben wie in QLab 5
+        // kein Standard-Kürzel – sie kommen über Toolbox/Menü.
+        let mut digits: Vec<Key> = ALL
+            .iter()
+            .filter(|s| matches!(s.action, ShortcutAction::NewCue(_)))
+            .filter_map(|s| s.key)
+            .collect();
+        digits.sort_by_key(|k| format!("{k:?}"));
+        assert_eq!(digits.len(), 10, "genau zehn ⌘-Ziffern für NewCue");
+        assert!(
+            digits.windows(2).all(|w| w[0] != w[1]),
+            "jede ⌘-Ziffer nur einmal vergeben: {digits:?}"
+        );
+        for n in 0..=9 {
+            let key = match n {
+                0 => Key::Num0,
+                1 => Key::Num1,
+                2 => Key::Num2,
+                3 => Key::Num3,
+                4 => Key::Num4,
+                5 => Key::Num5,
+                6 => Key::Num6,
+                7 => Key::Num7,
+                8 => Key::Num8,
+                _ => Key::Num9,
+            };
             assert!(
                 ALL.iter()
-                    .any(|s| s.action == ShortcutAction::NewCue(t) && s.key.is_some()),
-                "fehlende ⌘-Ziffer für {t:?}"
+                    .any(|s| matches!(s.action, ShortcutAction::NewCue(_)) && s.key == Some(key)),
+                "fehlende ⌘-Ziffer {n}"
             );
         }
     }

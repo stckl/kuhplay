@@ -34,6 +34,7 @@
 //! * GPU-Compositor (wgpu) statt CPU-Nearest; NDI-Out als Stage-Senke.
 
 use std::collections::{HashMap, HashSet};
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -78,6 +79,8 @@ enum PlaybackKind {
     Html(HtmlSource),
     /// Diashow (Preload + Crossfade im Tick).
     SlideShow(SlideShowState),
+    /// Wait-Cue: reine Timer-Unit (kein Backend, Position = Wanduhr).
+    Wait,
 }
 
 /// Diashow-Laufzeitzustand.
@@ -137,6 +140,10 @@ impl ActivePlayback {
 
     /// Dauer der aktuellen Einheit.
     fn current_unit(&self) -> Duration {
+        if matches!(self.kind, PlaybackKind::Wait) {
+            // Wait-Cue: explizite Dauer (0 = sofortiges Ende), nie Default.
+            return self.duration;
+        }
         if !self.plan.is_empty() {
             return self
                 .plan
@@ -893,6 +900,17 @@ impl RealMediaEngine {
     }
 }
 
+/// Meldet das Ergebnis eines asynchronen Network-Cue-Sends (ggf. als
+/// `EngineEvent::Error`) – läuft im gespawnten Send-Thread.
+fn finish_send(events: Sender<EngineEvent>, cue_id: Uuid, result: Result<(), String>) {
+    if let Err(message) = result {
+        let _ = events.send(EngineEvent::Error {
+            cue_id: Some(cue_id),
+            message: format!("network cue send failed: {message}"),
+        });
+    }
+}
+
 impl MediaEngine for RealMediaEngine {
     fn name(&self) -> &'static str {
         "real-media-engine"
@@ -999,6 +1017,40 @@ impl MediaEngine for RealMediaEngine {
                 };
                 Self::mark_stage_dirty(&mut self.compositor, &playback);
                 self.active.insert(cue_id, playback);
+            }
+            EngineCommand::Wait {
+                cue_id,
+                duration,
+                pre_wait,
+                post_wait,
+            } => {
+                debug!(%cue_id, ?duration, ?pre_wait, ?post_wait, "wait (real)");
+                self.active.insert(
+                    cue_id,
+                    ActivePlayback {
+                        kind: PlaybackKind::Wait,
+                        path: None,
+                        route: None,
+                        stage: None,
+                        layer: 0,
+                        surface: None,
+                        received_at: now,
+                        pre_wait,
+                        started_at: None,
+                        accumulated: Duration::ZERO,
+                        paused_since: None,
+                        duration,
+                        loop_mode: LoopMode::Once,
+                        plan: Vec::new(),
+                        plan_offset: Vec::new(),
+                        plan_index: 0,
+                        iterations_done: 0,
+                        finished_at: None,
+                        post_wait,
+                        post_wait_done: false,
+                        media_duration: None,
+                    },
+                );
             }
             EngineCommand::Pause { cue_id } => {
                 if let Some(playback) = self.active.get_mut(&cue_id) {
@@ -1534,6 +1586,58 @@ impl MediaEngine for RealMediaEngine {
                     }),
                 }
             }
+            EngineCommand::SendNetwork {
+                cue_id,
+                protocol,
+                host,
+                port,
+                message,
+            } => {
+                debug!(%cue_id, ?protocol, %host, port, "send network (real)");
+                // Fire-and-forget in einem eigenen Thread: ein blockierendes
+                // Ziel (TCP-Connect-Timeout, DNS) darf den Engine-Thread nicht
+                // aufhalten. Fehler landen als Error-Event.
+                let events = self.events.clone();
+                std::thread::spawn(move || {
+                    let result: Result<(), String> = match protocol {
+                        crate::core::NetworkProtocol::Udp => {
+                            std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
+                                .and_then(|socket| {
+                                    socket
+                                        .send_to(message.as_bytes(), (host.as_str(), port))
+                                        .map(|_| ())
+                                })
+                                .map_err(|err| err.to_string())
+                        }
+                        crate::core::NetworkProtocol::Tcp => {
+                            use std::io::Write;
+                            let addr = match (host.as_str(), port).to_socket_addrs() {
+                                Ok(mut addrs) => match addrs.next() {
+                                    Some(addr) => addr,
+                                    None => {
+                                        return finish_send(
+                                            events,
+                                            cue_id,
+                                            Err("no address resolved".to_string()),
+                                        );
+                                    }
+                                },
+                                Err(err) => {
+                                    return finish_send(events, cue_id, Err(err.to_string()));
+                                }
+                            };
+                            std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+                                .and_then(|mut stream| {
+                                    stream.write_all(message.as_bytes())?;
+                                    stream.flush()?;
+                                    Ok(())
+                                })
+                                .map_err(|err| err.to_string())
+                        }
+                    };
+                    finish_send(events, cue_id, result);
+                });
+            }
             EngineCommand::Ping(seq) => {
                 self.emit(EngineEvent::Pong(seq));
             }
@@ -1668,6 +1772,8 @@ impl MediaEngine for RealMediaEngine {
                                 self.frames.lock().unwrap().insert(cue_id, frame);
                             }
                         }
+                        // Wait-Cue: kein Backend-Start, Position läuft über die Wanduhr.
+                        PlaybackKind::Wait => {}
                     }
                     // Started erst nach Backend-Start: Medien-Dauer ist dann bekannt.
                     out.push(EngineEvent::Started {

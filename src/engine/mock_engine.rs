@@ -190,6 +190,8 @@ enum PlaybackKind {
     Html(HtmlSource),
     /// Diashow-Cue: Slide-Index + Auto-Advance-Zustand.
     SlideShow(SlideShowState),
+    /// Wait-Cue: reine Timer-Unit (kein Medium, kein Backend).
+    Wait,
 }
 
 /// Laufzeit-Zustand einer Diashow.
@@ -279,6 +281,10 @@ impl ActivePlayback {
     /// Dauer der aktuellen Einheit: Slice-Plan-Eintrag, Loop-Iteration,
     /// Diashow-Gesamtdauer oder explizite Cue-Duration.
     fn current_unit(&self) -> Duration {
+        if matches!(self.kind, PlaybackKind::Wait) {
+            // Wait-Cue: explizite Dauer (0 = sofortiges Ende), nie Default.
+            return self.duration;
+        }
         if !self.plan.is_empty() {
             self.plan
                 .get(self.plan_index)
@@ -649,6 +655,38 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                     },
                 );
             }
+            EngineCommand::Wait {
+                cue_id,
+                duration,
+                pre_wait,
+                post_wait,
+            } => {
+                debug!(%cue_id, ?duration, ?pre_wait, ?post_wait, "wait");
+                self.active.insert(
+                    cue_id,
+                    ActivePlayback {
+                        path: None,
+                        route: None,
+                        stage: None,
+                        layer: 0,
+                        kind: PlaybackKind::Wait,
+                        received_at: now,
+                        pre_wait,
+                        started_at: None,
+                        accumulated: Duration::ZERO,
+                        paused_since: None,
+                        duration,
+                        loop_mode: LoopMode::Once,
+                        plan: Vec::new(),
+                        plan_index: 0,
+                        iterations_done: 0,
+                        dropped: Duration::ZERO,
+                        finished_at: None,
+                        post_wait,
+                        post_wait_done: false,
+                    },
+                );
+            }
             EngineCommand::Pause { cue_id } => {
                 if let Some(playback) = self.active.get_mut(&cue_id) {
                     if let Some(start) = playback.started_at {
@@ -1010,6 +1048,16 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                     }),
                 }
             }
+            EngineCommand::SendNetwork {
+                cue_id,
+                protocol,
+                host,
+                port,
+                message,
+            } => {
+                // Sofort-Cue: die Mock-Engine sendet nichts, protokolliert aber.
+                debug!(%cue_id, ?protocol, %host, port, %message, "send network (mock)");
+            }
             EngineCommand::Ping(n) => {
                 self.emit(EngineEvent::Pong(n));
             }
@@ -1106,6 +1154,8 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                             });
                         }
                         PlaybackKind::Media => {}
+                        // Wait-Cue: kein Start-Zustand, Position läuft über die Uhr.
+                        PlaybackKind::Wait => {}
                     }
                 } else {
                     continue;

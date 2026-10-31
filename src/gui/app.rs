@@ -96,6 +96,10 @@ pub enum InspectorTab {
     Slides,
     /// Data (Ziel-HTML + JSON-Payload) – HTML-Data-Cues.
     Data,
+    /// Text (Text-Inhalt/Schrift/Farbe/Ausrichtung) – Text-Cues.
+    Text,
+    /// Network (Protokoll/Host/Port/Nachricht) – Network-Cues.
+    Network,
 }
 
 impl InspectorTab {
@@ -111,6 +115,8 @@ impl InspectorTab {
             InspectorTab::Source => "Source",
             InspectorTab::Slides => "Slides",
             InspectorTab::Data => "Data",
+            InspectorTab::Text => "Text",
+            InspectorTab::Network => "Network",
         }
     }
 }
@@ -949,7 +955,10 @@ impl ShowApp {
                                 && c.status.is_active()
                                 && matches!(
                                     c.cue_type,
-                                    CueType::Video | CueType::SlideShow | CueType::Html
+                                    CueType::Video
+                                        | CueType::SlideShow
+                                        | CueType::Html
+                                        | CueType::Text
                                 )
                         })
                         .map(|c| c.id)
@@ -1052,10 +1061,20 @@ impl ShowApp {
         let list = self.carts.active_mut();
         let at = list.selected_insert_index();
         let n = list.next_free_number();
-        list.insert(
-            at,
-            Cue::new(n.to_string(), format!("New Cue {n}"), cue_type),
-        );
+        let mut cue = Cue::new(n.to_string(), format!("New Cue {n}"), cue_type);
+        // Wait-Cue (QLab 5): sinnvolle Vorgabe-Dauer statt 0.
+        if cue_type == CueType::Wait {
+            cue.duration = std::time::Duration::from_secs(1);
+        }
+        // Text-Cue: leerer Text-Inhalt als Vorgabe (sonst „kaputt").
+        if cue_type == CueType::Text {
+            cue.text_content = Some(crate::core::TextContent::default());
+        }
+        // Network-Cue: leere Nachricht mit Platzhalter-Ziel als Vorgabe.
+        if cue_type == CueType::Network {
+            cue.network = Some(crate::core::NetworkMessage::default());
+        }
+        list.insert(at, cue);
         list.select(Some(at));
     }
 

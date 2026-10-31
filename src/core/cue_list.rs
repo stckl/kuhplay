@@ -629,8 +629,12 @@ impl CueList {
         }
         let command = cue.build_trigger_command();
         match &command {
-            // Sofort-Cues (Stop, leere Container, JSON-Push): direkt abgeschlossen.
-            Some(EngineCommand::StopAll) | Some(EngineCommand::PushJson { .. }) | None => {
+            // Sofort-Cues (Stop, leere Container, JSON-Push, Network): direkt
+            // abgeschlossen – das Kommando geht trotzdem an die Engine.
+            Some(EngineCommand::StopAll)
+            | Some(EngineCommand::PushJson { .. })
+            | Some(EngineCommand::SendNetwork { .. })
+            | None => {
                 let _ = cue.transition_status(CueStatus::Completed);
             }
             Some(_) => {
@@ -669,6 +673,16 @@ impl CueList {
                         continue;
                     }
                     match child.build_trigger_command() {
+                        // Sofort-Cues (Stop/JSON/Network) innerhalb einer Gruppe
+                        // gelten direkt als abgeschlossen.
+                        Some(
+                            cmd @ (EngineCommand::StopAll
+                            | EngineCommand::PushJson { .. }
+                            | EngineCommand::SendNetwork { .. }),
+                        ) => {
+                            let _ = child.transition_status(CueStatus::Completed);
+                            commands.push(cmd);
+                        }
                         Some(cmd) => {
                             let next = if child.pre_wait > Duration::ZERO {
                                 CueStatus::PreWait
@@ -838,7 +852,10 @@ impl CueList {
         }
         let command = cue.build_trigger_command();
         match &command {
-            Some(EngineCommand::StopAll) | Some(EngineCommand::PushJson { .. }) | None => {
+            Some(EngineCommand::StopAll)
+            | Some(EngineCommand::PushJson { .. })
+            | Some(EngineCommand::SendNetwork { .. })
+            | None => {
                 let _ = cue.transition_status(CueStatus::Completed);
             }
             Some(_) => {
@@ -1893,5 +1910,114 @@ mod tests {
         let old_json = json.replace(",\"collapsed\":true", "");
         let back_old: CueList = serde_json::from_str(&old_json).unwrap();
         assert!(!back_old.is_collapsed(0), "fehlendes Feld → Default");
+    }
+
+    #[test]
+    fn wait_cue_triggers_engine_wait_command() {
+        let mut list = CueList::new();
+        let mut wait = Cue::new("1", "Pause", CueType::Wait);
+        wait.duration = Duration::from_millis(1500);
+        wait.pre_wait = Duration::from_millis(200);
+        list.add(wait);
+
+        let outcome = list.go().expect("GO must trigger the wait cue");
+        assert_eq!(outcome.commands.len(), 1);
+        assert!(
+            matches!(&outcome.commands[0], EngineCommand::Wait { duration, pre_wait, .. }
+                if *duration == Duration::from_millis(1500) && *pre_wait == Duration::from_millis(200)),
+            "wait cue must produce EngineCommand::Wait with its durations"
+        );
+        // Pre-Wait > 0 → Status PreWait (wie normale Playbacks).
+        assert_eq!(list.cues()[0].status, CueStatus::PreWait);
+    }
+
+    #[test]
+    fn memo_cue_completes_instantly_without_command() {
+        let mut list = CueList::new();
+        list.add(Cue::new("1", "Memo", CueType::Memo));
+
+        let outcome = list.go().expect("GO must trigger the memo cue");
+        assert!(
+            outcome.commands.is_empty(),
+            "memo cue produces no engine command"
+        );
+        assert_eq!(
+            list.cues()[0].status,
+            CueStatus::Completed,
+            "memo cue is completed immediately"
+        );
+    }
+
+    #[test]
+    fn text_cue_triggers_play_html_with_generated_inline_html() {
+        let mut list = CueList::new();
+        let mut cue = Cue::new("1", "Titel", CueType::Text);
+        cue.stage = Some("Stage 1".to_string());
+        cue.layer = 3;
+        cue.text_content = Some(crate::core::TextContent {
+            text: "Hallo <Welt>".to_string(),
+            ..Default::default()
+        });
+        list.add(cue);
+
+        let outcome = list.go().expect("GO must trigger the text cue");
+        assert_eq!(outcome.commands.len(), 1);
+        match &outcome.commands[0] {
+            EngineCommand::PlayHtml {
+                source,
+                stage,
+                layer,
+                ..
+            } => {
+                assert_eq!(stage.as_deref(), Some("Stage 1"));
+                assert_eq!(*layer, 3);
+                match source {
+                    crate::core::HtmlSource::Inline(html) => {
+                        assert!(html.contains("Hallo &lt;Welt&gt;"));
+                    }
+                    other => panic!("expected inline html, got {other:?}"),
+                }
+            }
+            other => panic!("expected PlayHtml, got {other:?}"),
+        }
+        assert_eq!(list.cues()[0].status, CueStatus::Playing);
+    }
+
+    #[test]
+    fn text_cue_without_content_goes_to_error_not_panic() {
+        let mut list = CueList::new();
+        list.add(Cue::new("1", "leer", CueType::Text));
+        let outcome = list.go().expect("GO must trigger");
+        assert!(outcome.commands.is_empty());
+        assert_eq!(list.cues()[0].status, CueStatus::Error);
+    }
+
+    #[test]
+    fn wait_and_memo_serde_roundtrip_and_legacy() {
+        // Alte Shows kennen Wait/Memo nicht – Serde muss abwärtskompatibel sein.
+        let mut wait = Cue::new("1", "w", CueType::Wait);
+        wait.duration = Duration::from_secs(2);
+        let json = serde_json::to_string(&wait).unwrap();
+        assert!(json.contains("\"Wait\""));
+        let back: Cue = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.cue_type, CueType::Wait);
+        assert_eq!(back.duration, Duration::from_secs(2));
+
+        assert_eq!(CueType::Wait.label(), "Wait");
+        assert_eq!(CueType::Memo.label(), "Memo");
+        assert_eq!(CueType::Text.label(), "Text");
+        assert!(CueType::ALL.contains(&CueType::Wait));
+        assert!(CueType::ALL.contains(&CueType::Memo));
+        assert!(CueType::ALL.contains(&CueType::Text));
+
+        // Text-Cue: text_content ist abwärtskompatibel (fehlt in alten Shows).
+        let mut text = Cue::new("2", "t", CueType::Text);
+        text.text_content = Some(crate::core::TextContent::default());
+        let json = serde_json::to_string(&text).unwrap();
+        let back: Cue = serde_json::from_str(&json).unwrap();
+        assert!(back.text_content.is_some());
+        let old_json = json.replace(",\"text_content\":{\"text\":\"\",\"font_size\":64.0,\"color\":[255,255,255],\"bg_color\":null,\"align\":\"Left\",\"valign\":\"Top\"}", "");
+        let back_old: Cue = serde_json::from_str(&old_json).unwrap();
+        assert!(back_old.text_content.is_none(), "fehlendes Feld → None");
     }
 }

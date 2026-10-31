@@ -34,10 +34,12 @@ pub mod cue;
 pub mod cue_list;
 pub mod error;
 pub mod html;
+pub mod network;
 pub mod screen;
 pub mod show;
 pub mod slideshow;
 pub mod stage;
+pub mod text;
 pub mod timecode;
 pub mod video_routing;
 
@@ -67,6 +69,7 @@ pub use cue::{
 pub use cue_list::{CueList, GoOutcome};
 pub use error::{ShowError, ShowResult};
 pub use html::{HtmlSource, HtmlSourceKind};
+pub use network::{NetworkMessage, NetworkProtocol};
 pub use screen::{
     screen_color_for_index, DisplayGeometry, Screen, ScreenManager, ScreenRotation,
     TestPatternKind, TestPatternSpec, SCREEN_COLOR_PALETTE,
@@ -77,6 +80,7 @@ pub use stage::{
     BlendCurve, BlendMode, Crop, EdgeSide, GeometryMode, HardEdge, Stage, StageGeometry,
     StageManager, SurfaceGeometry,
 };
+pub use text::{TextAlign, TextContent, TextVAlign};
 pub use timecode::{Fps, Timecode};
 pub use video_routing::{
     default_routes_for_displays, edge_factor, region_letter, regions_for_routes_proportional,

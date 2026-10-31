@@ -439,3 +439,117 @@ fn pause_freezes_the_playback_clock() {
         "Finished based on media time, not wall time"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Wait-Cue (QLab 5): reine Timer-Unit
+// ---------------------------------------------------------------------------
+
+fn wait_cmd(cue_id: Uuid, duration_ms: u64, pre_ms: u64, post_ms: u64) -> EngineCommand {
+    EngineCommand::Wait {
+        cue_id,
+        duration: Duration::from_millis(duration_ms),
+        pre_wait: Duration::from_millis(pre_ms),
+        post_wait: Duration::from_millis(post_ms),
+    }
+}
+
+#[test]
+fn wait_cue_finishes_exactly_after_pre_wait_plus_duration() {
+    let (mut engine, _clock, rx) = setup();
+    let id = Uuid::new_v4();
+    engine.handle(wait_cmd(id, 500, 200, 0)).unwrap();
+
+    engine.advance_time(Duration::from_millis(199));
+    assert!(drain(&rx).is_empty(), "no events before pre-wait elapsed");
+
+    engine.advance_time(Duration::from_millis(1)); // t = 200: Started
+    assert!(drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == id)));
+
+    engine.advance_time(Duration::from_millis(499)); // t = 699
+    assert!(!drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Finished { .. })));
+
+    engine.advance_time(Duration::from_millis(1)); // t = 700 = 200 + 500
+    let events = drain(&rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)),
+        "Finished exactly at pre_wait + duration"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, EngineEvent::PostWaitElapsed { cue_id } if *cue_id == id)),
+        "post_wait = 0 → PostWaitElapsed immediately after Finished"
+    );
+}
+
+#[test]
+fn wait_cue_zero_duration_finishes_immediately_after_pre_wait() {
+    let (mut engine, _clock, rx) = setup();
+    let id = Uuid::new_v4();
+    engine.handle(wait_cmd(id, 0, 0, 0)).unwrap();
+
+    engine.advance_time(Duration::from_millis(1));
+    let events = drain(&rx);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Started { cue_id, .. } if *cue_id == id)));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)));
+}
+
+#[test]
+fn wait_cue_pause_freezes_the_timer_and_resume_continues() {
+    let (mut engine, _clock, rx) = setup();
+    let id = Uuid::new_v4();
+    engine.handle(wait_cmd(id, 1000, 0, 0)).unwrap();
+
+    engine.advance_time(Duration::from_millis(200)); // t=200: Started
+    engine.advance_time(Duration::from_millis(300)); // t=500: 300 ms reine Laufzeit
+    drain(&rx);
+    engine.handle(EngineCommand::Pause { cue_id: id }).unwrap();
+    assert!(drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Paused { cue_id } if *cue_id == id)));
+
+    engine.advance_time(Duration::from_millis(5000)); // t=5500: Pause zählt nicht
+    assert!(!drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Finished { .. })));
+
+    engine.handle(EngineCommand::Resume { cue_id: id }).unwrap();
+    drain(&rx);
+    engine.advance_time(Duration::from_millis(699)); // 300 + 699 = 999 ms
+    assert!(!drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Finished { .. })));
+    engine.advance_time(Duration::from_millis(1)); // 1000 ms reine Laufzeit
+    assert!(drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)));
+}
+
+#[test]
+fn wait_cue_stop_emits_stopped_and_no_finish() {
+    let (mut engine, _clock, rx) = setup();
+    let id = Uuid::new_v4();
+    engine.handle(wait_cmd(id, 1000, 0, 0)).unwrap();
+    engine.advance_time(Duration::from_millis(100));
+    drain(&rx);
+
+    engine.handle(EngineCommand::Stop { cue_id: id }).unwrap();
+    assert!(drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Stopped { cue_id } if *cue_id == id)));
+
+    engine.advance_time(Duration::from_millis(5000));
+    assert!(!drain(&rx)
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Finished { .. })));
+}

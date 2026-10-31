@@ -71,6 +71,20 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                 problems.push("invalid JSON payload".to_string());
             }
         }
+        CueType::Text => {
+            if cue.text_content.is_none() {
+                problems.push("no text configured".to_string());
+            }
+            check_stage(cue, app, &mut problems);
+        }
+        CueType::Network => match &cue.network {
+            None => problems.push("no network message configured".to_string()),
+            Some(n) => {
+                if n.validate().is_err() {
+                    problems.push("network target missing host or port".to_string());
+                }
+            }
+        },
         CueType::Control => {
             // Ziel-Cue-Nummer prüfen (Aktionen ohne Ziel gelten für alle /
             // den Cue selbst und sind nie „kaputt").

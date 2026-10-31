@@ -51,11 +51,23 @@ pub enum CueType {
     /// Daten-Cue: pusht einen JSON-Payload an die WebView eines aktiven
     /// HTML5-Cues (dynamische Lower-Thirds, Spielstände, Countdowns).
     HtmlData,
+    /// Wait-Cue (QLab 5): tut nichts, wartet nur seine `duration` ab –
+    /// reine Timer-Unit in der Engine ([`EngineCommand::Wait`]).
+    Wait,
+    /// Memo-Cue (QLab 5): zeigt nur seine Notiz an, tut sonst nichts
+    /// (kein Engine-Kommando, gilt sofort als abgeschlossen).
+    Memo,
+    /// Text-Cue (QLab 5): rendert Text ([`TextContent`]) als Inline-HTML
+    /// über die HTML5-Pipeline auf einer Video-Stage.
+    Text,
+    /// Network-Cue (QLab 5): sendet eine Nachricht per UDP/TCP an
+    /// `host:port` ([`EngineCommand::SendNetwork`]) – Sofort-Cue.
+    Network,
 }
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 10] = [
+    pub const ALL: [CueType; 14] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
@@ -66,6 +78,10 @@ impl CueType {
         CueType::Html,
         CueType::SlideShow,
         CueType::HtmlData,
+        CueType::Wait,
+        CueType::Memo,
+        CueType::Text,
+        CueType::Network,
     ];
 
     /// Symbol für Tabellenzellen.
@@ -81,6 +97,10 @@ impl CueType {
             CueType::Html => "🌐",
             CueType::SlideShow => "🖼",
             CueType::HtmlData => "📊",
+            CueType::Wait => "⏳",
+            CueType::Memo => "📝",
+            CueType::Text => "🅣",
+            CueType::Network => "📡",
         }
     }
 
@@ -97,6 +117,10 @@ impl CueType {
             CueType::Html => "HTML5",
             CueType::SlideShow => "Slideshow",
             CueType::HtmlData => "HTML Data",
+            CueType::Wait => "Wait",
+            CueType::Memo => "Memo",
+            CueType::Text => "Text",
+            CueType::Network => "Network",
         }
     }
 }
@@ -546,6 +570,13 @@ pub struct Cue {
     /// Test-Script für die JS-Bridge (Inspector: manueller `eval_js`-Trigger).
     #[serde(default)]
     pub js_test_script: String,
+    /// Text-Inhalt – nur [`CueType::Text`] (wird als Inline-HTML gerendert,
+    /// siehe [`TextContent::to_html`]).
+    #[serde(default)]
+    pub text_content: Option<crate::core::text::TextContent>,
+    /// Netzwerk-Nachricht – nur [`CueType::Network`].
+    #[serde(default)]
+    pub network: Option<crate::core::network::NetworkMessage>,
     /// Freitext-Notizen für Operatoren.
     #[serde(default)]
     pub notes: String,
@@ -603,6 +634,8 @@ impl Cue {
             data_target: None,
             data_json_text: String::new(),
             js_test_script: String::new(),
+            text_content: None,
+            network: None,
             notes: String::new(),
             color: None,
             status: CueStatus::Standby,
@@ -830,6 +863,25 @@ impl Cue {
                 }
                 self.data_payload().map(|_| ())
             }
+            CueType::Text => match &self.text_content {
+                Some(_) => Ok(()),
+                None => Err(ShowError::InvalidParameter(format!(
+                    "text cue \"{}\" ({}): no text configured",
+                    self.number, self.name
+                ))),
+            },
+            CueType::Network => match &self.network {
+                Some(n) => n.validate().map_err(|_| {
+                    ShowError::InvalidParameter(format!(
+                        "network cue \"{}\" ({}): invalid host/port",
+                        self.number, self.name
+                    ))
+                }),
+                None => Err(ShowError::InvalidParameter(format!(
+                    "network cue \"{}\" ({}): no message configured",
+                    self.number, self.name
+                ))),
+            },
             _ => Ok(()),
         }
     }
@@ -1039,7 +1091,37 @@ impl Cue {
                 let payload = self.data_payload().ok()?;
                 Some(EngineCommand::PushJson { target, payload })
             }
-            CueType::Group | CueType::Script | CueType::Control => None,
+            CueType::Wait => Some(EngineCommand::Wait {
+                cue_id: self.id,
+                duration: self.duration,
+                pre_wait: self.pre_wait,
+                post_wait: self.post_wait,
+            }),
+            CueType::Text => self.text_content.as_ref().map(|t| EngineCommand::PlayHtml {
+                cue_id: self.id,
+                source: HtmlSource::Inline(t.to_html()),
+                stage: self.stage.clone(),
+                layer: self.layer,
+                duration: if self.duration.is_zero() {
+                    None
+                } else {
+                    Some(self.duration)
+                },
+                pre_wait: self.pre_wait,
+                post_wait: self.post_wait,
+            }),
+            CueType::Network => {
+                // Sofort-Cue: Nachricht an die Engine, Cue gilt direkt als
+                // abgeschlossen (wie StopAll/PushJson in `CueList::go_single`).
+                self.network.as_ref().map(|n| EngineCommand::SendNetwork {
+                    cue_id: self.id,
+                    protocol: n.protocol,
+                    host: n.host.clone(),
+                    port: n.port,
+                    message: n.message.clone(),
+                })
+            }
+            CueType::Group | CueType::Script | CueType::Control | CueType::Memo => None,
         }
     }
 }

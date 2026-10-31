@@ -23,6 +23,7 @@ const GROUPS: &[(&str, &[CueType])] = &[
             CueType::Video,
             CueType::Html,
             CueType::SlideShow,
+            CueType::Text,
         ],
     ),
     ("Fade", &[CueType::Fade]),
@@ -36,6 +37,10 @@ const GROUPS: &[(&str, &[CueType])] = &[
         ],
     ),
     ("Data", &[CueType::HtmlData]),
+    // Wait/Memo (QLab 5): Timer- und Notiz-Cues ohne eigenes Medium.
+    ("Misc", &[CueType::Wait, CueType::Memo]),
+    // Network (QLab 5): UDP/TCP-Nachricht an ein Ziel im Show-Netz.
+    ("Network", &[CueType::Network]),
 ];
 
 /// Zeichnet die Toolbox (linkes SidePanel, ~136 px breit).

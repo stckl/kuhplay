@@ -1392,6 +1392,28 @@ fn target_display(cue: &Cue) -> String {
             .unwrap_or_else(|| "all cues".to_string()),
         CueType::Html => "HTML".to_string(),
         CueType::HtmlData => "JSON".to_string(),
+        CueType::Network => cue
+            .network
+            .as_ref()
+            .map(|n| format!("{} {}", n.protocol.label().to_lowercase(), n.target()))
+            .unwrap_or_else(|| "–".to_string()),
+        CueType::Text => cue
+            .text_content
+            .as_ref()
+            .map(|t| {
+                let first = t.text.lines().next().unwrap_or("").trim();
+                if first.is_empty() {
+                    "–".to_string()
+                } else {
+                    let short: String = first.chars().take(24).collect();
+                    if first.chars().count() > 24 {
+                        format!("{short}…")
+                    } else {
+                        short
+                    }
+                }
+            })
+            .unwrap_or_else(|| "–".to_string()),
         CueType::SlideShow => cue
             .slideshow
             .as_ref()

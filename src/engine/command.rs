@@ -134,6 +134,27 @@ pub enum EngineCommand {
     /// Schaltet eine laufende Diashow manuell (Control-Cues
     /// `NextSlide`/`PrevSlide`).
     SlideNav { cue_id: Uuid, nav: SlideNav },
+    /// Wait-Cue (QLab 5): reine Timer-Unit ohne Medium – die Engine startet
+    /// nach `pre_wait` und meldet nach `duration` `Finished` (danach
+    /// `post_wait`). `duration = 0` → sofortiges Ende nach dem Pre-Wait.
+    /// Pausieren/Stoppen/Devamp wirken wie bei normalen Playbacks.
+    Wait {
+        cue_id: Uuid,
+        duration: Duration,
+        pre_wait: Duration,
+        post_wait: Duration,
+    },
+    /// Network-Cue (QLab 5): sendet `message` per UDP/TCP an `host:port`.
+    /// Sofort-Cue – die Engine feuert asynchron (spawned Thread) und meldet
+    /// nur Fehler als [`super::EngineEvent::Error`]; der Cue selbst gilt in
+    /// der Cue-Liste direkt als abgeschlossen.
+    SendNetwork {
+        cue_id: Uuid,
+        protocol: crate::core::NetworkProtocol,
+        host: String,
+        port: u16,
+        message: String,
+    },
     /// Health-Check: Engine antwortet mit [`super::EngineEvent::Pong`].
     /// Dient Stress-Tests zur verlässlichen "keine Message-Drops"-Prüfung.
     Ping(u64),
