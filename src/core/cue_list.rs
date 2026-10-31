@@ -591,7 +591,8 @@ impl CueList {
         }
         let mut commands = Vec::new();
         for index in indices {
-            self.go_single(index, &mut commands);
+            // Dispatch wie in go() (Review 11b): Gruppen feuern ihre Kinder.
+            self.trigger_at(index, &mut commands);
         }
         commands
     }
@@ -856,40 +857,19 @@ impl CueList {
         let Some(index) = self.find_index_by_number(Some(number)) else {
             return false;
         };
-        let cue = &mut self.cues[index];
-        if !cue.is_armed || cue.status != CueStatus::Standby {
+        if !self.cues[index].is_armed || self.cues[index].status != CueStatus::Standby {
             return false;
         }
-        if cue.validate_trigger().is_err() {
-            let _ = cue.transition_status(CueStatus::Error);
+        if self.cues[index].validate_trigger().is_err() {
+            let id = self.cues[index].id;
+            let _ = self.set_status(id, CueStatus::Error);
             return true;
         }
-        let command = cue.build_trigger_command();
-        match &command {
-            Some(EngineCommand::StopAll)
-            | Some(EngineCommand::PushJson { .. })
-            | Some(EngineCommand::SendNetwork { .. })
-            | Some(EngineCommand::SendMidi { .. })
-            | Some(EngineCommand::SendDmx { .. })
-            | Some(EngineCommand::SendHttpPost { .. })
-            | None => {
-                let _ = cue.transition_status(CueStatus::Completed);
-            }
-            Some(_) => {
-                let next = if cue.pre_wait > Duration::ZERO {
-                    CueStatus::PreWait
-                } else {
-                    CueStatus::Playing
-                };
-                let _ = cue.transition_status(next);
-            }
-        }
-        if let Some(command) = command {
-            commands.push(command);
-            push_volume_command(cue, commands);
-        }
-        // Follow-Kette ab diesem Cue (Sofort-Cue + AutoContinue bzw. Playing +
-        // AutoFollow) – ohne Playhead-Bewegung (Review B6/B7).
+        // Dispatch wie in go() (Review 11b): Gruppe → Kinder, Control → Aktion,
+        // sonst go_single – bisher feuerten Gruppen/Control bei GoTo/Timecode
+        // keine Kinder.
+        self.trigger_at(index, commands);
+        // Follow-Kette ab diesem Cue – ohne Playhead-Bewegung (Review B6/B7).
         let _ = self.continue_chain_from(index, commands);
         true
     }

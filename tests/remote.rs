@@ -723,3 +723,120 @@ fn remote_show_files_are_limited_to_kuhplay_extension() {
     });
     assert_eq!(app.show_name, "Demo Show");
 }
+
+#[test]
+fn d11a_receive_timecode_ist_im_show_mode_erlaubt() {
+    use kuhplay::core::{Cue, CueStatus, CueType, Fps, Timecode};
+    use kuhplay::remote::RemoteCommand;
+    let mut app = remote_app();
+    let mut cue = Cue::new("1", "tc", CueType::Wait);
+    cue.tc_trigger = Some(Timecode::from_hmsf(0, 0, 5, 0, Fps::Fps25));
+    app.carts.active_mut().add(cue);
+    let id = app.carts.active().cues().last().unwrap().id;
+    app.show_mode = true;
+    // Edit-Command wird im Show-Mode abgelehnt …
+    app.handle_remote_command(RemoteCommand::UpdateCue {
+        id,
+        changes: serde_json::json!({ "name": "x" }),
+    });
+    let name = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap()
+        .name
+        .clone();
+    assert_eq!(name, "tc", "Edit im Show-Mode gesperrt");
+    // … aber Timecode-Eingang darf durch (Review 11a).
+    app.handle_remote_command(RemoteCommand::ReceiveTimecode {
+        tc: Timecode::from_hmsf(0, 0, 6, 0, Fps::Fps25),
+    });
+    let status = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap()
+        .status;
+    assert_ne!(
+        status,
+        CueStatus::Standby,
+        "Timecode-Cue muss im Show-Mode feuern"
+    );
+}
+
+#[test]
+fn d11c_jeder_inspector_tab_aus_tabs_ist_in_der_content_map() {
+    // Regression Review 11c: TABS nennt Text/Network/MIDI/Light/Companion/
+    // Timecode/Script, die content-Map in renderInsp kannte sie nicht →
+    // undefined(c) → TypeError beim Öffnen des Tabs.
+    let html = include_str!("../src/remote/web_ui.html");
+    let tabs_start = html.find("const TABS = ").expect("TABS fehlt");
+    let tabs_end = html[tabs_start..]
+        .find("};")
+        .map(|i| tabs_start + i)
+        .expect("TABS-Ende fehlt");
+    let tabs_block = &html[tabs_start..tabs_end];
+    let mut tab_names = std::collections::BTreeSet::new();
+    let mut rest = tabs_block;
+    while let Some(q1) = rest.find('\'') {
+        let after = &rest[q1 + 1..];
+        let Some(q2) = after.find('\'') else { break };
+        tab_names.insert(after[..q2].to_string());
+        rest = &after[q2 + 1..];
+    }
+    // Cue-Typ-Schlüssel (Audio:, Video:, …) sind keine Tab-Namen.
+    for key in [
+        "Audio",
+        "Video",
+        "Fade",
+        "Html",
+        "SlideShow",
+        "HtmlData",
+        "Text",
+        "Network",
+        "Midi",
+        "Light",
+        "Companion",
+        "Timecode",
+        "Script",
+        "Group",
+        "Stop",
+        "Control",
+        "Wait",
+        "Memo",
+    ] {
+        tab_names.remove(key);
+    }
+    let content_start = html.find("const content = {").expect("content-Map fehlt");
+    let content_end = html
+        .find("}[inspTab]")
+        .map(|i| content_start + i)
+        .expect("content-Map-Ende fehlt");
+    let content_block = &html[content_start..content_end];
+    for tab in &tab_names {
+        let key = format!("{}:", tab);
+        assert!(
+            content_block.contains(&key) || content_block.contains(&format!("'{}':", tab)),
+            "Tab '{tab}' aus TABS fehlt in der content-Map (renderInsp)"
+        );
+    }
+    // Alle registrierten Tab-Funktionen müssen existieren.
+    for fn_name in [
+        "tabText",
+        "tabNetwork",
+        "tabMidi",
+        "tabLight",
+        "tabCompanion",
+        "tabTimecode",
+        "tabScript",
+    ] {
+        assert!(
+            html.contains(&format!("function {fn_name}(c)")),
+            "Funktion {fn_name} fehlt in web_ui.html"
+        );
+    }
+}

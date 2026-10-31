@@ -29,7 +29,21 @@ Die Timeline (`assets/demo/timetable.html`) ist ein Beispiel, kein Sonderfall.
 | Web-Remote | Bietet dieselben Funktionen wie die GUI, also auch die neuen Formulare |
 | Außerdem gewünscht | Live-Vorschau im Inspector, Presets, Sprachumschaltung, Automatik nach Uhrzeit, Variablen (Uhr, Timer, Countdown) |
 
-**Noch offen:** Kompatibilität zu CasparCG-Templates (Abschnitt 5) ist ein Vorschlag.
+**Keine Kompatibilität zu anderen Systemen:** Wir bauen ein schlüssiges eigenes System nach
+unseren Anforderungen, auch nicht zu CasparCG-Templates.
+
+**Alpha wie in OBS:** HTML5 rendert standardmäßig auf transparentem Grund, und die Transparenz der
+Seite bleibt bis zum Key/Fill-Ausgang erhalten. Weiche Kanten, Schatten und halbtransparente Flächen
+müssen im Key und Fill korrekt ankommen. Ein deckendes Bild entsteht nur durch einen eigenen
+Hintergrund der Seite.
+
+**Overlays:** Dieselbe Transparenz gilt innerhalb von KuhPlay. Eine HTML-Seite liegt als Layer über
+Videos, Bildern oder anderen Stages, und darunter bleibt alles sichtbar, auf jedem Ausgang: Display,
+Vorschau und DeckLink. Mehrere Overlays lassen sich übereinander stapeln.
+
+**Freiheit im Template:** Alles, was CEF kann, ist erlaubt, also eigenes JavaScript, Bibliotheken,
+Canvas, WebGL, SVG und Video. Felddefinition, Trigger und Variablen sind Angebote: Sie schreiben
+weder Framework noch Aufbau vor, und eine Seite ohne Felddefinition läuft trotzdem.
 
 ## 3. Ausgangslage im Code
 
@@ -115,10 +129,6 @@ Mit JavaScript; gibt der Handler ein Promise zurück, wartet KuhPlay darauf:
 kuhplay.on("out", async () => { /* Animation */ });
 ```
 
-**CasparCG (Vorschlag, noch nicht entschieden):** CasparCG-Templates nutzen `play()`, `stop()`,
-`next()` und `update(data)`. Eine kleine Kompatibilitätsschicht könnte vorhandene Templates
-weiterverwendbar machen. Die Felder für unsere Formulare müssten trotzdem ergänzt werden.
-
 ## 6. Import, Export und Projektordner
 
 - CSV und Excel in beide Richtungen, Spalten entsprechen den Feldern.
@@ -164,6 +174,12 @@ GPU-Pipeline aus `docs/KONZEPT-slideshow.md`.
 **Muss nachweisen:**
 - mindestens 30 fps in 1080p und 4K mit Alpha, auf Mac und ZBOOK
 - normales HTML/CSS ohne Canvas wird erfasst
+- Alpha stimmt bis zum Ausgang: Testseite mit Verlauf, Schatten und weicher Kante, geprüft an Fill
+  und Key. CEF liefert die Bilder vormultipliziert, die Render-Kette rechnet heute nicht
+  vormultipliziert, also einmal sauber umrechnen und festlegen, welches Format am Ausgang anliegt.
+  Sonst entstehen dunkle oder helle Säume an den Kanten.
+- Overlay über laufendem Video: dieselbe Testseite als Layer über einem Video und über einer zweiten
+  Stage, ohne Säume und mit voller Bildrate beider Ebenen
 - Bilder kommen schnell genug für DeckLink und Key/Fill in den Arbeitsspeicher
 
 **Zu klären:**

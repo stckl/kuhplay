@@ -117,21 +117,21 @@ cargo check --target x86_64-pc-windows-msvc --features webview
 
 ## Block D: Remote und Trigger (ein Commit)
 
-- [ ] **11a. Timecode wird im Show-Mode abgelehnt**
+- [x] **11a. Timecode wird im Show-Mode abgelehnt**
   - Ort: `RemoteCommand::is_edit` (`src/remote/mod.rs:217`), Prüfung in
     `handle_remote_command` (`src/gui/app.rs:1674`).
   - Beleg: `ReceiveTimecode.is_edit()` ist `true`, OSC `/timecode` wird also während der
     Show verworfen.
   - Fix: `ReceiveTimecode` in die Ausnahmeliste aufnehmen und einen Test über
     `handle_remote_command` im Show-Mode ergänzen.
-- [ ] **11b. Gruppen starten bei `GoTo` und Timecode ihre Kinder nicht**
+- [x] **11b. Gruppen starten bei `GoTo` und Timecode ihre Kinder nicht**
   - Ort: `trigger_by_number` (`src/core/cue_list.rs:853`), `receive_timecode` (`:579`).
   - Beleg: Beide setzen die Gruppe auf `Completed`, Kind bleibt `Standby`, 0 Kommandos.
   - Fix: Wie `go()` nach Cue-Typ verzweigen (`go_group`, `go_control`, `go_single`), am
     besten über eine gemeinsame Funktion. Aus dem Code gilt dasselbe für Control-Cues; mit
     testen. `go_single` und `trigger_by_number` enthalten dieselbe Logik doppelt.
 
-- [ ] **11c. Web-Remote: Inspector-Tabs neuer Cue-Typen fehlen**
+- [x] **11c. Web-Remote: Inspector-Tabs neuer Cue-Typen fehlen**
   - Ort: `renderInsp` (`src/remote/web_ui.html:502`), Tab-Liste `TABS` (`:185`).
   - Problem (aus dem Code, nicht im Browser getestet): `TABS` nennt Text, Network, MIDI,
     Light, Companion, Timecode und Script, die Zuordnung in Zeile 502 kennt sie aber nicht und

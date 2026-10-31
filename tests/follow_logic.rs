@@ -159,3 +159,87 @@ fn b7_endlosketten_guard() {
         "Guard greift: {completed} Completed-Cues (max 1 + 100 Kette)"
     );
 }
+
+// --- Review Block D (11b): GoTo/Timecode dispatchen Gruppen wie go() ---
+
+use kuhplay::core::{GroupMode, Timecode};
+use kuhplay::engine::EngineCommand as EC;
+
+fn audio(number: &str) -> Cue {
+    Cue::new(number, number, CueType::Audio).with_target("/media/x.wav")
+}
+
+#[test]
+fn d11b_goto_auf_gruppe_feuert_kinder() {
+    let mut list = CueList::new();
+    list.add(Cue::new_group(
+        "1",
+        "grp",
+        GroupMode::Simultaneous,
+        vec![audio("1.1"), audio("1.2")],
+    ));
+    list.add(audio("2"));
+    // Vorher: GoTo "1" setzte die Gruppe auf Completed, Kinder blieben Standby.
+    let outcome = list.go_to_number("1").expect("GoTo 1");
+    assert!(
+        outcome
+            .commands
+            .iter()
+            .filter(|c| matches!(c, EC::Play { .. }))
+            .count()
+            == 2,
+        "beide Kinder müssen Play-Commands bekommen"
+    );
+    let group = &list.cues()[0];
+    assert_eq!(group.status, CueStatus::Playing);
+    assert!(
+        group
+            .children
+            .iter()
+            .all(|c| c.status == CueStatus::Playing),
+        "Kinder sind Playing"
+    );
+}
+
+#[test]
+fn d11b_timecode_auf_gruppe_feuert_kinder() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group(
+        "1",
+        "grp",
+        GroupMode::Simultaneous,
+        vec![audio("1.1"), audio("1.2")],
+    );
+    group.tc_trigger = Some(Timecode::from_hmsf(0, 0, 10, 0, kuhplay::core::Fps::Fps25));
+    list.add(group);
+    // Timecode 10s erreicht den Trigger → Gruppe feuert Kinder (nicht nur Completed).
+    let commands =
+        list.receive_timecode(Timecode::from_hmsf(0, 0, 10, 0, kuhplay::core::Fps::Fps25));
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|c| matches!(c, EC::Play { .. }))
+            .count(),
+        2
+    );
+    assert!(list.cues()[0]
+        .children
+        .iter()
+        .all(|c| c.status == CueStatus::Playing));
+}
+
+#[test]
+fn d11b_goto_auf_control_cue_fuehrt_aktion_aus() {
+    use kuhplay::core::ControlAction;
+    let mut list = CueList::new();
+    list.add(audio("1"));
+    let mut control = Cue::new("2", "panic-all", CueType::Control);
+    control.control_action = ControlAction::Stop;
+    list.add(control);
+    list.go().unwrap(); // Cue 1 Playing
+    let outcome = list.go_to_number("2").expect("GoTo 2");
+    assert!(
+        outcome.commands.iter().any(|c| matches!(c, EC::StopAll)),
+        "Control-Cue muss StopAll feuern"
+    );
+}

@@ -231,6 +231,7 @@ impl RemoteCommand {
                 | Self::GetStatus
                 | Self::SetActiveCart { .. }
                 | Self::SetPlayhead { .. }
+                | Self::ReceiveTimecode { .. }
                 | Self::RefreshAudioDevices
                 | Self::SaveShow
                 | Self::SaveShowAs { .. }

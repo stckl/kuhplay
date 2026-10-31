@@ -499,7 +499,7 @@ function renderInsp() {
   if (!tabs.includes(inspTab)) inspTab = 'Basics';
   const body = h('div', { id: 'ibody' });
   const scroll = $('ibody') ? $('ibody').scrollTop : 0;
-  const content = { Basics: tabBasics, Triggers: tabTriggers, 'Time & Loops': tabTime, 'Audio Levels': tabAudio, Geometry: tabGeometry, Curve: tabCurve, Source: tabSource, Slides: tabSlides, Data: tabData }[inspTab](c);
+  const content = { Basics: tabBasics, Triggers: tabTriggers, 'Time & Loops': tabTime, 'Audio Levels': tabAudio, Geometry: tabGeometry, Curve: tabCurve, Source: tabSource, Slides: tabSlides, Data: tabData, Text: tabText, Network: tabNetwork, MIDI: tabMidi, Light: tabLight, Companion: tabCompanion, Timecode: tabTimecode, Script: tabScript }[inspTab](c);
   body.append(...[content].flat());
   const fs = h('fieldset', { disabled: !editable(), style: 'border:0;min-width:0' }, body.childNodes.length ? [...body.childNodes] : []);
   body.replaceChildren(fs);
@@ -666,6 +666,75 @@ function tabSlides(c) {
       field('Crossfade (s)', number(show.crossfade / 1000, v => set({ crossfade: Math.round(Math.max(0, v) * 1000) }))),
       field('Auto-Advance', check(show.auto_advance, 'Advance automatically', v => set({ auto_advance: v }))),
       field('Loop Slides', check(show.loop_slides, 'Restart after the last slide', v => set({ loop_slides: v })))));
+}
+function tabText(c) {
+  const t = c.text_content || { text: '', font_size: 48 };
+  return h('div', { class: 'form' },
+    field('Text', h('textarea', { rows: 6, value: t.text, onchange: e => up(c, { text_content: { ...t, text: e.target.value } }) })),
+    field('Font size', number(t.font_size, v => up(c, { text_content: { ...t, font_size: v } }))));
+}
+function tabNetwork(c) {
+  const n = c.network || { protocol: 'Udp', host: '', port: 0, message: '' };
+  return h('div', { class: 'form' },
+    field('Protocol', select([{ value: 'Udp', label: 'UDP' }, { value: 'Tcp', label: 'TCP' }], n.protocol, v => up(c, { network: { ...n, protocol: v } }))),
+    field('Host', text(n.host, v => up(c, { network: { ...n, host: v.trim() } }))),
+    field('Port', number(n.port, v => up(c, { network: { ...n, port: v } }))),
+    field('Message', h('textarea', { rows: 3, value: n.message, onchange: e => up(c, { network: { ...n, message: e.target.value } }) })));
+}
+function tabMidi(c) {
+  const m = c.midi || { kind: 'NoteOn', channel: 1, data1: 60, data2: 100 };
+  const kinds = [{ value: 'NoteOn', label: 'Note On' }, { value: 'NoteOff', label: 'Note Off' }, { value: 'ControlChange', label: 'Control Change' }, { value: 'ProgramChange', label: 'Program Change' }];
+  return h('div', { class: 'form' },
+    field('Kind', select(kinds, m.kind, v => up(c, { midi: { ...m, kind: v } }))),
+    field('Channel', number(m.channel, v => up(c, { midi: { ...m, channel: v } }))),
+    field('Data 1', number(m.data1, v => up(c, { midi: { ...m, data1: v } }))),
+    field('Data 2', number(m.data2, v => up(c, { midi: { ...m, data2: v } }))));
+}
+function tabLight(c) {
+  const l = c.light || { protocol: 'ArtNet', universe: 0, start_channel: 1, values: [255], host: '255.255.255.255' };
+  return h('div', { class: 'form' },
+    field('Protocol', select([{ value: 'ArtNet', label: 'Art-Net' }, { value: 'Sacn', label: 'sACN (E1.31)' }], l.protocol, v => up(c, { light: { ...l, protocol: v } }))),
+    field('Universe', number(l.universe, v => up(c, { light: { ...l, universe: v } }))),
+    field('Start Channel', number(l.start_channel, v => up(c, { light: { ...l, start_channel: v } }))),
+    field('Host', text(l.host, v => up(c, { light: { ...l, host: v.trim() } }))),
+    field('Values', text((l.values || []).join(','), v => up(c, { light: { ...l, values: v.split(/[,\s;]+/).filter(Boolean).map(x => parseInt(x, x.startsWith('0x') ? 16 : 10)).filter(x => !isNaN(x)) } }))));
+}
+function tabCompanion(c) {
+  const k = c.companion || { host: '127.0.0.1', port: 8000, page: 1, row: 0, column: 0, action: 'Press' };
+  const actions = [{ value: 'Press', label: 'Press' }, { value: 'Down', label: 'Down' }, { value: 'Up', label: 'Up' }];
+  return h('div', { class: 'form' },
+    field('Host', text(k.host, v => up(c, { companion: { ...k, host: v.trim() } }))),
+    field('Port', number(k.port, v => up(c, { companion: { ...k, port: v } }))),
+    field('Page', number(k.page, v => up(c, { companion: { ...k, page: v } }))),
+    field('Row', number(k.row, v => up(c, { companion: { ...k, row: v } }))),
+    field('Column', number(k.column, v => up(c, { companion: { ...k, column: v } }))),
+    field('Action', select(actions, k.action, v => up(c, { companion: { ...k, action: v } }))));
+}
+function tabTimecode(c) {
+  const tc = c.tc_trigger || null;
+  const fpsOpts = (W.options.fps || []);
+  const cur = tc ? tc.fps : (fpsOpts[0] ? fpsOpts[0].value : 'Fps25');
+  const frames = tc ? tc.frames : 0;
+  const fps = (fpsOpts.find(o => o.value === cur) || { value: cur, label: cur });
+  const f = Number(String(fps.label).replace(/[^0-9]/g, '')) || 25;
+  const hmsf = [Math.floor(frames / (f * 3600)), Math.floor(frames / (f * 60)) % 60, Math.floor(frames / f) % 60, frames % f];
+  const commit = (h2, m2, s2, fr2) => {
+    const total = ((h2 * 3600 + m2 * 60 + s2) * f) + fr2;
+    up(c, { tc_trigger: { frames: total, fps: fps.value } });
+  };
+  return h('div', { class: 'form' },
+    field('FPS', select(fpsOpts, fps.value, v => up(c, { tc_trigger: { frames, fps: v } }))),
+    field('Trigger', h('div', { class: 'inline' },
+      number(hmsf[0], v => commit(v, hmsf[1], hmsf[2], hmsf[3])), 'h',
+      number(hmsf[1], v => commit(hmsf[0], v, hmsf[2], hmsf[3])), 'm',
+      number(hmsf[2], v => commit(hmsf[0], hmsf[1], v, hmsf[3])), 's',
+      number(hmsf[3], v => commit(hmsf[0], hmsf[1], hmsf[2], v)), 'f')),
+    field('Clear', h('button', { onclick: () => up(c, { tc_trigger: null }) }, 'Remove trigger')));
+}
+function tabScript(c) {
+  return h('div', { class: 'form' },
+    field('JavaScript', h('textarea', { rows: 10, value: c.script || '', onchange: e => up(c, { script: e.target.value }) })),
+    field('Run Test', h('button', { onclick: () => send('run_script', { id: c.id }) }, 'Run in WebView')));
 }
 function tabData(c) {
   const targets = allCues().filter(x => x.cue_type === 'Html').map(x => ({ value: x.id, label: x.number + '  ' + x.name }));
