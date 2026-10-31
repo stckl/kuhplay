@@ -5,6 +5,10 @@
 //! * Lifecycle gegen ffmpeg mit `-f null -` (gleiches rawvideo-Setup wie
 //!   Decklink, aber ohne Hardware – skipped, wenn ffmpeg fehlt)
 
+// Ein Teil der Tests ist `#[cfg(unix)]` (cat/ffmpeg als Sink); auf Windows
+// bleiben einzelne Imports ungenutzt.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
 use std::time::Duration;
 
 use kuhplay::core::{Stage, StageGeometry};

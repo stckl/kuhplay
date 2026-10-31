@@ -9,6 +9,10 @@
 //!   EngineEvent::Error durchgereicht), EvalJs/PushJson bestätigt
 //! * Engine: Fallback auf virtuellen Modus, wenn das Binary fehlt
 
+// Die Shell-Script-Tests sind `#[cfg(unix)]`; auf Windows bleiben Imports/Helper
+// ungenutzt – daher das crate-level allow für nicht-unix.
+#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
+
 use std::path::PathBuf;
 use std::time::Duration;
 
