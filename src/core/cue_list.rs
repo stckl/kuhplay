@@ -546,14 +546,14 @@ impl CueList {
         self.cursor = index + 1;
         self.select_id(Some(id));
 
-        let cue_type = self.cues[index].cue_type;
-        let group_mode = self.cues[index].group_mode;
         let mut commands = Vec::new();
-
-        match cue_type {
-            CueType::Group => self.go_group(index, group_mode, &mut commands),
-            CueType::Control => self.go_control(index, &mut commands),
-            _ => self.go_single(index, &mut commands),
+        self.trigger_at(index, &mut commands);
+        // Follow-Kette synchron weiterführen, wenn der getriggerte Cue sie selbst
+        // anstößt (Sofort-Cue + AutoContinue bzw. Playing + AutoFollow, Review B6/B7).
+        // Iterativ mit Guard in continue_chain_from – kein rekursiver Aufruf aus
+        // go_single, sonst hebelt der sich selbst aus. Playhead folgt der Kette.
+        if let Some(last) = self.continue_chain_from(index, &mut commands) {
+            self.cursor = self.cursor.max(last + 1);
         }
 
         Some(GoOutcome { index, commands })
@@ -626,38 +626,40 @@ impl CueList {
 
     /// Triggert einen einzelnen (Nicht-Group-)Cue.
     fn go_single(&mut self, index: usize, commands: &mut Vec<EngineCommand>) {
-        let cue = &mut self.cues[index];
-        // Ungültige Konfiguration (z. B. HTML-Cue ohne Quelle, Data-Cue mit
-        // kaputtem JSON) → kontrollierter Error-Zustand, kein Panic.
-        if cue.validate_trigger().is_err() {
-            let _ = cue.transition_status(CueStatus::Error);
-            return;
-        }
-        let command = cue.build_trigger_command();
-        match &command {
-            // Sofort-Cues (Stop, leere Container, JSON-Push, Network, MIDI,
-            // DMX): direkt abgeschlossen – das Kommando geht an die Engine.
-            Some(EngineCommand::StopAll)
-            | Some(EngineCommand::PushJson { .. })
-            | Some(EngineCommand::SendNetwork { .. })
-            | Some(EngineCommand::SendMidi { .. })
-            | Some(EngineCommand::SendDmx { .. })
-            | Some(EngineCommand::SendHttpPost { .. })
-            | None => {
-                let _ = cue.transition_status(CueStatus::Completed);
+        {
+            let cue = &mut self.cues[index];
+            // Ungültige Konfiguration (z. B. HTML-Cue ohne Quelle, Data-Cue mit
+            // kaputtem JSON) → kontrollierter Error-Zustand, kein Panic.
+            if cue.validate_trigger().is_err() {
+                let _ = cue.transition_status(CueStatus::Error);
+                return;
             }
-            Some(_) => {
-                let next = if cue.pre_wait > Duration::ZERO {
-                    CueStatus::PreWait
-                } else {
-                    CueStatus::Playing
-                };
-                let _ = cue.transition_status(next);
+            let command = cue.build_trigger_command();
+            match &command {
+                // Sofort-Cues (Stop, leere Container, JSON-Push, Network, MIDI,
+                // DMX): direkt abgeschlossen – das Kommando geht an die Engine.
+                Some(EngineCommand::StopAll)
+                | Some(EngineCommand::PushJson { .. })
+                | Some(EngineCommand::SendNetwork { .. })
+                | Some(EngineCommand::SendMidi { .. })
+                | Some(EngineCommand::SendDmx { .. })
+                | Some(EngineCommand::SendHttpPost { .. })
+                | None => {
+                    let _ = cue.transition_status(CueStatus::Completed);
+                }
+                Some(_) => {
+                    let next = if cue.pre_wait > Duration::ZERO {
+                        CueStatus::PreWait
+                    } else {
+                        CueStatus::Playing
+                    };
+                    let _ = cue.transition_status(next);
+                }
+            };
+            if let Some(command) = command {
+                commands.push(command);
+                push_volume_command(cue, commands);
             }
-        }
-        if let Some(command) = command {
-            commands.push(command);
-            push_volume_command(cue, commands);
         }
     }
 
@@ -886,6 +888,9 @@ impl CueList {
             commands.push(command);
             push_volume_command(cue, commands);
         }
+        // Follow-Kette ab diesem Cue (Sofort-Cue + AutoContinue bzw. Playing +
+        // AutoFollow) – ohne Playhead-Bewegung (Review B6/B7).
+        let _ = self.continue_chain_from(index, commands);
         true
     }
 
@@ -929,22 +934,91 @@ impl CueList {
         id: Uuid,
         status: CueStatus,
     ) -> (ShowResult<()>, Vec<EngineCommand>) {
+        // Nur bei echter Statusänderung folgen: `transition_status` ist idempotent
+        // (same→same = Ok ohne Änderung). Ohne diese Prüfung feuert z. B. bei
+        // Post-Wait 0 sowohl `Finished` (→ Completed) als auch `PostWaitElapsed`
+        // (→ Completed) und der Folge-Cue würde doppelt gefeuert (Review B6).
+        let prev = self.find_cue(id).map(|c| c.status);
         let result = self.set_status(id, status);
+        let changed = result.is_ok() && prev.is_some_and(|p| p != status);
         let mut commands = Vec::new();
-        let follow = self
-            .find_cue(id)
-            .map(|c| match status {
-                CueStatus::Playing => c.continue_mode == ContinueMode::AutoFollow,
-                CueStatus::Completed => c.continue_mode == ContinueMode::AutoContinue,
-                _ => false,
-            })
-            .unwrap_or(false);
+        let follow = changed
+            && self
+                .find_cue(id)
+                .map(|c| match status {
+                    CueStatus::Playing => c.continue_mode == ContinueMode::AutoFollow,
+                    CueStatus::Completed => c.continue_mode == ContinueMode::AutoContinue,
+                    _ => false,
+                })
+                .unwrap_or(false);
         if follow {
             if let Some(outcome) = self.go() {
                 commands = outcome.commands;
             }
         }
         (result, commands)
+    }
+
+    /// Triggert den Cue an `index` (Dispatch wie in [`CueList::go`], aber ohne
+    /// Cursor-/Selektions-Update – für Auto-Continue-Ketten ab Mit-Cue).
+    fn trigger_at(&mut self, index: usize, commands: &mut Vec<EngineCommand>) {
+        let cue_type = self.cues[index].cue_type;
+        let group_mode = self.cues[index].group_mode;
+        match cue_type {
+            CueType::Group => self.go_group(index, group_mode, commands),
+            CueType::Control => self.go_control(index, commands),
+            _ => self.go_single(index, commands),
+        }
+    }
+
+    /// Follow-Kette ab Cue `index`: feuert den nächsten armed Standby-Cue, solange
+    /// der aktuelle Cue seine Folge selbst feuert – `Completed` + AutoContinue bzw.
+    /// `Playing` + AutoFollow. Läuft synchron in der Liste, weil Sofort-Cues
+    /// (Memo/MIDI/Network/Light/Companion) kein Engine-Event erzeugen (Review B7)
+    /// und weil `go()` den Status Playing schon direkt setzt (das spätere
+    /// Engine-`Started`-Event ist dann keine Statusänderung mehr und feuert dank
+    /// der Änderungsprüfung in `set_status_with_follow` nicht doppelt, Review B6).
+    /// Schutz vor Endlosketten: max. 100 Verkettungen.
+    /// Rückgabe: Index des letzten per Kette gefeuerten Cues (für den Playhead).
+    fn continue_chain_from(
+        &mut self,
+        index: usize,
+        commands: &mut Vec<EngineCommand>,
+    ) -> Option<usize> {
+        const MAX_CHAIN: usize = 100;
+        let mut current = index;
+        let mut last_fired: Option<usize> = None;
+        for _ in 0..MAX_CHAIN {
+            let Some(cue) = self.cues.get(current) else {
+                return last_fired;
+            };
+            let should_follow = matches!(
+                (cue.status, cue.continue_mode),
+                (CueStatus::Completed, ContinueMode::AutoContinue)
+                    | (CueStatus::Playing, ContinueMode::AutoFollow)
+            );
+            if !should_follow {
+                return last_fired;
+            }
+            let Some(next) = self
+                .cues
+                .iter()
+                .enumerate()
+                .skip(current + 1)
+                .find(|(_, c)| c.is_armed && c.status == CueStatus::Standby)
+                .map(|(i, _)| i)
+            else {
+                return last_fired;
+            };
+            self.trigger_at(next, commands);
+            last_fired = Some(next);
+            match self.cues[next].status {
+                // Folge-Cue läuft oder ist sofort fertig → Kette läuft weiter.
+                CueStatus::Playing | CueStatus::Completed => current = next,
+                _ => return last_fired,
+            }
+        }
+        last_fired
     }
 
     /// Schließt eine Gruppe, wenn alle getriggerten Kinder abgeschlossen
@@ -1639,15 +1713,27 @@ mod tests {
         list.add(audio("1").with_continue_mode(ContinueMode::AutoFollow));
         list.add(audio("2"));
 
-        let _ = list.go().unwrap();
+        // Auto-Follow feuert synchron in go(), sobald der Cue Playing ist
+        // (Review B6/B7: das spätere Engine-Started-Event ist keine Änderung mehr).
+        let outcome = list.go().unwrap();
         let id1 = list.cues()[0].id;
-        // Start (Playing nach Pre-Wait) → Auto-Follow triggert Cue 2 sofort.
-        let (result, commands) = list.set_status_with_follow(id1, CueStatus::Playing);
-        result.unwrap();
-        assert_eq!(commands.len(), 1, "nächster Cue bekommt ein Play-Command");
-        assert!(matches!(commands[0], EngineCommand::Play { .. }));
+        assert!(
+            outcome
+                .commands
+                .iter()
+                .any(|c| matches!(c, EngineCommand::Play { cue_id, .. } if *cue_id != id1)),
+            "Auto-Follow triggert Cue 2 direkt in go()"
+        );
         assert_eq!(list.cues()[1].status, CueStatus::Playing);
         assert_eq!(list.cursor(), 2);
+
+        // Wiederholtes Playing (Engine-Started-Event) → kein Doppel-Feuern.
+        let (result, commands) = list.set_status_with_follow(id1, CueStatus::Playing);
+        result.unwrap();
+        assert!(
+            commands.is_empty(),
+            "kein Doppel-Feuern beim wiederholten Start"
+        );
 
         // Beim Abschluss (Completed) feuert Auto-Follow NICHT mehr.
         let (_, commands) = list.set_status_with_follow(id1, CueStatus::Completed);

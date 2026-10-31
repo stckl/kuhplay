@@ -23,6 +23,10 @@ hergibt, gilt das.
   anpassen, damit er wieder grün wird, sondern im Commit begründen.
 - Die App nicht im Vordergrund starten und keine Vollbild-Screenshots machen; headless
   egui-Tests bevorzugen.
+- In Code, Kommentaren, Tests, Commit-Nachrichten und Doku QLab nicht mehr neu erwähnen,
+  sondern das Verhalten beschreiben. Nur dieser Arbeitsauftrag nennt es noch als Referenz; die
+  vorhandenen Erwähnungen werden nach Abschluss in einem eigenen Durchgang bereinigt, bitte
+  nicht vorher.
 
 ```sh
 cargo fmt
@@ -69,7 +73,7 @@ cargo check --target x86_64-pc-windows-msvc --features webview
 
 ## Block B: Follow-Logik (ein Commit)
 
-- [ ] **6. Auto-Continue startet zwei Cues statt einem** (kritisch)
+- [x] **6. Auto-Continue startet zwei Cues statt einem** (kritisch)
   - Ort: `CueList::set_status_with_follow` (`src/core/cue_list.rs:927`, `:943`),
     `poll_engine_events` (`src/gui/app.rs:2626`).
   - Problem: Bei Post-Wait 0 kommt `Finished` (→ `Completed`, GO) und danach
@@ -78,7 +82,7 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     1=Completed, **2=Playing, 3=Playing**. Erwartet ist 3=Standby.
   - Fix: Follow nur, wenn der Status sich wirklich geändert hat. Dasselbe für Auto-Follow
     bei wiederholtem `Started` prüfen. Mit Mock- und Real-Engine testen.
-- [ ] **7. Auto-Continue/Auto-Follow bleiben bei Sofort-Cues stehen** (kritisch)
+- [x] **7. Auto-Continue/Auto-Follow bleiben bei Sofort-Cues stehen** (kritisch)
   - Ort: `go_single`, `go_group`, `trigger_by_number` (`src/core/cue_list.rs:628`, `:665`,
     `:853`); `finish_send` (`src/engine/real_engine.rs:1087`) meldet bei Erfolg nichts.
   - Beleg: Memo und MIDI mit AutoContinue: Der Folge-Cue bleibt `Standby`. Für Network,
@@ -155,6 +159,60 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     (`WEBVIEW_SNAPSHOT_INTERVAL`). §1 nennt außerdem nicht, dass die Rate nur der angeforderte
     Takt ist; die tatsächliche Bildrate ist nicht gemessen.
 
+## Block G: DeckLink direkt über das SDK, ffmpeg mitliefern (vor Block F)
+
+**Ziel:** DeckLink läuft auf Windows, macOS und Linux direkt über das Blackmagic SDK, ohne
+ffmpeg dazwischen. ffmpeg wird nur noch zum Dekodieren genutzt und mit der App ausgeliefert.
+
+**Grund:** `decklink` steht in ffmpeg auf der Nonfree-Liste, solche Builds dürfen nicht
+weitergegeben werden. Das lokale Homebrew-ffmpeg 9.0.2 enthält es auch nicht.
+
+**Voraussetzung:** Das Blackmagic DeckLink SDK liegt lokal in `third_party/blackmagic-sdk/`
+(per `.gitignore` ausgeschlossen). Fehlt es dort, stoppen und melden, keine Header aus dem
+Gedächtnis nachbauen. Vor dem Einchecken von Headern die SDK-Lizenz prüfen.
+
+- [ ] **G1. Farbraum korrigieren** (zuerst, klein und eigener Commit)
+  - Ort: `rgba_to_uyvy422` (`src/engine/decklink.rs`) rechnet immer mit BT.601.
+  - Fix: BT.709 für HD und UHD, BT.601 nur für SD. Tests mit bekannten Farbwerten.
+- [ ] **G2. 29,97 und 59,94 fps korrigieren**
+  - Ort: `bmd_display_mode`, `DecklinkConfig.fps`, `frame_interval`
+    (`src/engine/real_engine.rs:447`).
+  - Problem (aus dem Code): `fps = 2997` wählt den richtigen Modus, die Engine taktet dann aber
+    mit `1.0 / 2997` Sekunden. `fps = 29` taktet mit 29 statt 29,97.
+  - Fix: Bildrate als Bruch führen (30000/1001), Test für das Intervall.
+- [ ] **G3. Native Ausgabe auf macOS und Linux**
+  - Kleine C++-Brücke mit der `DeckLinkAPIDispatch` des SDK, die den Treiber zur Laufzeit lädt.
+    Die App muss ohne installierten Treiber starten und dann eine klare Meldung zeigen.
+  - Der Build muss auch ohne SDK durchlaufen, z. B. über ein Cargo-Feature, und die Build-Skripte
+    für die Releases aktivieren es.
+  - Gemeinsame Schnittstelle mit `decklink_com.rs`, Funktionen wie unter Windows: Geräteliste,
+    Ausgabe, UYVY-Frames. Keine Plattformweiche außerhalb des DeckLink-Moduls.
+- [ ] **G4. Scheduled Playback auf allen Systemen**
+  - `DisplayVideoFrameSync` durch geplante Ausgabe mit der Karte als Taktgeber ersetzen, verspätete
+    und verlorene Bilder zählen und im Status anzeigen. Key und Fill laufen synchron.
+- [ ] **G5. Formate und Geräteauswahl**
+  - Fehlende Modi ergänzen, mindestens UHD (3840×2160); Modi und Geräte von der Karte abfragen
+    statt nur fester Tabelle.
+  - Karten im Route-Editor zur Auswahl anbieten statt festem Namen
+    (`src/gui/workspace_settings.rs:1358`) und Umgebungsvariablen. Klare Meldungen für fehlenden
+    Treiber und nicht unterstützte Formate.
+  - Im Stil von `docs/UI.md`; die Web-Remote bekommt dieselbe Auswahl.
+- [ ] **G6. ffmpeg-Ausgabeweg entfernen**
+  - Erst nach G3 und G4: `DecklinkOutput`, `ffmpeg_decklink_args`, `KUHPLAY_DECKLINK_BACKEND`,
+    `pix_fmt`, den Fallback in `DecklinkSink` und die Tests dazu entfernen. README und falschen
+    Kommentar in `decklink.rs` anpassen.
+- [ ] **G7. ffmpeg und ffprobe mitliefern**
+  - `probe` nutzt fest `ffprobe` aus dem `PATH` (`src/engine/video_backend.rs:448`). Die Suche aus
+    `ffmpeg_binary()` auch für ffprobe verwenden, mit Test.
+  - Build-Skripte legen beide Programme neben die App, auf dem Mac in das App-Bundle: LGPL-Build
+    ohne GPL- und Nonfree-Teile, Lizenztext und Quellenhinweis liegen bei. Die Hardware-Decoder
+    müssen weiter funktionieren.
+  - Fehlende Programme klar melden, und ein Video-Test läuft ohne ffmpeg im `PATH`.
+- [ ] **G8. Test auf echter Hardware**
+  - Vorhandene Karten auf Mac und ZBOOK nach Absprache mit einem deaktivierten Test wie dem
+    Windows-Test prüfen: Dauerlauf, Farben, Key/Fill, Bildaussetzer. Linux bleibt ohne
+    Hardware-Test, falls keine Karte verfügbar ist; das im Commit und im README nennen.
+
 ## Block F: Look and Feel wie QLab 5 (zum Schluss, nach den Blöcken A–E)
 
 **Ziel:** Wer QLab 5 kennt, findet sich ohne Umlernen zurecht, vor allem blind per Tastatur.
@@ -194,13 +252,8 @@ aus Tabelle und Doku folgen, vor der Umsetzung kurz im Code bestätigen.
   - Bearbeiten: ⌘X/⌘C/⌘V, ⇧⌘V, ⌘A, ⌘R Renumber, ⌘T Load to Time.
   - Ansicht: ⇧⌘I, ⇧⌘L, ⌘B, ⇧⌘F; Modus ⇧⌘[ und ⇧⌘].
   - Einzelbuchstaben dürfen in Textfeldern nicht auslösen (Registry `text_field_ids`).
-- [ ] **F1.8 Parity-Doku korrigieren:**
-  - „The Workspace“ und „Keyboard Shortcuts“ auf 🟡 setzen.
-  - „keine Toolbar“ steht dort als QLab-Eigenschaft, das Handbuch beschreibt aber eine
-    Toolbar im Masthead.
-  - Sidebar-Transport steht in der Doku, liegt im Code aber im Masthead.
-  - Veraltet: „kein Mic/Camera/Light/MIDI“ (Abweichung 8), „Fades haben kein Ziel“
-    (The Inspector), HTML5 „noch virtuell“ (Abweichung 3).
+- [x] **F1.8 entfällt:** `docs/qlab5-parity.md` wird nicht mehr gepflegt und nach diesem
+  Auftrag entfernt. Offene Funktionen stehen in `docs/BACKLOG.md`.
 - [ ] **F1.9 Sichtprüfung:** Erst nach Absprache einen Termin finden, an dem der Rechner
   frei ist; nur das App-Fenster aufnehmen und nicht in den Vordergrund holen. Vergleich mit
   QLab 5: Zeilenhöhen, Schriften, Kontraste, Statussymbole.
