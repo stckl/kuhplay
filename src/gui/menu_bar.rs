@@ -263,6 +263,16 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 }
             }
         });
+        ui.menu_button("Tools", |ui| {
+            if ui
+                .button("File Target Search…")
+                .on_hover_text("List all file targets of the show (audio/video/HTML/slides) and jump to their cues")
+                .clicked()
+            {
+                app.ui.target_search_open = true;
+                ui.close_menu();
+            }
+        });
         ui.menu_button("Workspace", |ui| {
             ui.checkbox(&mut app.audition_mode, "Audition Mode")
                 .on_hover_text(

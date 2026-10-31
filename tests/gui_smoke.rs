@@ -2171,3 +2171,42 @@ fn copy_paste_cue_properties() {
     assert_eq!(pasted.pre_wait, Duration::from_secs(2));
     assert_ne!(pasted.id, ids[0], "ID darf nicht übernommen werden");
 }
+
+#[test]
+fn target_search_window_lists_file_targets_and_filters() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    app.ui.target_search_open = true;
+    // Fenster brauchen 2 Pässe (erster = Sizing).
+    let mut out = render_frame(&ctx, &mut app);
+    for _ in 0..2 {
+        out = render_frame(&ctx, &mut app);
+    }
+    assert!(
+        output_has_text(&out, "File Target Search"),
+        "Fenster-Titel fehlt"
+    );
+    assert!(output_has_text(&out, "file targets"), "Zähler-Zeile fehlt");
+    // Demo-Show hat Datei-Ziele (z. B. intro.mp4).
+    assert!(
+        output_has_text(&out, "intro.mp4"),
+        "Datei-Ziel intro.mp4 fehlt"
+    );
+
+    // Filter auf einen nicht vorhandenen Pfad → 0 Treffer.
+    app.ui.target_search_query = "gibt-es-nicht-xyz".to_string();
+    out = render_frame(&ctx, &mut app);
+    assert!(
+        output_has_text(&out, "0 of"),
+        "Filter muss Trefferzahl auf 0 drücken"
+    );
+
+    // Filter auf „intro" → genau der eine Treffer bleibt sichtbar.
+    app.ui.target_search_query = "intro".to_string();
+    out = render_frame(&ctx, &mut app);
+    assert!(
+        output_has_text(&out, "1 of"),
+        "Filter 'intro' muss 1 Treffer liefern"
+    );
+    assert!(output_has_text(&out, "intro.mp4"));
+}

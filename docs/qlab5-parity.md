@@ -66,12 +66,12 @@ jedem Feature-Schritt aktualisiert.
 
 | Kapitel | Status | Anmerkung |
 |---------|--------|-----------|
-| Tools Menu | ⬜ | — |
+| Tools Menu | 🟡 | eigenes Menü „Tools" mit File Target Search; Launcher/Status-Fenster ⬜ |
 | Find | ✅ | Find-Leiste über der Cue-Liste (⌘F, matcht Q#/Name/Notes, Enter/⌘G nächster Treffer, Treffer-Highlight + Playhead springt mit) |
 | Paste Cue Properties | ✅ | Edit-Menü „Copy/Paste Cue Properties": Properties (ohne ID/Nummer/Status) in Zwischenablage, Paste merged auf alle selektierten Cues |
 | Launcher Window | ⬜ | — |
 | Workspace Status Window | ⬜ | — |
-| File Target Search Tool | ⬜ | — |
+| File Target Search Tool | ✅ | Tools → „File Target Search…": Fenster listet alle Datei-Ziele über alle Carts inkl. Gruppen-Kinder (Audio/Video/HTML-Datei/Slides), Filter auf Pfad/Q#/Name, Klick springt zum Cue (Cart aktiv + selektiert + Playhead). Reiner Lesezugriff – Pfade umschreiben ⬜ (bewusste Abweichung). `src/gui/target_search.rs` |
 | Monitor Windows | ⬜ | — |
 | Timecode Status Window | ⬜ | — |
 | Auditioning Cues | 🟡 | Audition Mode (Masthead-Pill + Workspace Settings): Video-Cues ohne Stage spielen trotzdem (Preview); noch kein separates Audition-Fenster |

@@ -100,6 +100,11 @@ pub struct UiState {
     pub about_open: bool,
     /// „Keyboard Shortcuts"-Fenster geöffnet (TODO.md Phase 5).
     pub shortcuts_open: bool,
+    /// „File Target Search"-Fenster geöffnet (QLab 5 Tools-Menü).
+    pub target_search_open: bool,
+    /// Filter-Query des File-Target-Search-Fensters (reiner Laufzeit-Zustand).
+    #[serde(skip)]
+    pub target_search_query: String,
     /// Test-Grid über allen Regionen der Stages an (Footer-Icon; im Show-Mode
     /// immer aus).
     pub test_grid: bool,
@@ -147,6 +152,8 @@ impl Default for UiState {
             workspace_settings_page: SettingsPage::General,
             about_open: false,
             shortcuts_open: false,
+            target_search_open: false,
+            target_search_query: String::new(),
             test_grid: false,
             find: FindState::default(),
             cue_columns: CueColumnLayout::default(),

@@ -58,8 +58,8 @@ use crate::remote::{
 
 use super::shortcuts::ShortcutAction;
 use super::{
-    cue_table, footer, inspector, masthead, menu_bar, shortcuts, sidebar, stage_view, theme,
-    toolbox,
+    cue_table, footer, inspector, masthead, menu_bar, shortcuts, sidebar, stage_view,
+    target_search, theme, toolbox,
 };
 
 /// Tab-Auswahl der Sidebar (QLab 5: „Lists & Carts" / „Active Cues";
@@ -3089,6 +3089,9 @@ impl ShowApp {
         // „Keyboard Shortcuts"-Fenster (Help-Menü, TODO.md Phase 5):
         // rendert dieselbe zentrale Tabelle wie Menüs und Hotkeys.
         shortcuts::draw_window(ctx, &mut self.ui.shortcuts_open);
+
+        // „File Target Search" (Tools-Menü, QLab 5 Workflow-Tool).
+        target_search::draw(ctx, self);
 
         stage_view::draw_route_previews(self, ctx);
 
