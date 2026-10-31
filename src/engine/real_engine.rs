@@ -59,7 +59,7 @@ use super::route_renderer;
 use super::video_backend::VideoBackend;
 use super::webview_backend::{webview_binary, WebviewInstance};
 use super::{EngineCommand, EngineEvent, MediaEngine};
-use crate::core::RouteManager;
+use crate::core::{OutputRoute, RouteManager};
 
 /// Tick-Intervall der Engine (Real-Uhr).
 // 16 ms: Stage-/Routen-Re-Render mindestens mit ~60 Hz, damit Videoausgabe
@@ -808,16 +808,50 @@ impl RealMediaEngine {
         }
 
         let dirty = self.compositor.take_dirty();
+        if dirty.is_empty() {
+            return;
+        }
+        // Phase 1: Jobs sammeln (Canvas + Surfaces pro Stage, immutable Borrows).
+        let mut jobs: Vec<(String, (u32, u32), Vec<SurfaceEntry>)> = Vec::new();
         for stage_name in dirty {
             let canvas = canvas_size(&self.stages, &stage_name);
             let surfaces = self.surfaces_of_stage(&stage_name);
-            self.compositor
-                .composite(&stage_name, canvas, &surfaces, &self.stage_frames);
-            // Dirty-Tracking aktualisieren.
+            jobs.push((stage_name, canvas, surfaces));
+        }
+        // Phase 2: parallel komponieren (reine Funktion, std::thread::scope).
+        let rendered: Vec<(String, (u32, u32), Vec<u8>)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = jobs
+                .iter()
+                .map(|(name, canvas, surfaces)| {
+                    scope.spawn(move || {
+                        (
+                            name.clone(),
+                            *canvas,
+                            super::compositor::composite_canvas(*canvas, surfaces),
+                        )
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("stage composite thread"))
+                .collect()
+        });
+        // Phase 3: in den Store legen + Dirty-Tracking + Routen markieren.
+        for (stage_name, canvas, rgba) in rendered {
+            let (cw, ch) = (canvas.0.max(1), canvas.1.max(1));
+            self.stage_frames
+                .lock()
+                .unwrap()
+                .insert(stage_name.clone(), Arc::new(VideoFrame::new(cw, ch, rgba)));
+            // Surfaces für note_composited nachziehen.
+            let surfaces = self.surfaces_of_stage(&stage_name);
             let frames = self.frames.lock().unwrap();
             let opacities = self.opacities.lock().unwrap();
             self.compositor
                 .note_composited(&stage_name, &surfaces, &frames, &opacities);
+            drop(frames);
+            drop(opacities);
             // Stage-Canvas hat sich geaendert -> alle Routen dieser Stage
             // neu rendern (Regionen verweisen auf Routen).
             if let Some(stage) = self.stages.get(&stage_name) {
@@ -844,16 +878,47 @@ impl RealMediaEngine {
         if dirty.is_empty() {
             return;
         }
+        // Jobs: Route klonen; fehlende Route → aus dem Store nehmen.
+        let mut jobs: Vec<OutputRoute> = Vec::new();
+        {
+            let mut route_frames = self.route_frames.lock().unwrap();
+            for route_id in dirty {
+                match self.routes.find(route_id).cloned() {
+                    Some(route) => jobs.push(route),
+                    None => {
+                        route_frames.remove(&route_id);
+                    }
+                }
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        // render_route sortiert die Stages selbst (Layer-Regel); reine Funktion
+        // → parallel über alle dirty Routen rendern.
+        let stages: Vec<Stage> = self.stages.values().cloned().collect();
+        let stage_frames = self.stage_frames.lock().unwrap().clone();
+        let stages_ref = &stages;
+        let frames_ref = &stage_frames;
+        let rendered: Vec<(Uuid, VideoFrame)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = jobs
+                .iter()
+                .map(|route| {
+                    scope.spawn(move || {
+                        (
+                            route.id,
+                            route_renderer::render_route(route, stages_ref, frames_ref),
+                        )
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("route render thread"))
+                .collect::<Vec<(Uuid, VideoFrame)>>()
+        });
         let mut route_frames = self.route_frames.lock().unwrap();
-        for route_id in dirty {
-            let Some(route) = self.routes.find(route_id).cloned() else {
-                route_frames.remove(&route_id);
-                continue;
-            };
-            // render_route sortiert die Stages selbst (Layer-Regel).
-            let stages: Vec<Stage> = self.stages.values().cloned().collect();
-            let stage_frames = self.stage_frames.lock().unwrap().clone();
-            let frame = route_renderer::render_route(&route, &stages, &stage_frames);
+        for (route_id, frame) in rendered {
             route_frames.insert(route_id, Arc::new(frame));
         }
     }

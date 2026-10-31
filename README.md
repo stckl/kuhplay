@@ -81,6 +81,14 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS`, `_PIXFMT` | Decklink-Ausgabe über ffmpeg: Die Stage liefert über ihre Region das Route-Bild auf die Karte | aus |
 | `KUHPLAY_DECKLINK_KEY_DEVICE` | Zweiter Decklink-Port für Key/Fill: Key-Route der Stage (Alpha) als Luma auf SDI | aus |
 | `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
+| `KUHPLAY_HWACCEL` | `off` schaltet Hardware-Dekodierung ab (VideoToolbox/NVDEC/VAAPI/DXVA, auto mit Software-Fallback) | an |
+
+**Performance:** Video-Dekodierung läuft per Hardware-Beschleunigung (auto,
+Abschalten mit `KUHPLAY_HWACCEL=off`). Compositing/Routen-Rendering ist
+CPU-seitig, aber mit Fast Paths (1:1-Memcpy, inkrementelle Skalierung) und
+parallel über alle Stage-/Routen-Kerne; nur geänderte Stages/Routen werden neu
+gerechnet (Dirty-Tracking). GPU-Compositing (wgpu) ist als nächster Schritt
+notiert (docs/TODO-offen.md).
 
 ## Release bauen
 

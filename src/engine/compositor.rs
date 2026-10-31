@@ -132,6 +132,21 @@ impl Compositor {
         surfaces: &[SurfaceEntry],
         stage_frames: &StageFrameStore,
     ) {
+        let out = composite_canvas(canvas, surfaces);
+        let (cw, ch) = (canvas.0.max(1), canvas.1.max(1));
+        let canvas_frame = Arc::new(VideoFrame::new(cw, ch, out));
+        stage_frames
+            .lock()
+            .unwrap()
+            .insert(stage_name.to_string(), canvas_frame);
+    }
+}
+
+/// Reine Compositing-Funktion: rendert ein Stage-Canvas (transparenter
+/// Hintergrund, echtes Over-Alpha mit Fast Paths) als RGBA-Puffer.
+/// Thread-sicher/parallel aufrufbar (keine &self-Abhängigkeit).
+pub fn composite_canvas(canvas: (u32, u32), surfaces: &[SurfaceEntry]) -> Vec<u8> {
+    {
         let (cw, ch) = (canvas.0.max(1), canvas.1.max(1));
         let mut out = vec![0u8; (cw as usize) * (ch as usize) * 4];
         // Hintergrund: transparent (Alpha 0) – Key/Fill braucht echte Alpha-
@@ -172,23 +187,56 @@ impl Compositor {
             let dest_h = (dy1 - dy0) as usize;
             let src_stride = frame.width as usize;
 
+            // Fast Path: Quelle deckt die gesamte Canvas 1:1 und ist voll
+            // deckend → kompletten Puffer per memcpy (kein Per-Pixel-Loop).
+            if alpha_base >= 1.0
+                && surface.blend_mode == crate::core::BlendMode::SourceOver
+                && dx0 == 0
+                && dy0 == 0
+                && dest_w == cw as usize
+                && dest_h == ch as usize
+                && src_w == frame.width as usize
+                && src_h == frame.height as usize
+                && frame.rgba.len() == out.len()
+                && sx0 == 0
+                && sy0 == 0
+                && surface.hard_edge_factor(0.5, 0.5) >= 1.0
+            {
+                // noch prüfen, ob die Quelle überall alpha=255 → dann copy,
+                // sonst pro Pixel (Alpha < 255 → Over-Pfad unten greift eh).
+                if frame.rgba.chunks_exact(4).all(|px| px[3] == 255) {
+                    out.copy_from_slice(&frame.rgba);
+                    continue;
+                }
+            }
+
+            // Hard-Edge-Faktor: ohne gesetzte Kante überall 1.0 → pro Pixel sparen.
+            let has_edge = surface.hard_edge.is_some();
+            // Schrittweiten einmal pro Surface (statt Division pro Pixel).
+            let step_x = src_w as f32 / dest_w as f32;
+            let step_y = src_h as f32 / dest_h as f32;
+            let mut src_y_f = 0.5f32;
             for dy in 0..dest_h {
                 let py = (dy0 + dy as u32) as f32 + 0.5;
                 // Quell-Y (Nearest-Neighbor innerhalb des AoI).
-                let sy = (sy0 as usize
-                    + ((dy as f32 + 0.5) / dest_h as f32 * src_h as f32) as usize)
-                    .min((sy1 - 1) as usize);
+                let sy = (sy0 as usize + (src_y_f * step_y) as usize).min((sy1 - 1) as usize);
+                src_y_f += 1.0;
+                let mut src_x_f = 0.5f32;
                 for dx in 0..dest_w {
                     let px = (dx0 + dx as u32) as f32 + 0.5;
-                    // Hard-Edge-Faktor an dieser Canvas-Position.
-                    let edge = surface.hard_edge_factor(px, py);
+                    // Hard-Edge-Faktor an dieser Canvas-Position (nur wenn gesetzt).
+                    let edge = if has_edge {
+                        surface.hard_edge_factor(px, py)
+                    } else {
+                        1.0
+                    };
                     if edge <= 0.0 {
+                        src_x_f += 1.0;
                         continue;
                     }
                     let a = alpha_base * edge;
-                    let sx = (sx0 as usize
-                        + ((dx as f32 + 0.5) / dest_w as f32 * src_w as f32) as usize)
-                        .min((sx1 - 1) as usize);
+                    let sx = (sx0 as usize + (src_x_f * step_x) as usize).min((sx1 - 1) as usize);
+                    src_x_f += 1.0;
                     let src = &frame.rgba[(sy * src_stride + sx) * 4..][..4];
                     let dst = &mut out
                         [((dy0 as usize + dy) * cw as usize + dx0 as usize + dx) * 4..][..4];
@@ -198,14 +246,36 @@ impl Compositor {
                     if sa <= 0.0 {
                         continue;
                     }
-                    // Dest-Alpha (Stage-Canvas startet transparent → echtes Over).
-                    let da = dst[3] as f32 / 255.0;
-                    let oa = sa + da * (1.0 - sa);
                     if a >= 1.0 && mode == crate::core::BlendMode::SourceOver && sa >= 1.0 {
-                        // Vollauf deckend + SourceOver: direkter Copy.
+                        // Vollauf deckend + SourceOver: direkter Copy (häufigster Fall).
                         dst.copy_from_slice(src);
+                        continue;
+                    }
+                    // Dest-Alpha (Stage-Canvas startet transparent → echtes Over).
+                    let da = dst[3];
+                    if da == 0 {
+                        // Fast Path: noch transparente Dest → keine Division nötig.
+                        for c in 0..3 {
+                            let s = src[c] as f32;
+                            let blended = mode.mix(0.0, s);
+                            // da == 0 → oa = sa → rgb = blended (keine Division).
+                            dst[c] = blended.round().clamp(0.0, 255.0) as u8;
+                        }
+                        dst[3] = (sa * 255.0).round().clamp(0.0, 255.0) as u8;
+                    } else if da == 255 {
+                        // Fast Path: deckende Dest → oa = 1, alpha bleibt 255.
+                        let da_f = 1.0 - sa;
+                        for c in 0..3 {
+                            let s = src[c] as f32;
+                            let d = dst[c] as f32;
+                            let blended = mode.mix(d, s);
+                            dst[c] = (blended * sa + d * da_f).round().clamp(0.0, 255.0) as u8;
+                        }
+                        dst[3] = 255;
                     } else {
-                        // Farbe evtl. mischen (Blend-Modus), dann "over" mit Alpha.
+                        // General Path: echte Over-Alpha mit Division.
+                        let da = da as f32 / 255.0;
+                        let oa = sa + da * (1.0 - sa);
                         for c in 0..3 {
                             let s = src[c] as f32;
                             let d = dst[c] as f32;
@@ -223,11 +293,7 @@ impl Compositor {
             }
         }
 
-        let canvas_frame = Arc::new(VideoFrame::new(cw, ch, out));
-        stage_frames
-            .lock()
-            .unwrap()
-            .insert(stage_name.to_string(), canvas_frame);
+        out
     }
 }
 
@@ -514,6 +580,71 @@ mod blend_mode_tests {
             &out.rgba[0..4],
             &[0, 0, 255, 255],
             "Screen mit Schwarz ändert Blau nicht"
+        );
+    }
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn composite_1080p_three_layers_stays_fast() {
+        // 3 volle 1080p-Surfaces (opaque, SourceOver → Copy-Fast-Path).
+        let frame = Arc::new(VideoFrame::new(
+            1920,
+            1080,
+            [200u8, 200, 200, 255].repeat(1920 * 1080),
+        ));
+        let surfaces: Vec<SurfaceEntry> = (0..3)
+            .map(|layer| {
+                (
+                    Uuid::new_v4(),
+                    layer,
+                    SurfaceGeometry::full_canvas(),
+                    Some(frame.clone()),
+                    1.0,
+                )
+            })
+            .collect();
+        // Warmup + Timing (großzügige Grenze – nur gegen Pathological-Regression).
+        let t = Instant::now();
+        let out = composite_canvas((1920, 1080), &surfaces);
+        let elapsed = t.elapsed();
+        assert_eq!(out.len(), 1920 * 1080 * 4);
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "1080p-Composite mit 3 Layern zu langsam: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn composite_1080p_alpha_blend_stays_fast() {
+        // Halbtransparente Quelle (Alpha 128) → Over-Alpha-Pfad.
+        let frame = Arc::new(VideoFrame::new(
+            1920,
+            1080,
+            [255u8, 0, 0, 128].repeat(1920 * 1080),
+        ));
+        let surface = SurfaceGeometry {
+            opacity: 0.8,
+            ..SurfaceGeometry::full_canvas()
+        };
+        let surfaces: Vec<SurfaceEntry> = vec![(Uuid::new_v4(), 0, surface, Some(frame), 1.0)];
+        let t = Instant::now();
+        let out = composite_canvas((1920, 1080), &surfaces);
+        let elapsed = t.elapsed();
+        assert_eq!(out.len(), 1920 * 1080 * 4);
+        // Alpha des Ergebnisses: 128/255 * 0.8 ≈ 102.
+        assert!(
+            (out[3] as i32 - 102).abs() <= 2,
+            "alpha ≈ 102, got {}",
+            out[3]
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(800),
+            "1080p-Alpha-Composite zu langsam: {elapsed:?}"
         );
     }
 }

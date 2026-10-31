@@ -156,19 +156,37 @@ pub fn render_region_into(
                 if sa <= 0.0 {
                     continue;
                 }
-                let da = f32::from(dst[3]) / 255.0;
-                let oa = sa + da * (1.0 - sa);
-                for c in 0..3 {
-                    let s = f32::from(src[c]);
-                    let d = f32::from(dst[c]);
-                    dst[c] = if oa > 0.0 {
-                        ((s * sa + d * da * (1.0 - sa)) / oa).round()
-                    } else {
-                        0.0
+                let da = dst[3];
+                if da == 0 {
+                    // Fast Path: transparente Dest → rgb = src, alpha = sa.
+                    dst[0] = src[0];
+                    dst[1] = src[1];
+                    dst[2] = src[2];
+                    dst[3] = (sa * 255.0).round().clamp(0.0, 255.0) as u8;
+                } else if da == 255 || sa >= 1.0 {
+                    // Deckende Dest (oder vollauf deckende Source) → oa = 1.
+                    let inv = 1.0 - sa;
+                    for c in 0..3 {
+                        let s = f32::from(src[c]);
+                        let d = f32::from(dst[c]);
+                        dst[c] = (s * sa + d * inv).round().clamp(0.0, 255.0) as u8;
                     }
-                    .clamp(0.0, 255.0) as u8;
+                    dst[3] = 255;
+                } else {
+                    let da_f = f32::from(da) / 255.0;
+                    let oa = sa + da_f * (1.0 - sa);
+                    for c in 0..3 {
+                        let s = f32::from(src[c]);
+                        let d = f32::from(dst[c]);
+                        dst[c] = if oa > 0.0 {
+                            ((s * sa + d * da_f * (1.0 - sa)) / oa).round()
+                        } else {
+                            0.0
+                        }
+                        .clamp(0.0, 255.0) as u8;
+                    }
+                    dst[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
                 }
-                dst[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
             } else if a >= 1.0 {
                 // Fill-Route: deckend kopieren, Alpha flach auf 255.
                 dst.copy_from_slice(src);

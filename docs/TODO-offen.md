@@ -249,6 +249,24 @@ Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
 
 ---
 
+## Performance / Hardware-Beschleunigung
+
+- **Status:** Dekodierung bereits per hwaccel (VideoToolbox/NVDEC/VAAPI/DXVA,
+  `KUHPLAY_HWACCEL=off` zum Abschalten). Compositor + Route-Renderer jetzt mit
+  Fast Paths (1:1-Memcpy bei deckender Vollbild-Surface, inkrementelle
+  Skalierung statt Division pro Pixel, Alpha-Fast-Paths da==0/da==255) und
+  **parallel über alle Kerne** (Stage-Compositing und Routen-Rendering per
+  `std::thread::scope`); Dirty-Tracking rendert nur Geändertes.
+  Perf-Tests: 1080p-Composite mit 3 Layern ≪ 500 ms (memcpy-Pfad ~ms).
+- **⬜ später:** echtes GPU-Compositing (wgpu): Frames bleiben auf der GPU
+  (Decode → Textur → Composite → Output), spart den RGBA-Roundtrip über PCIe.
+  Dekodierung mit hwaccel + `hwaccel_output`/`hwdownload` je nach Pipeline.
+- **⬜ später:** Decklink-Key/Fill-Hardware-Keying auf einem Port (Frames mit
+  BGRA an key/fill-fähigen Ausgang; heute 2-Kabel Fill+Key). Live-Test auf dem
+  Windows-Notebook (ZBOOK) — Karte ist dort aktuell nicht eingebaut.
+
+---
+
 ## Sonstiges Kleinvolumen (nicht vergessen)
 
 - **docs/TODO-video-routing.md** als „abgearbeitet“ markieren oder ins Archiv
