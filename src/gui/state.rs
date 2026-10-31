@@ -102,6 +102,8 @@ pub struct UiState {
     pub shortcuts_open: bool,
     /// „File Target Search"-Fenster geöffnet (QLab 5 Tools-Menü).
     pub target_search_open: bool,
+    /// Audition-Fenster geöffnet (QLab 5 „Audition Window").
+    pub audition_window_open: bool,
     /// Filter-Query des File-Target-Search-Fensters (reiner Laufzeit-Zustand).
     #[serde(skip)]
     pub target_search_query: String,
@@ -153,6 +155,7 @@ impl Default for UiState {
             about_open: false,
             shortcuts_open: false,
             target_search_open: false,
+            audition_window_open: false,
             target_search_query: String::new(),
             test_grid: false,
             find: FindState::default(),

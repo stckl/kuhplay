@@ -58,8 +58,8 @@ use crate::remote::{
 
 use super::shortcuts::ShortcutAction;
 use super::{
-    cue_table, footer, inspector, masthead, menu_bar, shortcuts, sidebar, stage_view,
-    target_search, theme, toolbox,
+    audition_window, cue_table, footer, inspector, masthead, menu_bar, shortcuts, sidebar,
+    stage_view, target_search, theme, toolbox,
 };
 
 /// Tab-Auswahl der Sidebar (QLab 5: „Lists & Carts" / „Active Cues";
@@ -3092,6 +3092,9 @@ impl ShowApp {
 
         // „File Target Search" (Tools-Menü, QLab 5 Workflow-Tool).
         target_search::draw(ctx, self);
+
+        // Audition-Fenster (Workspace-Menü, QLab 5 „Audition Window").
+        audition_window::draw(ctx, self);
 
         stage_view::draw_route_previews(self, ctx);
 

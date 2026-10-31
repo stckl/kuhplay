@@ -74,7 +74,7 @@ jedem Feature-Schritt aktualisiert.
 | File Target Search Tool | ✅ | Tools → „File Target Search…": Fenster listet alle Datei-Ziele über alle Carts inkl. Gruppen-Kinder (Audio/Video/HTML-Datei/Slides), Filter auf Pfad/Q#/Name, Klick springt zum Cue (Cart aktiv + selektiert + Playhead). Reiner Lesezugriff – Pfade umschreiben ⬜ (bewusste Abweichung). `src/gui/target_search.rs` |
 | Monitor Windows | ⬜ | — |
 | Timecode Status Window | ⬜ | — |
-| Auditioning Cues | 🟡 | Audition Mode (Masthead-Pill + Workspace Settings): Video-Cues ohne Stage spielen trotzdem (Preview); noch kein separates Audition-Fenster |
+| Auditioning Cues | ✅ | Audition Mode (Masthead-Pill + Workspace-Menü): Video-Cues ohne Stage-Ziel spielen trotzdem. Separates **Audition-Fenster** (Workspace → „Audition Window“, `src/gui/audition_window.rs`): zeigt das neueste Frame des laufenden Video-/HTML5-/Diashow-Cues (Q# • Name + Status), seitenrichtig skaliert |
 | Override Controls | ⬜ | — |
 
 ## Audio

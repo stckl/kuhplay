@@ -24,6 +24,7 @@
 //!   `tab_bar`/`section_label`/`panel_frame`
 
 pub mod app;
+pub mod audition_window;
 pub mod cue_table;
 pub mod demo;
 pub mod footer;

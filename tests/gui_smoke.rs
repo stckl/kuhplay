@@ -2210,3 +2210,48 @@ fn target_search_window_lists_file_targets_and_filters() {
     );
     assert!(output_has_text(&out, "intro.mp4"));
 }
+
+#[test]
+fn audition_window_shows_playing_cue_or_empty_state() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    app.ui.audition_window_open = true;
+
+    // Leerzustand: kein laufender visueller Cue.
+    let mut out = render_frame(&ctx, &mut app);
+    for _ in 0..2 {
+        out = render_frame(&ctx, &mut app);
+    }
+    assert!(output_has_text(&out, "Audition"), "Fenster-Titel fehlt");
+    assert!(
+        output_has_text(&out, "No video cue playing"),
+        "Leerzustand fehlt"
+    );
+
+    // Video-Cue auf Playing setzen + Frame in den Frame-Store legen.
+    let (cue_id, cue_number) = {
+        let list = app.carts.active_mut();
+        let idx = list
+            .cues()
+            .iter()
+            .position(|c| c.cue_type == CueType::Video)
+            .expect("Demo-Show hat einen Video-Cue");
+        list.cues_mut()[idx].status = CueStatus::Playing;
+        let cue = &list.cues()[idx];
+        (cue.id, cue.number.clone())
+    };
+    app.engine.frames.lock().unwrap().insert(
+        cue_id,
+        std::sync::Arc::new(kuhplay::engine::VideoFrame::new(
+            4,
+            4,
+            vec![200u8; 4 * 4 * 4],
+        )),
+    );
+    out = render_frame(&ctx, &mut app);
+    assert!(
+        output_has_text(&out, &format!("Q{cue_number}")),
+        "Laufender Cue muss im Audition-Fenster erscheinen: Q# fehlt"
+    );
+    assert!(output_has_text(&out, "Intro Video"), "Cue-Name fehlt");
+}

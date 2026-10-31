@@ -278,6 +278,8 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 .on_hover_text(
                     "Audition Mode: video cues play without a stage target, audio stays normal",
                 );
+            ui.checkbox(&mut app.ui.audition_window_open, "Audition Window")
+                .on_hover_text("Separate preview window for the currently playing video cue");
             ui.separator();
             if ui
                 .button(sc("Workspace Settings…", ShortcutAction::WorkspaceSettings))
