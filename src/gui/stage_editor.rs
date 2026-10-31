@@ -1016,7 +1016,7 @@ fn draw_canvas(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
         // Ohne Route gepunktet, mit Route durchgezogen.
         let stroke = if region.route.is_some() {
             Stroke::new(
-                if is_sel { 2.0 } else { 1.0 },
+                if is_sel { 2.0_f32 } else { 1.0_f32 },
                 theme::with_alpha(color, 220),
             )
         } else {
@@ -1450,7 +1450,7 @@ fn draw_placements(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
     };
     // Display-Fläche (volle native Größe).
     painter.rect_filled(disp_rect, 2.0, Color32::from_rgb(16, 20, 28));
-    painter.rect_stroke(disp_rect, 2.0, Stroke::new(1.5, palette::ACCENT));
+    painter.rect_stroke(disp_rect, 2.0, Stroke::new(1.5_f32, palette::ACCENT));
     painter.text(
         disp_rect.left_bottom() + egui::vec2(4.0, -4.0),
         Align2::LEFT_BOTTOM,
@@ -1485,7 +1485,7 @@ fn draw_placements(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
             palette::TEXT_DIM
         };
         // Überstand außerhalb des Displays: gestrichelt (sichtbar in der Map).
-        painter.rect_stroke(full, 2.0, Stroke::new(1.0, color));
+        painter.rect_stroke(full, 2.0, Stroke::new(1.0_f32, color));
         // Sichtbarer Teil (Schnitt mit Display) füllen.
         if let Some((cx, cy, cw, ch)) = p.clip_to_display(disp_px_w, disp_px_h) {
             let vis = Rect::from_min_size(
