@@ -193,16 +193,31 @@ pub fn webview_binary() -> Option<PathBuf> {
         }
     }
     let exe = std::env::current_exe().ok()?;
-    let sibling = exe.parent()?.join("kuhplay-webview");
-    if sibling.is_file() {
-        return Some(sibling);
-    }
-    None
+    webview_sibling_paths(exe.parent()?)
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+/// Kandidaten-Pfade für das WebView-Binary neben dem Hauptprogramm
+/// (Windows zusätzlich `kuhplay-webview.exe`, da `is_file` keine Endung anhängt).
+fn webview_sibling_paths(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    return vec![dir.join("kuhplay-webview"), dir.join("kuhplay-webview.exe")];
+    #[cfg(not(target_os = "windows"))]
+    vec![dir.join("kuhplay-webview")]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sibling_paths_include_windows_exe_variant() {
+        let candidates = webview_sibling_paths(std::path::Path::new("/app"));
+        assert!(candidates.contains(&std::path::PathBuf::from("/app/kuhplay-webview")));
+        #[cfg(target_os = "windows")]
+        assert!(candidates.contains(&std::path::PathBuf::from("/app/kuhplay-webview.exe")));
+    }
 
     #[test]
     fn parse_event_line_events() {
