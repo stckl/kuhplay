@@ -23,6 +23,15 @@ pub enum Fps {
 }
 
 impl Fps {
+    /// Aus einer fps-Zahl (24/25/30, sonst Default 25).
+    pub fn from_fps(fps: u64) -> Self {
+        match fps {
+            24 => Fps::Fps24,
+            30 => Fps::Fps30,
+            _ => Fps::Fps25,
+        }
+    }
+
     /// Bilder pro Sekunde.
     pub fn frames_per_second(self) -> u64 {
         match self {
@@ -67,6 +76,23 @@ impl Timecode {
             frames: (hours * 3600 + minutes * 60 + seconds) * f + frames,
             fps,
         }
+    }
+
+    /// Parst `HH:MM:SS:FF` (auch `MM:SS:FF`) zu einem Timecode.
+    pub fn parse_hmsf(text: &str, fps: Fps) -> Option<Self> {
+        let parts: Vec<&str> = text.trim().split(':').collect();
+        let nums: Option<Vec<u64>> = parts.iter().map(|p| p.trim().parse::<u64>().ok()).collect();
+        let nums = nums?;
+        let (h, m, s, f) = match nums.as_slice() {
+            [h, m, s, f] => (*h, *m, *s, *f),
+            [m, s, f] => (0, *m, *s, *f),
+            _ => return None,
+        };
+        let fmax = fps.frames_per_second();
+        if m > 59 || s > 59 || f >= fmax {
+            return None;
+        }
+        Some(Self::from_hmsf(h, m, s, f, fps))
     }
 
     /// Aus einer Duration (rundet auf den nächsten Frame).

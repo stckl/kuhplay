@@ -1679,12 +1679,12 @@ fn click_via<R>(
 fn engine_events_update_cues_in_inactive_carts() {
     let (mut app, cmd_rx, evt_tx) = hotkey_app();
 
-    // Cart 2 anlegen (wird aktiv) + zwei Cues dort; „A" mit Auto-Follow.
+    // Cart 2 anlegen (wird aktiv) + zwei Cues dort; „A" mit Auto-Continue.
     app.carts_mut().add_cart("Cart 2");
     let (id_a, id_b) = {
         let list = app.carts_mut().active_mut();
         list.add(Cue::new("A", "A", CueType::Audio));
-        list.cues_mut()[0].continue_mode = ContinueMode::AutoFollow;
+        list.cues_mut()[0].continue_mode = ContinueMode::AutoContinue;
         list.add(Cue::new("B", "B", CueType::Audio));
         (list.cues()[0].id, list.cues()[1].id)
     };
@@ -1695,7 +1695,8 @@ fn engine_events_update_cues_in_inactive_carts() {
     app.carts_mut().set_active(0).unwrap();
 
     // Engine-Event: Finished für „A" → Status landet in Cart 2 (nicht-aktiv),
-    // Auto-Follow feuert „B" in derselben Liste (Cart 2).
+    // Auto-Continue feuert „B" in derselben Liste (Cart 2) – QLab-5-Semantik
+    // (Auto-Continue erst nach Abschluss, Auto-Follow schon beim Start).
     evt_tx.send(EngineEvent::Finished { cue_id: id_a }).unwrap();
     app.poll_engine_events();
 
@@ -1707,7 +1708,7 @@ fn engine_events_update_cues_in_inactive_carts() {
     assert_eq!(
         app.carts().find_cue_any(id_b).unwrap().status,
         CueStatus::Playing,
-        "Auto-Follow feuert in der Liste des Cues (Cart 2)"
+        "Auto-Continue feuert in der Liste des Cues (Cart 2)"
     );
     assert!(
         cmd_rx
@@ -2080,8 +2081,8 @@ fn add_cue_numbers_are_unique_after_delete() {
         numbers.len(),
         "keine doppelten Q-Nummern: {numbers:?}"
     );
-    // QLab: höchste vorhandene Nummer + 1 (Demo-Max = 11 → „12").
-    assert_eq!(app.carts().active().cues().last().unwrap().number, "12");
+    // QLab: höchste vorhandene Nummer + 1 (Demo-Max = 13 → „14").
+    assert_eq!(app.carts().active().cues().last().unwrap().number, "14");
 }
 
 #[test]

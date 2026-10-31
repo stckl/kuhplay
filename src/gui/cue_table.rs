@@ -1407,6 +1407,22 @@ fn target_display(cue: &Cue) -> String {
             .as_ref()
             .map(|l| l.describe())
             .unwrap_or_else(|| "–".to_string()),
+        CueType::Companion => cue
+            .companion
+            .as_ref()
+            .map(|c| c.describe())
+            .unwrap_or_else(|| "–".to_string()),
+        CueType::Timecode => cue
+            .tc_trigger
+            .map(|t| format!("TC {t}"))
+            .unwrap_or_else(|| "–".to_string()),
+        CueType::Script => {
+            if cue.script.trim().is_empty() {
+                "–".to_string()
+            } else {
+                format!("JS ({} chars)", cue.script.len())
+            }
+        }
         CueType::Text => cue
             .text_content
             .as_ref()

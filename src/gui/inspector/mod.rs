@@ -41,14 +41,17 @@ use super::theme;
 
 mod audio_levels;
 mod basics;
+mod companion;
 mod curve;
 mod geometry;
 mod light;
 mod media;
 mod midi;
 mod network;
+mod script;
 mod text;
 mod time_loops;
+mod timecode_tab;
 mod triggers;
 
 /// Zeichnet den Inspector: Kopfzeile, typabhängige Tab-Leiste, Tab-Inhalt.
@@ -109,6 +112,9 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             InspectorTab::Network => network::draw_network(ui, app),
             InspectorTab::Midi => midi::draw_midi(ui, app),
             InspectorTab::Light => light::draw_light(ui, app),
+            InspectorTab::Companion => companion::draw_companion(ui, app),
+            InspectorTab::Timecode => timecode_tab::draw_timecode(ui, app),
+            InspectorTab::ScriptTab => script::draw_script(ui, app),
         });
 }
 
@@ -155,6 +161,9 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
         Some(CueType::Network) => &[Basics, Triggers, Network],
         Some(CueType::Midi) => &[Basics, Triggers, Midi],
         Some(CueType::Light) => &[Basics, Triggers, Light],
+        Some(CueType::Companion) => &[Basics, Triggers, Companion],
+        Some(CueType::Timecode) => &[Basics, Triggers, Timecode],
+        Some(CueType::Script) => &[Basics, Triggers, ScriptTab],
         // Group, Stop, Script, Control, Wait, Memo, keine Auswahl.
         _ => &[Basics, Triggers],
     }

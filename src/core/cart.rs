@@ -89,6 +89,11 @@ impl CartManager {
     }
 
     /// Aktiver Cart (mutabel).
+    /// Cart per Index (mutabel).
+    pub fn cart_mut(&mut self, index: usize) -> &mut CueList {
+        &mut self.carts[index]
+    }
+
     pub fn active_mut(&mut self) -> &mut CueList {
         &mut self.carts[self.active]
     }
@@ -245,6 +250,17 @@ impl CartManager {
     }
 
     /// Sucht einen Cue über alle Carts (auch in Gruppen).
+    /// Externer Timecode an alle Carts: feuert Timecode-Trigger-Cues
+    /// (siehe [`CueList::receive_timecode`]). Rückgabe: alle Commands.
+    pub fn receive_timecode(&mut self, tc: crate::core::Timecode) -> Vec<EngineCommand> {
+        let mut commands = Vec::new();
+        for index in 0..self.cart_count() {
+            let list = self.cart_mut(index);
+            commands.extend(list.receive_timecode(tc));
+        }
+        commands
+    }
+
     pub fn find_cue_any(&self, id: Uuid) -> Option<&Cue> {
         self.carts.iter().find_map(|cart| cart.find_cue(id))
     }
@@ -440,18 +456,19 @@ mod tests {
         let _ = mgr.go().unwrap();
         mgr.set_active(0).unwrap();
 
-        // "A" fertig → Auto-Follow feuert "B" – in Cart 2 (nicht im aktiven Cart 1).
-        let (result, commands) = mgr.set_status_with_follow(id_a, CueStatus::Completed);
+        // "A" startet (Playing) → Auto-Follow feuert "B" sofort – in Cart 2
+        // (nicht im aktiven Cart 1). QLab-5-Semantik: Auto-Follow beim Start.
+        let (result, commands) = mgr.set_status_with_follow(id_a, CueStatus::Playing);
         assert!(result.is_ok());
         assert!(
             !commands.is_empty(),
-            "Auto-Follow muss Play-Commands liefern"
+            "Auto-Follow (beim Start) muss Play-Commands liefern"
         );
         assert!(
             commands
                 .iter()
                 .any(|c| matches!(c, EngineCommand::Play { cue_id, .. } if *cue_id == id_b)),
-            "Auto-Follow triggert B"
+            "Auto-Follow triggert B beim Start"
         );
         assert_eq!(mgr.find_cue_any(id_b).unwrap().status, CueStatus::Playing);
         // Cart 1 wurde nicht berührt.

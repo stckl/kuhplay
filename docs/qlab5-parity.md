@@ -60,7 +60,7 @@ jedem Feature-Schritt aktualisiert.
 | Cue Lists | ✅ | `CartManager` verwaltet mehrere Cue-Listen; aktive Liste steuerbar |
 | Cue Carts | ✅ | Sidebar-Tab „Lists & Carts": Cart-Liste (auswählbar, mit Cue-Anzahl) + „New Cart". **Phase 0:** Engine-Events (Status, Auto-Follow, Stop/Pause/Resume) erreichen Cues in allen Carts (UUID-Suche über alle Listen via `find_cue_any`) |
 | Group Cues | ✅ | Modi *Timeline* (zeitversetzt), *Fire all simultaneously*, *Sequential*, *Loop* (Re-Arm mit Iterationslimit), *Shuffle* (deterministisch) |
-| Cue Sequences | 🟡 | Continue-Mode `Off` / `Auto-Continue` / `Auto-Follow` (QLab-Spalte „Cont." + Inspector „Continue"). **Abweichung V1:** Auto-Continue feuert den Folge-Cue sofort beim Start; eine Post-Wait-Verzögerung innerhalb der Kette ist noch nicht verkettet. Auto-Follow feuert beim `Completed` des Cues. |
+| Cue Sequences | ✅ | Continue-Mode `Off` / `Auto-Continue` / `Auto-Follow` (QLab-Spalte „Cont.“ + Inspector „Continue“). **QLab-5-Semantik:** Auto-Continue feuert den Folge-Cue beim **Abschluss** des laufenden Cues (inkl. Post-Wait → `Completed`), Auto-Follow schon beim **Start** (`Playing`). Tests entsprechend umgestellt |
 
 ## Workflow Tools
 
@@ -110,7 +110,7 @@ jedem Feature-Schritt aktualisiert.
 | Kapitel | Status | Anmerkung |
 |---------|--------|-----------|
 | Intro to Lighting | 🟡 | generische Parameter-Fades (Fade-Cues: Volume/Rate/Opacity) vorhanden; eigenes Licht-Pult (Dashboard/LCC) ⬜ |
-| Light Cues | 🟡 | **Light-Cue** (`CueType::Light`, `src/core/light.rs`): Art-Net-DMX-Paket (OpDmx, Port 6454) per UDP – Universe, Startkanal 1–512, Kanalwerte (Dez/Hex), Ziel-Host (Broadcast default), Sofort-Cue. Engine: fire-and-forget UDP-Thread (`EngineCommand::SendDmx`). Inspector-Tab „Light", Toolbox-Gruppe „Lighting“. **Abweichung:** keine Cue-übergreifenden Licht-Fades/Chaser (dafür Fade-Cues + Sequences); kein eigenes Licht-Pult |
+| Light Cues | 🟡 | **Light-Cue** (`CueType::Light`, `src/core/light.rs`): DMX-Paket per UDP – **Art-Net** (OpDmx, Port 6454) **oder sACN/E1.31** (Port 5568, Protokoll per Combo wählbar), ein Universe (Art-Net 0–32767, sACN 1–63999), Startkanal 1–512, Werte Dez/Hex, Ziel-Host (Broadcast default). Sofort-Cue, Engine fire-and-forget (`EngineCommand::SendDmx`). Inspector-Tab „Light“, Toolbox „Lighting“. **Abweichung:** kein Licht-Pult/Fades über Cues |
 | Light Dashboard | ⬜ | — |
 | Lighting Command Language | ⬜ | — |
 | Light Patch Editor | ⬜ | — |
@@ -126,11 +126,11 @@ jedem Feature-Schritt aktualisiert.
 | OSC | ⬜ | — |
 | MIDI & MSC | ⬜ | — |
 | Show control broadcast | ⬜ | — |
-| Timecode | 🟡 | Timecode-Chasing (LTC/MTC) vorbereitet: `Cue::timecode_in`, `EngineCommand::ChaseTimecode`, präzise Zeitsprünge (Timecode-Chase-Tests). Kein echtes LTC/MTC-Empfangen in V1; Inspector-Tab „Triggers" mit FPS/Offset/„Start Timecode Chasing" |
-| Network cues | ✅ | **Network-Cue** (`CueType::Network`, `src/core/network.rs`): UDP/TCP-Nachricht an `host:port`, Sofort-Cue (in der Liste direkt „Completed“). Real-Engine sendet fire-and-forget in einem eigenen Thread (blockierendes Ziel hält die Engine nicht auf), Fehler als `EngineEvent::Error` (Footer ⚠). Inspector-Tab „Network“, Toolbox-Gruppe „Network“, Web-Remote. Loopback-Tests: UDP/TCP-Empfang + Connect-Fehler (`tests/network_cue.rs`) |
+| Timecode | 🟡 | Timecode-Chasing: `Cue::timecode_in`, präzise Sprünge (`InjectTimecode`/`receive_timecode`, > 1 Frame, Media-Backends seeken mit). Eingang aktuell **OSC** `/kuhplay/timecode` (+ Scrub im Active-Cues springt alle verlinkten Cues mit). Echtes LTC/MTC-Hardware-Empfangen ⬜; Inspector-Tab „Triggers“ |
+| Network cues | ✅ | **Network-Cue** (`CueType::Network`, `src/core/network.rs`): UDP/TCP-Nachricht an `host:port`, Sofort-Cue (in der Liste direkt „Completed“). Real-Engine sendet fire-and-forget in einem eigenen Thread (blockierendes Ziel hält die Engine nicht auf), Fehler als `EngineEvent::Error` (Footer ⚠). Inspector-Tab „Network“, Toolbox-Gruppe „Network“, Web-Remote. Loopback-Tests: UDP/TCP-Empfang + Connect-Fehler (`tests/network_cue.rs`) | Dazu **Companion-Cue** (`CueType::Companion`): HTTP POST an Companions Remote-Control-API (`/api/location/<page>/<row>/<col>/press|down|up`, Port default 8000) – KuhPlay triggert Companion-Buttons.
 | MIDI cues | ✅ | **MIDI-Cue** (`CueType::Midi`, `src/core/midi.rs`): Note On/Off, Control Change, Program Change (Kanal 1–16 in der UI, 0-basiert im Wire-Format), Sofort-Cue. Engine sendet über midir-Output (`src/engine/midi_out.rs`, lazy geöffnet, Gerät via `KUHPLAY_MIDI_OUT_DEVICE`), Fehler als `EngineEvent::Error`. Inspector-Tab „MIDI“ mit Hex-Vorschau, Toolbox-Gruppe „Network“, Web-Remote. MIDI-*Input* (Steuerung) bleibt `src/remote/midi.rs` |
 | MIDI File cues | ⬜ | — |
-| Timecode cues | 🟡 | Chasing-Trigger pro Cue (Inspector „Triggers"); dedizierter Timecode-Cue-Typ ⬜ |
+| Timecode cues | ✅ | **Timecode-Cue** (`CueType::Timecode` + `tc_trigger`): feuert, wenn externer Timecode den Trigger erreicht. Eingang: OSC `/kuhplay/timecode "HH:MM:SS:FF" [fps]` → `EngineCommand::InjectTimecode` → alle chasing Cues springen mit (`tc − timecode_in`, > 1 Frame; Media-Backends seeken mit), Timecode-Trigger-Cues feuern. Manuelles GO = Wait mit duration. Chasing pro Cue bleibt (Inspector „Triggers"). LTC/MTC-Hardware-Empfang ⬜ (OSC-Bridge reicht als Eingang) |
 
 ## Scripting & Automation
 
@@ -139,7 +139,7 @@ jedem Feature-Schritt aktualisiert.
 | OSC Dictionary | ⬜ | — |
 | OSC Queries | ⬜ | — |
 | AppleScript Dictionary | ⬜ | — |
-| Script Cues | 🟡 | HTML5-Cues + bidirektionale JS-Bridge (`EvalJs`, `PushJson`, `HtmlDataCue`) decken Scripting ab; dedizierter Script-Cue-Typ ⬜ |
+| Script Cues | ✅ | **Script-Cue** (`CueType::Script` + `script`-Feld): JS läuft beim GO in eigener WebView-Instanz (`EngineCommand::RunScript`), nach Load `Finished`. Dazu HTML5-Cues + JS-Bridge (`EvalJs`, `PushJson`, HtmlData) für Overlays – Template-Vertrag siehe `docs/HTML-Templates.md` |
 | Parameter Reference | ⬜ | — |
 | Examples | ⬜ | — |
 
@@ -165,9 +165,8 @@ jedem Feature-Schritt aktualisiert.
 
 ## Bekannte Abweichungen (V1)
 
-1. **Auto-Continue-Kette:** QLab startet den Folge-Cue nach Ablauf des
-   aktuellen Cues (inkl. Post-Wait). KuhPlay V1 feuert Auto-Continue
-   sofort beim Start und Auto-Follow beim `Completed`.
+1. ~~**Auto-Continue-Kette**~~ **behoben:** Auto-Continue feuert jetzt nach
+   Abschluss des Cues inkl. Post-Wait, Auto-Follow schon beim Start (wie QLab 5).
 2. **Show-Format:** KuhPlay speichert `.kuhplay` (JSON), nicht das
    QLab-`.qlab5`-Format. Import/Export von QLab-Shows ist ⬜.
 3. **HTML5-WebView:** In der Real-Engine ist HTML5 noch virtuell

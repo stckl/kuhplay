@@ -102,6 +102,8 @@ mod glyphs {
     pub const NOTE: &str = "\u{E5A2}"; // note
     pub const MUSIC_NOTES: &str = "\u{E5BE}"; // music-notes
     pub const LIGHTBULB: &str = "\u{E524}"; // lightbulb
+    pub const GAME_CONTROLLER: &str = "\u{E7B0}"; // game-controller
+    pub const CLOCK: &str = "\u{E1F0}"; // clock
     pub const PAPER_PLANE_TILT: &str = "\u{E6D0}"; // paper-plane-tilt
     pub const IMAGE: &str = "\u{E2CA}"; // image
     pub const IMAGES: &str = "\u{E836}"; // images
@@ -158,6 +160,8 @@ pub enum Icon {
     Network,
     Midi,
     Light,
+    Companion,
+    Timecode,
     // Status
     Playing,
     Paused,
@@ -251,6 +255,8 @@ impl Icon {
         Icon::Network,
         Icon::Midi,
         Icon::Light,
+        Icon::Companion,
+        Icon::Timecode,
         // Status
         Icon::Playing,
         Icon::Paused,
@@ -342,6 +348,8 @@ impl Icon {
             CueType::Network => Icon::Network,
             CueType::Midi => Icon::Midi,
             CueType::Light => Icon::Light,
+            CueType::Companion => Icon::Companion,
+            CueType::Timecode => Icon::Timecode,
         }
     }
 
@@ -385,6 +393,8 @@ impl Icon {
             Icon::Network => glyphs::PAPER_PLANE_TILT,
             Icon::Midi => glyphs::MUSIC_NOTES,
             Icon::Light => glyphs::LIGHTBULB,
+            Icon::Companion => glyphs::GAME_CONTROLLER,
+            Icon::Timecode => glyphs::CLOCK,
             // Status
             Icon::Playing => glyphs::PLAY,
             Icon::Paused => glyphs::PAUSE,

@@ -93,6 +93,24 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                 }
             }
         },
+        CueType::Timecode => {
+            if cue.tc_trigger.is_none() {
+                problems.push("no timecode trigger configured".to_string());
+            }
+        }
+        CueType::Script => {
+            if cue.script.trim().is_empty() {
+                problems.push("empty script".to_string());
+            }
+        }
+        CueType::Companion => match &cue.companion {
+            None => problems.push("no companion trigger configured".to_string()),
+            Some(c) => {
+                if c.validate().is_err() {
+                    problems.push("companion host/port invalid".to_string());
+                }
+            }
+        },
         CueType::Light => match &cue.light {
             None => problems.push("no DMX values configured".to_string()),
             Some(l) => {

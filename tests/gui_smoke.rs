@@ -177,16 +177,32 @@ fn show_mode_toggles() {
 }
 
 #[test]
-fn go_chained_follows_auto_continue() {
-    let mut app = demo_app();
-    // Auto-Continue auf den ersten Cue → ein GO feuert beide Cues.
+fn auto_continue_fires_next_cue_only_after_first_completes() {
+    // QLab-5-Semantik: Auto-Continue feuert den Folge-Cue erst beim
+    // Abschluss des laufenden Cues (Finished), nicht beim GO.
+    let (mut app, _cmd_rx, evt_tx) = manual_app();
     app.carts.active_mut().cues_mut()[0].continue_mode = ContinueMode::AutoContinue;
+    let first_id = app.carts.active().cues()[0].id;
     app.go_now();
-    assert_eq!(app.carts.running_count(), 2);
+    assert_eq!(app.carts.running_count(), 1, "beim GO nur ein Cue");
+    assert_eq!(app.carts.cursor(), 1);
+    let second_id = app.carts.active().cues()[1].id;
     assert_eq!(
-        app.carts.cursor(),
-        2,
-        "Playhead rückt über die Kette hinaus"
+        app.carts.active().cues()[1].status,
+        CueStatus::Standby,
+        "Folge-Cue steht noch"
+    );
+
+    // Erster Cue abgeschlossen → Auto-Continue feuert den zweiten.
+    evt_tx
+        .send(EngineEvent::Finished { cue_id: first_id })
+        .unwrap();
+    app.poll_engine_events();
+    assert_eq!(app.carts.cursor(), 2, "Playhead rückt weiter");
+    assert_eq!(
+        app.carts.find_cue_any(second_id).unwrap().status,
+        CueStatus::Playing,
+        "Auto-Continue hat den Folge-Cue gefeuert"
     );
 }
 
@@ -2254,4 +2270,45 @@ fn audition_window_shows_playing_cue_or_empty_state() {
         "Laufender Cue muss im Audition-Fenster erscheinen: Q# fehlt"
     );
     assert!(output_has_text(&out, "Intro Video"), "Cue-Name fehlt");
+}
+
+#[test]
+fn demo_show_contains_timetable_html_and_data_cues() {
+    let app = demo_app();
+    let list = app.carts.active();
+    let html = list
+        .cues()
+        .iter()
+        .find(|c| c.cue_type == CueType::Html && c.name.contains("Timetable"))
+        .expect("Demo-Show hat einen Timetable-HTML5-Cue");
+    let Some(kuhplay::core::HtmlSource::Inline(src)) = &html.html_source else {
+        panic!("Timetable-Quelle muss inline eingebettet sein");
+    };
+    assert!(
+        src.contains("window.kuhplay"),
+        "Bridge-Hook fehlt im Template"
+    );
+    assert!(
+        src.contains("onShowControlData"),
+        "Data-Hook fehlt im Template"
+    );
+    assert!(src.contains("100vw"), "Template muss in vw/vh skalieren");
+
+    let data = list
+        .cues()
+        .iter()
+        .find(|c| c.cue_type == CueType::HtmlData && c.name.contains("Timetable"))
+        .expect("Demo-Show hat einen Timetable-Data-Cue");
+    assert_eq!(
+        data.data_target,
+        Some(html.id),
+        "Data-Cue zielt auf den HTML-Cue"
+    );
+    // Payload ist valides JSON mit blocks/speakers (zeitplan.json).
+    let payload = data.data_payload().expect("Data-Payload parst als JSON");
+    let blocks = payload
+        .as_array()
+        .expect("zeitplan.json ist ein Array von Blöcken");
+    assert!(!blocks.is_empty());
+    assert!(blocks[0].get("speakers").is_some());
 }

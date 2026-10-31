@@ -1064,9 +1064,27 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
             EngineCommand::SendDmx {
                 cue_id,
                 host,
+                port,
                 packet,
             } => {
-                debug!(%cue_id, %host, packet_len = packet.len(), "send dmx (mock)");
+                debug!(%cue_id, %host, port, packet_len = packet.len(), "send dmx (mock)");
+            }
+            EngineCommand::InjectTimecode { tc } => {
+                self.receive_timecode(tc);
+            }
+            EngineCommand::RunScript { cue_id, script } => {
+                debug!(%cue_id, script_len = script.len(), "run script (mock)");
+                // Mock: Script gilt sofort als ausgeführt.
+                self.emit(EngineEvent::Finished { cue_id });
+                self.emit(EngineEvent::PostWaitElapsed { cue_id });
+            }
+            EngineCommand::SendHttpPost {
+                cue_id,
+                host,
+                port,
+                path,
+            } => {
+                debug!(%cue_id, %host, port, %path, "http post (mock)");
             }
             EngineCommand::Ping(n) => {
                 self.emit(EngineEvent::Pong(n));

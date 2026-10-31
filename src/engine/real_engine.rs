@@ -284,6 +284,9 @@ pub struct RealMediaEngine {
     /// MIDI-Ausgang für MIDI-Cues (lazy geöffnet beim ersten `SendMidi`,
     /// Device via `KUHPLAY_MIDI_OUT_DEVICE`; `None` = noch nicht versucht).
     midi_out: Option<super::midi_out::MidiOutputGuard>,
+    /// Laufende Script-Cues: WebView-Instanz (führt das JS aus) + Post-Wait.
+    /// Nach `Loaded`/Fehler → `Finished` und Entfernen (Tick pollt Events).
+    scripts: HashMap<Uuid, (super::webview_backend::WebviewInstance, Duration)>,
 }
 
 impl RealMediaEngine {
@@ -336,6 +339,7 @@ impl RealMediaEngine {
             webview_bin: webview_binary(),
             audio_voices: Arc::new(Mutex::new(HashSet::new())),
             midi_out: None,
+            scripts: HashMap::new(),
         }
     }
 
@@ -904,6 +908,67 @@ impl RealMediaEngine {
     }
 }
 
+impl RealMediaEngine {
+    /// Externer Timecode (LTC/MTC/OSC) einspeisen: alle chasing Cues springen
+    /// auf `tc - timecode_in`, sobald der Sprung mehr als einen Frame beträgt.
+    /// Media-Backends (Audio/Video) seeken passend mit (Video: ffmpeg-Neustart
+    /// ab Position, Pause-Zustand bleibt), Wallclock-Kinds (Html/Diashow/Wait)
+    /// nur ihre akkumulierte Position – gespiegelt an die Mock-Semantik.
+    pub fn receive_timecode(&mut self, tc: Timecode) {
+        let frame = tc.fps.frame_duration();
+        let now = self.now();
+        let mut jumps: Vec<(Uuid, Duration, Duration)> = Vec::new();
+        for (cue_id, offset) in &self.chasing {
+            let Some(playback) = self.active.get(cue_id) else {
+                continue;
+            };
+            if playback.started_at.is_none() || playback.finished_at.is_some() {
+                continue;
+            }
+            let target = tc.to_duration().saturating_sub(offset.to_duration());
+            let current = Self::position_of(&self.audio, &self.video, playback, *cue_id, now);
+            // Exakter Vergleich in Nanosekunden (Duration) – f64 wäre bei
+            // genau einem Frame Toleranz durch Rundung unzuverlässig.
+            let delta = target.abs_diff(current);
+            if delta > frame {
+                let clamped = target.min(playback.current_unit());
+                jumps.push((*cue_id, current, clamped));
+            }
+        }
+        for (cue_id, from, to) in jumps {
+            if let Some(playback) = self.active.get_mut(&cue_id) {
+                match &playback.kind {
+                    PlaybackKind::Audio => {
+                        if let Some(audio) = self.audio.as_mut() {
+                            audio.seek(cue_id, to);
+                        }
+                    }
+                    PlaybackKind::Video => {
+                        if let Some(path) = playback.path.clone() {
+                            let was_paused = self.video.is_paused(cue_id);
+                            let _ = self.video.play(cue_id, &path, to);
+                            if was_paused {
+                                self.video.pause(cue_id);
+                            }
+                        }
+                    }
+                    // Wallclock-Kinds: Position direkt setzen.
+                    _ => {
+                        playback.accumulated = to;
+                        playback.started_at = Some(now);
+                    }
+                }
+            }
+            debug!(%cue_id, ?from, ?to, "timecode chase jump (real)");
+            self.emit(EngineEvent::TimecodeJump { cue_id, from, to });
+            self.emit(EngineEvent::Position {
+                cue_id,
+                position: to,
+            });
+        }
+    }
+}
+
 /// Meldet das Ergebnis eines asynchronen Sends (ggf. als `EngineEvent::Error`)
 /// – läuft im gespawnten Send-Thread.
 fn finish_send(events: Sender<EngineEvent>, cue_id: Uuid, label: &str, result: Result<(), String>) {
@@ -1124,6 +1189,8 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
             EngineCommand::Stop { cue_id } => {
+                // Script-Cue: WebView-Instanz schließen (Drop killt Subprocess).
+                self.scripts.remove(&cue_id);
                 if let Some(playback) = self.active.remove(&cue_id) {
                     Self::stop_backend(&mut self.audio, &mut self.video, cue_id, &playback);
                     self.audio_voices.lock().unwrap().remove(&cue_id);
@@ -1147,6 +1214,7 @@ impl MediaEngine for RealMediaEngine {
                 self.fades.clear();
                 self.chasing.clear();
                 self.html.clear();
+                self.scripts.clear();
                 if let Some(audio) = self.audio.as_mut() {
                     for cue_id in &stopped {
                         audio.stop_voice(*cue_id);
@@ -1669,18 +1737,12 @@ impl MediaEngine for RealMediaEngine {
             EngineCommand::SendDmx {
                 cue_id,
                 host,
+                port,
                 packet,
             } => {
-                debug!(%cue_id, %host, packet_len = packet.len(), "send dmx (real)");
-                // Art-Net: UDP an Port 6454, fire-and-forget wie Network-UDP.
-                spawn_udp_send(
-                    self.events.clone(),
-                    cue_id,
-                    "light cue",
-                    host,
-                    crate::core::ARTNET_PORT,
-                    packet,
-                );
+                debug!(%cue_id, %host, port, packet_len = packet.len(), "send dmx (real)");
+                // Art-Net/sACN: UDP an Protokoll-Port, fire-and-forget wie Network-UDP.
+                spawn_udp_send(self.events.clone(), cue_id, "light cue", host, port, packet);
             }
             EngineCommand::SendMidi { cue_id, bytes } => {
                 debug!(%cue_id, ?bytes, "send midi (real)");
@@ -1710,6 +1772,77 @@ impl MediaEngine for RealMediaEngine {
                         });
                     }
                 }
+            }
+            EngineCommand::InjectTimecode { tc } => {
+                self.receive_timecode(tc);
+            }
+            EngineCommand::RunScript { cue_id, script } => {
+                debug!(%cue_id, script_len = script.len(), "run script (real)");
+                // User-JS in eine Inline-Seite kapseln (</script> escapen).
+                let escaped = script.replace("</script>", "<\\/script>");
+                let html =
+                    format!("<!DOCTYPE html><html><body><script>{escaped}</script></body></html>");
+                let Some(bin) = self.webview_bin.clone() else {
+                    self.emit(EngineEvent::Error {
+                        cue_id: Some(cue_id),
+                        message: "script cue: no webview binary (build with --features webview)"
+                            .to_string(),
+                    });
+                    return Ok(());
+                };
+                match super::webview_backend::WebviewInstance::spawn(
+                    &bin,
+                    cue_id,
+                    &crate::core::HtmlSource::Inline(html),
+                ) {
+                    Ok(instance) => {
+                        self.scripts.insert(cue_id, (instance, Duration::ZERO));
+                    }
+                    Err(err) => {
+                        self.emit(EngineEvent::Error {
+                            cue_id: Some(cue_id),
+                            message: format!("script cue: webview spawn failed: {err}"),
+                        });
+                    }
+                }
+            }
+            EngineCommand::SendHttpPost {
+                cue_id,
+                host,
+                port,
+                path,
+            } => {
+                debug!(%cue_id, %host, port, %path, "http post (real)");
+                // Fire-and-forget im eigenen Thread (Connect-Timeout 500 ms).
+                let events = self.events.clone();
+                std::thread::spawn(move || {
+                    use std::io::{Read, Write};
+                    let result: Result<(), String> = (|| {
+                        let addr = (host.as_str(), port)
+                            .to_socket_addrs()
+                            .map_err(|e| e.to_string())?
+                            .next()
+                            .ok_or_else(|| "no address resolved".to_string())?;
+                        let mut stream =
+                            std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+                                .map_err(|e| e.to_string())?;
+                        let request = format!(
+                            "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        );
+                        stream
+                            .write_all(request.as_bytes())
+                            .map_err(|e| e.to_string())?;
+                        stream.flush().map_err(|e| e.to_string())?;
+                        // Antwort kurz mitlesen (Statuszeile), dann zu.
+                        stream
+                            .set_read_timeout(Some(Duration::from_millis(500)))
+                            .ok();
+                        let mut buf = [0u8; 256];
+                        let _ = stream.read(&mut buf);
+                        Ok(())
+                    })();
+                    finish_send(events, cue_id, "companion cue", result);
+                });
             }
             EngineCommand::Ping(seq) => {
                 self.emit(EngineEvent::Pong(seq));
@@ -2037,6 +2170,36 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
         }
+        // Script-Cues: WebView-Events pollen – nach Loaded/Fehler ist das
+        // Script fertig → Finished + PostWaitElapsed (Cue endet).
+        let script_ids: Vec<Uuid> = self.scripts.keys().copied().collect();
+        for cue_id in script_ids {
+            let mut done = false;
+            let mut error: Option<String> = None;
+            if let Some((webview, _post_wait)) = self.scripts.get_mut(&cue_id) {
+                while let Some(event) = webview.poll_event() {
+                    match event {
+                        super::webview_backend::WebviewEvent::Loaded => done = true,
+                        super::webview_backend::WebviewEvent::Error(msg) => {
+                            done = true;
+                            error = Some(msg);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if done {
+                self.scripts.remove(&cue_id);
+                if let Some(message) = error {
+                    out.push(EngineEvent::Error {
+                        cue_id: Some(cue_id),
+                        message: format!("script cue: {message}"),
+                    });
+                }
+                out.push(EngineEvent::Finished { cue_id });
+                out.push(EngineEvent::PostWaitElapsed { cue_id });
+            }
+        }
         // Natürliches Ende: Backends stoppen (Video-Bild + Audio-Voice).
         for cue_id in &finished_now {
             self.video.stop(*cue_id);
@@ -2071,6 +2234,7 @@ impl MediaEngine for RealMediaEngine {
 
     fn shutdown(&mut self) {
         // Alle Backends sauber herunterfahren (keine hängenden Prozesse).
+        self.scripts.clear();
         let ids: Vec<Uuid> = self.active.keys().copied().collect();
         if let Some(audio) = self.audio.as_mut() {
             for cue_id in &ids {

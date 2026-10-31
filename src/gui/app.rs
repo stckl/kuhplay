@@ -102,8 +102,14 @@ pub enum InspectorTab {
     Network,
     /// MIDI (Typ/Kanal/Note/Velocity) – MIDI-Cues.
     Midi,
-    /// Light (Universe/Kanal/Werte/Host) – Light-Cues (Art-Net DMX).
+    /// Light (Universe/Kanal/Werte/Host) – Light-Cues (Art-Net/sACN DMX).
     Light,
+    /// Companion (Host/Port/Page/Row/Column/Aktion) – Companion-Cues.
+    Companion,
+    /// Timecode (Trigger-Zeitcode + FPS) – Timecode-Cues.
+    Timecode,
+    /// Script (JavaScript-Quelltext) – Script-Cues.
+    ScriptTab,
 }
 
 impl InspectorTab {
@@ -123,6 +129,9 @@ impl InspectorTab {
             InspectorTab::Network => "Network",
             InspectorTab::Midi => "MIDI",
             InspectorTab::Light => "Light",
+            InspectorTab::Companion => "Companion",
+            InspectorTab::Timecode => "Timecode",
+            InspectorTab::ScriptTab => "Script",
         }
     }
 }
@@ -181,6 +190,9 @@ pub struct ShowApp {
     /// Startzeitpunkte von Cues in Pre-Wait (Countdown in der Pre-Wait-
     /// Spalte, TODO.md Phase 2).
     prewait_started: HashMap<Uuid, Instant>,
+    /// Letzter gesendeter Scrub-Seek pro Cue (Zeitstempel, Fraktion) –
+    /// Throttle gegen ffmpeg-Neustart-Spam beim Ziehen im Active-Cues-Balken.
+    scrub_last: HashMap<Uuid, (Instant, f32)>,
     /// Stage-Manager: alle Video-Stages mit Screen-Mapping & Geometrie.
     pub stages: StageManager,
     /// Screen-Manager: physische Ausgabebereiche (QLab „Screens") –
@@ -545,6 +557,7 @@ impl ShowApp {
             properties_clipboard: None,
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
+            scrub_last: HashMap::new(),
             stages,
             screens,
             routes: RouteManager::new(),
@@ -1100,6 +1113,24 @@ impl ShowApp {
         // Light-Cue: Universe 0, Kanal 1 auf 255 (Broadcast) als Vorgabe.
         if cue_type == CueType::Light {
             cue.light = Some(crate::core::LightMessage::default());
+        }
+        // Companion-Cue: localhost:8000, Seite 1, Button 0/0 press.
+        if cue_type == CueType::Companion {
+            cue.companion = Some(crate::core::CompanionTrigger::default());
+        }
+        // Timecode-Cue: Trigger 01:00:00:00 @ 25 fps als Vorgabe.
+        if cue_type == CueType::Timecode {
+            cue.tc_trigger = Some(crate::core::Timecode::from_hmsf(
+                1,
+                0,
+                0,
+                0,
+                crate::core::Fps::Fps25,
+            ));
+        }
+        // Script-Cue: Hallo-Welt-Vorgabe (sonst „kaputt" wegen leerem Script).
+        if cue_type == CueType::Script {
+            cue.script = "console.log(\"hello from kuhplay\");".to_string();
         }
         list.insert(at, cue);
         list.select(Some(at));
@@ -1686,6 +1717,7 @@ impl ShowApp {
                 self.broadcast_remote_event(RemoteEvent::ShowModeChanged { enabled });
             }
             RemoteCommand::GetStatus => {}
+            RemoteCommand::ReceiveTimecode { tc } => self.receive_timecode(tc),
             RemoteCommand::NewCue { cue_type } => self.add_cue(cue_type),
             RemoteCommand::UpdateCue { id, changes } => self.remote_update_cue(id, changes)?,
             RemoteCommand::DeleteCue { id } => self.delete_cue_by_id(id),
@@ -2170,11 +2202,60 @@ impl ShowApp {
     /// Spult einen laufenden Media-Cue (Audio/Video) an `position`
     /// (QLab „Scrub" in den Active Cues; Bild+Ton springen synchron, weil
     /// beide Backends im selben Engine-Command den Seek bekommen).
+    /// Externer Timecode (OSC `/kuhplay/timecode`, später LTC/MTC): in die
+    /// Engine injizieren (chasing Cues springen mit) und alle Timecode-Trigger-
+    /// Cues feuern, deren Trigger ≤ tc ist (QLab „timecode trigger").
+    pub fn receive_timecode(&mut self, tc: crate::core::Timecode) {
+        let mut commands = vec![EngineCommand::InjectTimecode { tc }];
+        commands.extend(self.carts.receive_timecode(tc));
+        self.dispatch(commands);
+    }
+
+    /// Spult einen laufenden Cue an `position` (Active-Cues-Scrubber).
+    ///
+    /// **Timecode-Gruppe (QLab-Verhalten):** Hat der Cue ein `timecode_in`
+    /// (Chasing), wird zusätzlich der externe Timecode `timecode_in + position`
+    /// in die Engine injiziert – alle chasing Cues springen damit auf ihre
+    /// neue Zeit mit (`EngineCommand::InjectTimecode`).
     pub fn seek_running(&mut self, id: Uuid, position: Duration) {
-        self.dispatch(vec![EngineCommand::Seek {
+        let mut commands = vec![EngineCommand::Seek {
             cue_id: id,
             position,
-        }]);
+        }];
+        if let Some(cue) = self.carts.find_cue_any(id) {
+            if let Some(t0) = cue.timecode_in {
+                let frames = crate::core::Timecode::from_duration(position, t0.fps).frames;
+                commands.push(EngineCommand::InjectTimecode {
+                    tc: crate::core::Timecode {
+                        frames: t0.frames + frames,
+                        fps: t0.fps,
+                    },
+                });
+            }
+        }
+        self.dispatch(commands);
+    }
+
+    /// Darf für diesen Cue gerade ein Scrub-Seek dispatched werden?
+    /// Throttled während des Ziehens (sonst ffmpeg-Neustart pro Frame → Ruckeln):
+    /// mind. 150 ms Abstand oder > 2 % Positionssprung; `force` (Klick/Loslassen)
+    /// geht immer durch. Rückgabe: true = senden.
+    pub fn scrub_throttle(&mut self, id: Uuid, frac: f32, force: bool) -> bool {
+        const MIN_INTERVAL: Duration = Duration::from_millis(150);
+        const MIN_DELTA: f32 = 0.02;
+        let now = Instant::now();
+        let allow = match self.scrub_last.get(&id) {
+            Some((at, last_frac)) => {
+                force
+                    || now.duration_since(*at) >= MIN_INTERVAL
+                    || (frac - last_frac).abs() >= MIN_DELTA
+            }
+            None => true,
+        };
+        if allow {
+            self.scrub_last.insert(id, (now, frac));
+        }
+        allow
     }
 
     /// Medien-Dauer eines Cues (aus dem Started-Event), falls bekannt.
@@ -2538,7 +2619,8 @@ impl ShowApp {
         while let Some(event) = self.engine.try_recv_event() {
             match event {
                 EngineEvent::Started { cue_id, duration } => {
-                    self.apply_status(cue_id, CueStatus::Playing);
+                    // Auto-Follow feuert beim Start (QLab-5-Semantik).
+                    self.apply_status_with_follow(cue_id, CueStatus::Playing);
                     self.note_started(cue_id);
                     if let Some(d) = duration {
                         self.media_durations.insert(cue_id, d);

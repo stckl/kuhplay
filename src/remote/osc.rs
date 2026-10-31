@@ -193,6 +193,16 @@ pub fn osc_message_to_command(msg: &OscMessage, prefix: &str) -> Option<RemoteCo
             Some(RemoteCommand::SetShowMode { enabled })
         }
         "/status" => Some(RemoteCommand::GetStatus),
+        "/timecode" => {
+            let text = osc_string_arg(args.first())?;
+            let fps = match args.get(1) {
+                Some(OscType::Int(v)) => crate::core::Fps::from_fps(*v as u64),
+                Some(OscType::Float(v)) => crate::core::Fps::from_fps(*v as u64),
+                _ => crate::core::Fps::default(),
+            };
+            let tc = crate::core::Timecode::parse_hmsf(&text, fps)?;
+            Some(RemoteCommand::ReceiveTimecode { tc })
+        }
         other => {
             tracing::warn!(%other, "osc: unbekannte Adresse");
             None

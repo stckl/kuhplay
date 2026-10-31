@@ -66,14 +66,21 @@ pub enum CueType {
     /// MIDI-Cue (QLab 5): sendet eine MIDI-Nachricht an das Ausgabegerät
     /// ([`EngineCommand::SendMidi`]) – Sofort-Cue.
     Midi,
-    /// Light-Cue (QLab 5, Minimal-Variante): sendet ein Art-Net-DMX-Paket
+    /// Light-Cue (QLab 5, Minimal-Variante): sendet ein Art-Net/sACN-DMX-Paket
     /// ([`LightMessage`]) per UDP ins Licht-Netz – Sofort-Cue.
     Light,
+    /// Companion-Cue: triggert Bitfocus Companion über dessen HTTP-API
+    /// (Button press/down/up, [`CompanionTrigger`]) – Sofort-Cue.
+    Companion,
+    /// Timecode-Cue (QLab 5): feuert, wenn der externe Timecode (LTC/MTC/OSC
+    /// `/kuhplay/timecode`) seinen Trigger [`Cue::tc_trigger`] erreicht.
+    /// Manuelles GO: Wait mit `duration` (0 = Sofort-Cue).
+    Timecode,
 }
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 16] = [
+    pub const ALL: [CueType; 18] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
@@ -90,6 +97,8 @@ impl CueType {
         CueType::Network,
         CueType::Midi,
         CueType::Light,
+        CueType::Companion,
+        CueType::Timecode,
     ];
 
     /// Symbol für Tabellenzellen.
@@ -111,6 +120,8 @@ impl CueType {
             CueType::Network => "📡",
             CueType::Midi => "🎹",
             CueType::Light => "💡",
+            CueType::Companion => "🎛",
+            CueType::Timecode => "⏱",
         }
     }
 
@@ -133,6 +144,8 @@ impl CueType {
             CueType::Network => "Network",
             CueType::Midi => "MIDI",
             CueType::Light => "Light",
+            CueType::Companion => "Companion",
+            CueType::Timecode => "Timecode",
         }
     }
 }
@@ -582,6 +595,10 @@ pub struct Cue {
     /// Test-Script für die JS-Bridge (Inspector: manueller `eval_js`-Trigger).
     #[serde(default)]
     pub js_test_script: String,
+    /// JavaScript-Quelltext – nur [`CueType::Script`] (läuft in eigener
+    /// WebView-Instanz, siehe [`EngineCommand::RunScript`]).
+    #[serde(default)]
+    pub script: String,
     /// Text-Inhalt – nur [`CueType::Text`] (wird als Inline-HTML gerendert,
     /// siehe [`TextContent::to_html`]).
     #[serde(default)]
@@ -592,9 +609,16 @@ pub struct Cue {
     /// MIDI-Nachricht – nur [`CueType::Midi`].
     #[serde(default)]
     pub midi: Option<crate::core::midi::MidiMessage>,
-    /// Licht-Nachricht (Art-Net DMX) – nur [`CueType::Light`].
+    /// Licht-Nachricht (Art-Net/sACN DMX) – nur [`CueType::Light`].
     #[serde(default)]
     pub light: Option<crate::core::light::LightMessage>,
+    /// Companion-Trigger (HTTP-API) – nur [`CueType::Companion`].
+    #[serde(default)]
+    pub companion: Option<crate::core::companion::CompanionTrigger>,
+    /// Timecode-Trigger – nur [`CueType::Timecode`]: feuert, wenn der externe
+    /// Timecode diesen Wert erreicht (Eingang z. B. OSC `/kuhplay/timecode`).
+    #[serde(default)]
+    pub tc_trigger: Option<Timecode>,
     /// Freitext-Notizen für Operatoren.
     #[serde(default)]
     pub notes: String,
@@ -652,10 +676,13 @@ impl Cue {
             data_target: None,
             data_json_text: String::new(),
             js_test_script: String::new(),
+            script: String::new(),
             text_content: None,
             network: None,
             midi: None,
             light: None,
+            companion: None,
+            tc_trigger: None,
             notes: String::new(),
             color: None,
             status: CueStatus::Standby,
@@ -914,6 +941,18 @@ impl Cue {
                     self.number, self.name
                 ))),
             },
+            CueType::Companion => match &self.companion {
+                Some(c) => c.validate().map_err(|_| {
+                    ShowError::InvalidParameter(format!(
+                        "companion cue \"{}\" ({}): invalid host/port",
+                        self.number, self.name
+                    ))
+                }),
+                None => Err(ShowError::InvalidParameter(format!(
+                    "companion cue \"{}\" ({}): no trigger configured",
+                    self.number, self.name
+                ))),
+            },
             CueType::Light => match &self.light {
                 Some(l) => l.validate().map_err(|_| {
                     ShowError::InvalidParameter(format!(
@@ -926,6 +965,16 @@ impl Cue {
                     self.number, self.name
                 ))),
             },
+            CueType::Script => {
+                if self.script.trim().is_empty() {
+                    Err(ShowError::InvalidParameter(format!(
+                        "script cue \"{}\" ({}): empty script",
+                        self.number, self.name
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
             _ => Ok(()),
         }
     }
@@ -1169,12 +1218,42 @@ impl Cue {
                 cue_id: self.id,
                 bytes: m.to_bytes(),
             }),
-            CueType::Light => self.light.as_ref().map(|l| EngineCommand::SendDmx {
-                cue_id: self.id,
-                host: l.host.clone(),
-                packet: l.to_artnet(),
+            CueType::Light => self.light.as_ref().map(|l| {
+                let (packet, port) = l.packet();
+                EngineCommand::SendDmx {
+                    cue_id: self.id,
+                    host: l.host.clone(),
+                    port,
+                    packet,
+                }
             }),
-            CueType::Group | CueType::Script | CueType::Control | CueType::Memo => None,
+            CueType::Companion => self
+                .companion
+                .as_ref()
+                .map(|c| EngineCommand::SendHttpPost {
+                    cue_id: self.id,
+                    host: c.host.clone(),
+                    port: c.port,
+                    path: c.path(),
+                }),
+            CueType::Timecode => {
+                // Manuelles GO: mit duration = Wait-Timer, sonst Sofort-Cue.
+                if self.duration > Duration::ZERO {
+                    Some(EngineCommand::Wait {
+                        cue_id: self.id,
+                        duration: self.duration,
+                        pre_wait: self.pre_wait,
+                        post_wait: self.post_wait,
+                    })
+                } else {
+                    None
+                }
+            }
+            CueType::Script => Some(EngineCommand::RunScript {
+                cue_id: self.id,
+                script: self.script.clone(),
+            }),
+            CueType::Group | CueType::Control | CueType::Memo => None,
         }
     }
 }

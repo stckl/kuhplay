@@ -68,6 +68,11 @@ pub enum RemoteCommand {
     },
     /// Status anfordern (Antwort: [`RemoteEvent::Status`]).
     GetStatus,
+    /// Externer Timecode (LTC/MTC/OSC-Eingang): chasing Cues springen mit,
+    /// Timecode-Trigger-Cues feuern (siehe `CueList::receive_timecode`).
+    ReceiveTimecode {
+        tc: crate::core::Timecode,
+    },
     /// Neuen Cue im aktiven Cart anlegen.
     NewCue {
         cue_type: CueType,

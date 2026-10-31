@@ -5,7 +5,7 @@
 
 use egui::RichText;
 
-use crate::core::{CueType, LightMessage, ARTNET_PORT, DMX_CHANNELS};
+use crate::core::{CueType, LightMessage, LightProtocol, DMX_CHANNELS};
 
 use super::theme;
 use crate::gui::app::ShowApp;
@@ -28,6 +28,18 @@ pub fn draw_light(ui: &mut egui::Ui, app: &mut ShowApp) {
     };
 
     theme::form_grid("inspector_light_grid").show(ui, |ui| {
+        theme::field_label(ui, "Protocol");
+        let mut protocol = light.protocol;
+        egui::ComboBox::from_id_salt("light_protocol_combo")
+            .selected_text(protocol.label())
+            .show_ui(ui, |ui| {
+                for p in LightProtocol::ALL {
+                    ui.selectable_value(&mut light.protocol, p, p.label());
+                }
+            });
+        let _ = &mut protocol;
+        ui.end_row();
+
         theme::field_label(ui, "Universe");
         ui.add(
             egui::DragValue::new(&mut light.universe)
@@ -71,12 +83,14 @@ pub fn draw_light(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.end_row();
 
         theme::field_label(ui, "Packet");
+        let (packet, port) = light.packet();
         ui.label(
             RichText::new(format!(
-                "Art-Net DMX → {}:{} ({} Bytes, {} Kanäle ab Ch {})",
+                "{} → {}:{} ({} Bytes, {} Kanäle ab Ch {})",
+                light.protocol.label(),
                 light.host,
-                ARTNET_PORT,
-                light.to_artnet().len(),
+                port,
+                packet.len(),
                 light.values.len(),
                 light.start_channel
             ))

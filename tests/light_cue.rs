@@ -32,6 +32,7 @@ fn light_cue_triggers_send_dmx_with_artnet_packet_and_completes_instantly() {
     let mut list = CueList::new();
     let mut cue = Cue::new("1", "dimmer", CueType::Light);
     cue.light = Some(LightMessage {
+        protocol: Default::default(),
         universe: 0,
         start_channel: 1,
         values: vec![255, 128],
@@ -42,7 +43,10 @@ fn light_cue_triggers_send_dmx_with_artnet_packet_and_completes_instantly() {
     let outcome = list.go().expect("GO must trigger");
     assert_eq!(outcome.commands.len(), 1);
     match &outcome.commands[0] {
-        EngineCommand::SendDmx { host, packet, .. } => {
+        EngineCommand::SendDmx {
+            host, port, packet, ..
+        } => {
+            assert_eq!(*port, ARTNET_PORT);
             assert_eq!(host, "10.0.0.255");
             assert_eq!(&packet[0..8], b"Art-Net\0");
             assert_eq!(u16::from_le_bytes([packet[8], packet[9]]), 0x5000);
@@ -73,6 +77,7 @@ fn real_engine_sends_artnet_packet_via_udp() {
 
     let (mut engine, _rx_events) = direct_engine();
     let light = LightMessage {
+        protocol: Default::default(),
         universe: 2,
         start_channel: 10,
         values: vec![200, 100, 0],
@@ -83,6 +88,7 @@ fn real_engine_sends_artnet_packet_via_udp() {
         .handle(EngineCommand::SendDmx {
             cue_id: Uuid::new_v4(),
             host: "127.0.0.1".to_string(),
+            port: ARTNET_PORT,
             packet,
         })
         .unwrap();
@@ -97,4 +103,41 @@ fn real_engine_sends_artnet_packet_via_udp() {
     assert_eq!(p[14], 2, "Universe 2 (SubUni)");
     assert_eq!(u16::from_be_bytes([p[16], p[17]]), 3, "Data length");
     assert_eq!(&p[18..21], &[200, 100, 0]);
+}
+
+#[test]
+fn real_engine_sends_sacn_packet_via_udp_port_5568() {
+    use kuhplay::core::{LightProtocol, SACN_PORT};
+    // sACN-Port fix 5568; bei Belegung (paralleler Test) sauber überspringen.
+    let Ok(rx) = UdpSocket::bind(("127.0.0.1", SACN_PORT)) else {
+        return;
+    };
+    rx.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+
+    let (mut engine, _rx_events) = direct_engine();
+    let light = LightMessage {
+        protocol: LightProtocol::Sacn,
+        universe: 7,
+        start_channel: 1,
+        values: vec![255, 0, 128],
+        host: "127.0.0.1".to_string(),
+    };
+    let packet = light.to_sacn();
+    engine
+        .handle(EngineCommand::SendDmx {
+            cue_id: Uuid::new_v4(),
+            host: "127.0.0.1".to_string(),
+            port: SACN_PORT,
+            packet,
+        })
+        .unwrap();
+
+    let mut buf = [0u8; 600];
+    let (n, _from) = rx
+        .recv_from(&mut buf)
+        .expect("sACN-Paket muss an Port 5568 ankommen");
+    let p = &buf[..n];
+    assert_eq!(&p[4..16], b"ASC-E1.31\0\0\0");
+    assert_eq!(u16::from_be_bytes([p[113], p[114]]), 7, "Universe 7");
+    assert_eq!(&p[126..129], &[255, 0, 128]);
 }

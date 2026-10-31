@@ -30,6 +30,7 @@
 
 pub mod audio;
 pub mod cart;
+pub mod companion;
 pub mod cue;
 pub mod cue_list;
 pub mod error;
@@ -64,6 +65,7 @@ pub use audio::{
     ChannelOutput, FadeCurve, FadeParam, MediaSlice, AUDIO_CHANNEL_COUNT, DB_FLOOR,
 };
 pub use cart::CartManager;
+pub use companion::{CompanionAction, CompanionTrigger, COMPANION_DEFAULT_PORT};
 pub use cue::{
     cue_type_for_file, format_timecode, parse_timecode, ContinueMode, ControlAction, Cue,
     CueStatus, CueType, GroupMode, LoopMode, CUE_COLORS,
@@ -71,7 +73,7 @@ pub use cue::{
 pub use cue_list::{CueList, GoOutcome};
 pub use error::{ShowError, ShowResult};
 pub use html::{HtmlSource, HtmlSourceKind};
-pub use light::{LightMessage, ARTNET_PORT, DMX_CHANNELS};
+pub use light::{LightMessage, LightProtocol, ARTNET_PORT, DMX_CHANNELS, SACN_PORT};
 pub use midi::{MidiMessage, MidiMessageKind};
 pub use network::{NetworkMessage, NetworkProtocol};
 pub use screen::{

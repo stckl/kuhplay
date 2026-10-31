@@ -1,0 +1,113 @@
+[
+    {
+        "blockId": 0,
+        "speakers": [
+            {
+                "time": "09:00",
+                "name": "Wolfgang Brunner / Stefan Lehnen",
+                "titleDE": "Begrüßung und Vorstellung der Firma zebris",
+                "titleEN": "Welcome and Introduction to zebris",
+                "img": ""
+            },
+            {
+                "time": "09:15",
+                "name": "Dr. Kirsten Häusler",
+                "titleDE": "Moveability - Dynamische Mobilisation und Krafttraining für Hunde",
+                "titleEN": "Moveability - Dynamic Mobilization and Strength Training for Dogs",
+                "img": "SpeakerImages/Kiki_Häussler.png"
+            },
+            {
+                "time": "10:00",
+                "name": "Dr. Daniel Koch",
+                "titleDE": "Alter, Arthrose und Aktivität: wer rastet der rostet",
+                "titleEN": "Age, Osteoarthritis and Activity: Staying Active Keeps You Moving",
+                "img": "SpeakerImages/Dr_Daniel_Koch.png"
+            }
+        ]
+    },
+    {
+        "blockId": 1,
+        "speakers": [
+            {
+                "time": "10:30",
+                "name": "Dr. Alexandra Keller",
+                "titleDE": "Arthrose - keine „Alte-Hunde“-Krankheit. \nStellenwert einer frühen Diagnose und multimodalen Therapie",
+                "titleEN": "Osteoarthritis – Not Just an \"Old Dog\" Disease. \nThe importance of early diagnosis and multimodal treatment",
+                "img": "SpeakerImages/Alexandra_Keller.png"
+            },
+            {
+                "time": "11:30",
+                "name": "Dr. Rico Vannini",
+                "titleDE": "Sportmedizinische Betreuung von Agility Hunden - \nEinsatz und Nutzen der Ganganalyse",
+                "titleEN": "Sports Medicine for Agility Dogs – \nRole and Benefits of Gait Analysis",
+                "img": "SpeakerImages/Rico_Vannini.png"
+            },
+            {
+                "time": "12:00",
+                "name": "Dr. Katja Söhnel / Prof. Dr. Martin S. Fischer",
+                "titleDE": "Entwicklung des Gangwerks – Betrachtung des \nAbrollverhaltens vom Welpen zum adulten Hund",
+                "titleEN": "Gait Development – From Puppy to Adult: \nObserving Roll-Off Behaviour",
+                "img": "SpeakerImages/Katja_Soehnel.png"
+            }
+        ]
+    },
+    {
+        "blockId": 2,
+        "speakers": [
+            {
+                "time": "13:30",
+                "name": "Dr. Daniel Koch",
+                "titleDE": "Wieviel Bewegung braucht der wachsende Hund?",
+                "titleEN": "How Much Exercise Does a Growing Dog Need?",
+                "img": "SpeakerImages/Dr_Daniel_Koch.png"
+            },
+            {
+                "time": "14:00",
+                "name": "Dr. Rico Vannini",
+                "titleDE": "Vom Junghund zum Athleten - \nTalentförderung aus orthopädischer Sicht",
+                "titleEN": "From Young Dog to Athlete — \nSupporting Talent from an Orthopaedic Perspective",
+                "img": "SpeakerImages/Rico_Vannini.png"
+            },
+            {
+                "time": "14:30",
+                "name": "Lukas Pratschker",
+                "titleDE": "Move Smart - Train Smart: Tipps und Tricks - \nso klappt es mit der Eingewöhnung und dem Training",
+                "titleEN": "Move Smart – Train Smart: Tips and Tricks for \nSuccessful Treadmill Acclimatisation and Training",
+                "img": "SpeakerImages/Lukas_Pratschker.png"
+            }
+        ]
+    },
+    {
+        "blockId": 3,
+        "speakers": [
+            {
+                "time": "15:30",
+                "name": "Dr. Jana Gams",
+                "titleDE": "Bewegung verstehen, Genesung fördern – \nWie Ganganalyse die canine Rehabilitation verbessert",
+                "titleEN": "Measuring Motion, Maximising Recovery: \nUsing Gait Analysis to Improve Rehabilitation",
+                "img": "SpeakerImages/Jana_Gams.png"
+            },
+            {
+                "time": "16:00",
+                "name": "Dr. Beate I. Egner / Dr. Kathleen Wittek",
+                "titleDE": "Stellenwert der Ganganalyse in der CCRP-Ausbildung",
+                "titleEN": "The Role of Gait Analysis in CCRP Training",
+                "img": "SpeakerImages/Beate_Egner.png"
+            },
+            {
+                "time": "16:30",
+                "name": "Alma Heidari",
+                "titleDE": "Laufbandanalyse trifft Osteoarthritis – \neine Studie zur Ganganalyse bei gesunden und erkrankten Hunden",
+                "titleEN": "Treadmill Analysis Meets Osteoarthritis – \na study on gait analysis in healthy and affected dogs",
+                "img": "SpeakerImages/Alma_Heidari.png"
+            },
+            {
+                "time": "16:45",
+                "name": "Wolfgang Brunner / Stefan Lehnen",
+                "titleDE": "Q&A Diskussionsrunde, Blick in die Zukunft und Schlusswort",
+                "titleEN": "Q&A and Discussion, Looking Ahead and Closing Remarks",
+                "img": ""
+            }
+        ]
+    }
+]

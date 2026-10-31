@@ -10,7 +10,7 @@ use std::time::Duration;
 use crossbeam_channel::{unbounded, Receiver};
 use uuid::Uuid;
 
-use kuhplay::core::{FadeCurve, FadeParam, LoopMode};
+use kuhplay::core::{FadeCurve, FadeParam, Fps, LoopMode, Timecode};
 use kuhplay::engine::{EngineCommand, EngineEvent, MediaEngine, MockMediaEngine, VirtualClock};
 
 type TestEngine = MockMediaEngine<VirtualClock>;
@@ -552,4 +552,78 @@ fn wait_cue_stop_emits_stopped_and_no_finish() {
     assert!(!drain(&rx)
         .iter()
         .any(|e| matches!(e, EngineEvent::Finished { .. })));
+}
+
+// ---------------------------------------------------------------------------
+// Timecode-Injection: alle chasing Cues springen mit (QLab-Gruppen-Sprung)
+// ---------------------------------------------------------------------------
+
+fn tc(h: u64, m: u64, sec: u64, f: u64) -> Timecode {
+    Timecode::from_hmsf(h, m, sec, f, Fps::Fps25)
+}
+
+fn play_with_tc(cue_id: Uuid, tc_in: Timecode) -> EngineCommand {
+    EngineCommand::Play {
+        cue_id,
+        path: None,
+        duration: Some(Duration::from_secs(60)),
+        pre_wait: Duration::ZERO,
+        post_wait: Duration::ZERO,
+        loop_mode: LoopMode::Once,
+        slices: Vec::new(),
+        route: None,
+        timecode_in: Some(tc_in),
+        stage: None,
+        layer: 0,
+        surface: None,
+    }
+}
+
+#[test]
+fn inject_timecode_jumps_all_chasing_cues_to_tc_minus_offset() {
+    let (mut engine, _clock, rx) = setup();
+    let a = Uuid::new_v4();
+    let b = Uuid::new_v4();
+    // A: timecode_in 01:00:00:00, B: 01:00:05:00 (je 25 fps).
+    engine.handle(play_with_tc(a, tc(1, 0, 0, 0))).unwrap();
+    engine.handle(play_with_tc(b, tc(1, 0, 5, 0))).unwrap();
+    engine.advance_time(Duration::from_millis(100)); // beide gestartet
+    drain(&rx);
+
+    // Externer TC 01:00:10:00 → A auf 10 s, B auf 10 s − 5 s = 5 s.
+    engine
+        .handle(EngineCommand::InjectTimecode {
+            tc: tc(1, 0, 10, 0),
+        })
+        .unwrap();
+    let events = drain(&rx);
+    let jump_of = |id: Uuid| {
+        events.iter().find_map(|e| match e {
+            EngineEvent::TimecodeJump { cue_id, to, .. } if *cue_id == id => Some(*to),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        jump_of(a),
+        Some(Duration::from_secs(10)),
+        "A: tc − timecode_in"
+    );
+    assert_eq!(
+        jump_of(b),
+        Some(Duration::from_secs(5)),
+        "B: tc − timecode_in"
+    );
+
+    // Kleiner Drift (≤ 1 Frame) wird ausgesessen – kein Wasserfall.
+    engine
+        .handle(EngineCommand::InjectTimecode {
+            tc: tc(1, 0, 10, 1),
+        })
+        .unwrap();
+    assert!(
+        !drain(&rx)
+            .iter()
+            .any(|e| matches!(e, EngineEvent::TimecodeJump { .. })),
+        "Drift ≤ 1 Frame darf nicht springen"
+    );
 }

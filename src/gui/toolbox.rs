@@ -38,9 +38,12 @@ const GROUPS: &[(&str, &[CueType])] = &[
     ),
     ("Data", &[CueType::HtmlData]),
     // Wait/Memo (QLab 5): Timer- und Notiz-Cues ohne eigenes Medium.
-    ("Misc", &[CueType::Wait, CueType::Memo]),
+    ("Misc", &[CueType::Wait, CueType::Memo, CueType::Timecode]),
     // Network/MIDI (QLab 5): UDP/TCP-Nachricht bzw. MIDI an Ziele im Show-Netz.
-    ("Network", &[CueType::Network, CueType::Midi]),
+    (
+        "Network",
+        &[CueType::Network, CueType::Midi, CueType::Companion],
+    ),
     // Lighting (QLab 5): Art-Net DMX ins Licht-Netz.
     ("Lighting", &[CueType::Light]),
 ];

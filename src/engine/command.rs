@@ -134,6 +134,11 @@ pub enum EngineCommand {
     /// Schaltet eine laufende Diashow manuell (Control-Cues
     /// `NextSlide`/`PrevSlide`).
     SlideNav { cue_id: Uuid, nav: SlideNav },
+    /// Externer Timecode (LTC/MTC/OSC-Eingang) in die Engine einspeisen:
+    /// alle chasing Cues (`timecode_in`) springen auf `tc - timecode_in`
+    /// (Sprung > 1 Frame; Media-Backends seeken mit, Wallclock-Kinds nur
+    /// ihre Position). Siehe `MediaEngine`-Implementierungen.
+    InjectTimecode { tc: crate::core::Timecode },
     /// Wait-Cue (QLab 5): reine Timer-Unit ohne Medium – die Engine startet
     /// nach `pre_wait` und meldet nach `duration` `Finished` (danach
     /// `post_wait`). `duration = 0` → sofortiges Ende nach dem Pre-Wait.
@@ -166,8 +171,25 @@ pub enum EngineCommand {
     SendDmx {
         cue_id: Uuid,
         host: String,
+        /// Zielport (Art-Net 6454 / sACN 5568, siehe `LightProtocol::port`).
+        port: u16,
         packet: Vec<u8>,
     },
+    /// Companion-Cue: HTTP POST an `http://host:port/path` (leerer Body) –
+    /// Bitfocus Companion Remote-Control-API. Sofort-Cue; die Real-Engine
+    /// feuert asynchron (spawned Thread, Connect-Timeout 500 ms), Fehler als
+    /// [`super::EngineEvent::Error`].
+    SendHttpPost {
+        cue_id: Uuid,
+        host: String,
+        port: u16,
+        path: String,
+    },
+    /// Script-Cue (QLab 5 „Script Cue"): führt `script` (JavaScript) in einer
+    /// eigenen WebView-Instanz aus (ohne Stage, unsichtbar). Nach dem Laden
+    /// (Script-Ende) kommt `Finished` – der Cue ist damit eine Play-artige
+    /// Unit. Ohne WebView-Binary → `EngineEvent::Error`.
+    RunScript { cue_id: Uuid, script: String },
     /// Health-Check: Engine antwortet mit [`super::EngineEvent::Pong`].
     /// Dient Stress-Tests zur verlässlichen "keine Message-Drops"-Prüfung.
     Ping(u64),

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KuhPlay Timetable-Template</title>
+<!--
+  KuhPlay-Template nach docs/HTML-Templates.md:
+  - eine Datei, CSS/JS inline, kein externes Laden (Offline-Show)
+  - Layout nur in vw/vh/% (skaliert auf jede Stage-Auflösung)
+  - Daten kommen per HTML-Data-Cue: window.kuhplay.onShowControlData(payload)
+  - Datenstruktur: [ { blockId, blockTitle?, speakers: [ { time, name,
+    titleDE, titleEN, img } ] } ]  (siehe assets/demo/zeitplan.json)
+-->
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden;
+    background: #0d1420;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #f0f4fa;
+  }
+  #app { display: flex; flex-direction: column; width: 100vw; height: 100vh; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 2.2vh 3vw; background: #12203a; border-bottom: 0.4vh solid #ffb000;
+  }
+  header h1 { margin: 0; font-size: 4.6vh; letter-spacing: 0.05em; }
+  header .clock { font-size: 3.4vh; color: #9fb3d1; font-variant-numeric: tabular-nums; }
+  #tabs { display: flex; gap: 1vw; padding: 1.6vh 3vw 0; }
+  #tabs button {
+    font: inherit; font-size: 2.6vh; padding: 1vh 2.4vw; cursor: pointer;
+    background: #1a2c4d; color: #cfe0f5; border: 0.25vh solid #33507e;
+    border-radius: 1vh;
+  }
+  #tabs button.active { background: #ffb000; color: #10182b; border-color: #ffb000; font-weight: 700; }
+  #lang { display: flex; gap: 0.6vw; }
+  #lang button {
+    font: inherit; font-size: 2.4vh; padding: 0.8vh 1.6vw; cursor: pointer;
+    background: #1a2c4d; color: #cfe0f5; border: 0.25vh solid #33507e; border-radius: 0.8vh;
+  }
+  #lang button.active { background: #2e6fd8; color: #fff; border-color: #2e6fd8; }
+  main { flex: 1; overflow: hidden; padding: 2vh 3vw; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 1.7vh 1.2vw; border-bottom: 0.2vh solid #22345a; vertical-align: middle; }
+  td.time { font-size: 3.6vh; font-weight: 700; color: #ffb000; width: 9vw;
+    font-variant-numeric: tabular-nums; }
+  td.who { width: 30vw; }
+  td.who .name { font-size: 3.1vh; font-weight: 700; }
+  td.what { font-size: 2.7vh; color: #c9d6ea; white-space: pre-line; }
+  td.avatar { width: 9vw; text-align: right; }
+  td.avatar img { width: 8vw; height: 8vw; object-fit: cover; border-radius: 50%;
+    border: 0.35vh solid #ffb000; }
+  td.avatar .fallback {
+    display: inline-flex; width: 8vw; height: 8vw; border-radius: 50%;
+    background: #1a2c4d; border: 0.35vh solid #ffb000; align-items: center;
+    justify-content: center; font-size: 3.4vh; font-weight: 700; color: #ffb000;
+  }
+  footer { padding: 1.4vh 3vw; font-size: 2.2vh; color: #6d84a8; background: #0a101c; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 id="eventTitle">Timetable</h1>
+    <div id="lang">
+      <button data-lang="DE" class="active">DE</button>
+      <button data-lang="EN">EN</button>
+    </div>
+    <div class="clock" id="clock"></div>
+  </header>
+  <div id="tabs"></div>
+  <main><table id="rows"></table></main>
+  <footer id="foot">Daten via KuhPlay HTML-Data-Cue (window.kuhplay.onShowControlData)</footer>
+</div>
+
+<script>
+"use strict";
+// Default-Dataset: Seite ist auch allein im Browser lauffähig.
+const defaultData = {
+  eventTitle: "Timetable",
+  blocks: [
+    { blockId: 0, blockTitle: "Block 1", speakers: [
+      { time: "09:00", name: "Example Speaker", titleDE: "Begrüßung", titleEN: "Welcome", img: "" }
+    ]}
+  ]
+};
+let data = structuredClone(defaultData);
+let activeBlock = 0;
+let lang = "DE";
+
+const $ = (id) => document.getElementById(id);
+
+function deepMerge(base, patch) {
+  if (Array.isArray(base) && Array.isArray(patch)) return patch;
+  if (base && patch && typeof base === "object" && typeof patch === "object") {
+    const out = Object.assign({}, base);
+    for (const k of Object.keys(patch)) out[k] = deepMerge(base[k], patch[k]);
+    return out;
+  }
+  return patch === undefined ? base : patch;
+}
+
+function initials(name) {
+  return (name || "?").split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+}
+
+function render() {
+  $("eventTitle").textContent = data.eventTitle || "Timetable";
+  const blocks = data.blocks || [];
+  if (activeBlock >= blocks.length) activeBlock = 0;
+  // Block-Tabs
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  blocks.forEach((b, i) => {
+    const btn = document.createElement("button");
+    btn.textContent = b.blockTitle || ("Block " + (b.blockId !== undefined ? b.blockId + 1 : i + 1));
+    if (i === activeBlock) btn.classList.add("active");
+    btn.onclick = () => { activeBlock = i; render(); };
+    tabs.appendChild(btn);
+  });
+  // Speaker-Tabelle des aktiven Blocks
+  const rows = $("rows");
+  rows.innerHTML = "";
+  const block = blocks[activeBlock] || { speakers: [] };
+  for (const s of block.speakers || []) {
+    const tr = document.createElement("tr");
+    const title = (lang === "DE" ? s.titleDE : s.titleEN) || s.titleDE || s.titleEN || "";
+    tr.innerHTML =
+      '<td class="time"></td>' +
+      '<td class="who"><div class="name"></div></td>' +
+      '<td class="what"></td>' +
+      '<td class="avatar"></td>';
+    tr.querySelector(".time").textContent = s.time || "";
+    tr.querySelector(".name").textContent = s.name || "";
+    tr.querySelector(".what").textContent = title;
+    const av = tr.querySelector(".avatar");
+    if (s.img) {
+      const img = document.createElement("img");
+      img.src = s.img;
+      img.onerror = () => { img.replaceWith(fallbackAvatar(s.name)); };
+      av.appendChild(img);
+    } else {
+      av.appendChild(fallbackAvatar(s.name));
+    }
+    rows.appendChild(tr);
+  }
+  // Sprach-Umschalter
+  document.querySelectorAll("#lang button").forEach(b => {
+    b.classList.toggle("active", b.dataset.lang === lang);
+    b.onclick = () => { lang = b.dataset.lang; render(); };
+  });
+}
+
+function fallbackAvatar(name) {
+  const d = document.createElement("div");
+  d.className = "fallback";
+  d.textContent = initials(name);
+  return d;
+}
+
+// Uhr (lokale Zeit, tabellarisch)
+setInterval(() => {
+  const d = new Date();
+  $("clock").textContent =
+    String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0") + ":" +
+    String(d.getSeconds()).padStart(2, "0");
+}, 250);
+
+// Erst-Render mit Default-Daten
+render();
+
+// KuhPlay-Bridge: HTML-Data-Cue pusht JSON → neu rendern.
+if (window.kuhplay) {
+  window.kuhplay.onShowControlData = (payload) => {
+    data = deepMerge(structuredClone(defaultData), payload);
+    render();
+  };
+}
+</script>
+</body>
+</html>

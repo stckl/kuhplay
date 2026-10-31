@@ -33,6 +33,14 @@ pub fn demo_cues() -> Vec<Cue> {
         .with_surface(full_surface)
         .with_js_test_script("document.querySelector('h1').style.color = '#2ecc71';");
     let html_id = html.id;
+    let timetable = Cue::new("12", "Timetable (HTML5)", CueType::Html)
+        .with_html_source(HtmlSource::inline(include_str!(
+            "../../assets/demo/timetable.html"
+        )))
+        .with_stage("Stage 1")
+        .with_layer(3)
+        .with_surface(full_surface);
+    let timetable_id = timetable.id;
     vec![
         Cue::new("1", "House to Half", CueType::Fade)
             .with_fade_target(0.5)
@@ -86,10 +94,17 @@ pub fn demo_cues() -> Vec<Cue> {
         Cue::new("8", "Score Update (JSON)", CueType::HtmlData)
             .with_data_target(html_id)
             .with_data_json(r#"{"score":{"home":2,"guest":1},"clock":"12:34"}"#),
+        // Timetable-Template (assets/demo/timetable.html, als Inline eingebettet,
+        // damit es ohne Datei-Pfad überall läuft). Daten kommen über Cue 13.
+        timetable,
         Cue::new("9", "Next Slide", CueType::Control)
             .with_control(ControlAction::NextSlide)
             .with_control_target("7"),
         Cue::new("10", "Blackout", CueType::Stop),
         Cue::new("11", "Reset Show", CueType::Control).with_control(ControlAction::Reset),
+        // Timetable-Daten (assets/demo/zeitplan.json) an den HTML5-Cue 12 pushen.
+        Cue::new("13", "Timetable Data (JSON)", CueType::HtmlData)
+            .with_data_target(timetable_id)
+            .with_data_json(include_str!("../../assets/demo/zeitplan.json")),
     ]
 }

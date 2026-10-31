@@ -181,9 +181,9 @@ let S = null, W = null, ws = null, statusAt = 0;
 let selected = [], sideTab = 'lists', inspTab = 'Basics', page = 'General', message = '';
 const $ = id => document.getElementById(id);
 const COLORS = [[231,76,60],[230,126,34],[241,196,15],[39,174,96],[41,128,185],[142,68,173],[232,67,147],[127,140,141]];
-const TOOLS = [['Media',['Audio','Video','Html','SlideShow','Text']],['Fade',['Fade']],['Control',['Group','Stop','Script','Control']],['Data',['HtmlData']],['Misc',['Wait','Memo']],['Network',['Network','Midi']],['Lighting',['Light']]];
-const TABS = { Audio:['Basics','Triggers','Time & Loops','Audio Levels'], Video:['Basics','Triggers','Time & Loops','Geometry','Audio Levels'], Fade:['Basics','Triggers','Curve'], Html:['Basics','Triggers','Geometry','Source'], SlideShow:['Basics','Triggers','Geometry','Slides'], HtmlData:['Basics','Triggers','Data'], Text:['Basics','Triggers','Geometry','Text'], Network:['Basics','Triggers','Network'], Midi:['Basics','Triggers','MIDI'], Light:['Basics','Triggers','Light'] };
-const ICON = { Audio:'♪', Video:'▣', Html:'◍', SlideShow:'▤', Fade:'◐', Group:'❏', Stop:'■', Script:'✎', Control:'⌃', HtmlData:'{}', Wait:'⏳', Memo:'📝', Text:'🅣', Network:'📡', Midi:'🎹', Light:'💡' };
+const TOOLS = [['Media',['Audio','Video','Html','SlideShow','Text']],['Fade',['Fade']],['Control',['Group','Stop','Script','Control']],['Data',['HtmlData']],['Misc',['Wait','Memo','Timecode']],['Network',['Network','Midi','Companion']],['Lighting',['Light']]];
+const TABS = { Audio:['Basics','Triggers','Time & Loops','Audio Levels'], Video:['Basics','Triggers','Time & Loops','Geometry','Audio Levels'], Fade:['Basics','Triggers','Curve'], Html:['Basics','Triggers','Geometry','Source'], SlideShow:['Basics','Triggers','Geometry','Slides'], HtmlData:['Basics','Triggers','Data'], Text:['Basics','Triggers','Geometry','Text'], Network:['Basics','Triggers','Network'], Midi:['Basics','Triggers','MIDI'], Light:['Basics','Triggers','Light'], Companion:['Basics','Triggers','Companion'], Timecode:['Basics','Triggers','Timecode'], Script:['Basics','Triggers','Script'] };
+const ICON = { Audio:'♪', Video:'▣', Html:'◍', SlideShow:'▤', Fade:'◐', Group:'❏', Stop:'■', Script:'✎', Control:'⌃', HtmlData:'{}', Wait:'⏳', Memo:'📝', Text:'🅣', Network:'📡', Midi:'🎹', Light:'💡', Companion:'🎛', Timecode:'⏱' };
 
 function send(action, extra = {}) {
   const c = { action, ...extra };

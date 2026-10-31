@@ -12,13 +12,48 @@ use crate::core::error::{ShowError, ShowResult};
 /// Art-Net-UDP-Port (Standard).
 pub const ARTNET_PORT: u16 = 6454;
 
+/// sACN (E1.31)-UDP-Port (Standard).
+pub const SACN_PORT: u16 = 5568;
+
 /// DMX512: 512 Kanäle pro Universe.
 pub const DMX_CHANNELS: usize = 512;
+
+/// Protokoll des Light-Cues: Art-Net (ArtDmx) oder sACN (E1.31).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LightProtocol {
+    /// Art-Net (Port 6454, OpDmx 0x5000).
+    #[default]
+    ArtNet,
+    /// sACN / E1.31 (Port 5568).
+    Sacn,
+}
+
+impl LightProtocol {
+    /// Alle Varianten (UI-ComboBoxen).
+    pub const ALL: [LightProtocol; 2] = [LightProtocol::ArtNet, LightProtocol::Sacn];
+    /// Anzeige-Label.
+    pub fn label(self) -> &'static str {
+        match self {
+            LightProtocol::ArtNet => "Art-Net",
+            LightProtocol::Sacn => "sACN (E1.31)",
+        }
+    }
+    /// UDP-Zielport des Protokolls.
+    pub fn port(self) -> u16 {
+        match self {
+            LightProtocol::ArtNet => ARTNET_PORT,
+            LightProtocol::Sacn => SACN_PORT,
+        }
+    }
+}
 
 /// Licht-Nachricht eines Light-Cues ([`crate::core::CueType::Light`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LightMessage {
-    /// DMX-Universe (0–32767; Art-Net Net:SubUni).
+    /// Protokoll (Art-Net oder sACN).
+    #[serde(default)]
+    pub protocol: LightProtocol,
+    /// DMX-Universe (0–32767; Art-Net Net:SubUni bzw. sACN Universe 1–63999).
     #[serde(default)]
     pub universe: u16,
     /// Erster DMX-Kanal (1-basiert, 1–512) – QLab „channel".
@@ -46,6 +81,7 @@ fn default_host() -> String {
 impl Default for LightMessage {
     fn default() -> Self {
         Self {
+            protocol: LightProtocol::ArtNet,
             universe: 0,
             start_channel: default_start_channel(),
             values: default_values(),
@@ -57,10 +93,16 @@ impl Default for LightMessage {
 impl LightMessage {
     /// Prüft die Konfiguration (GO setzt den Cue sonst auf `Error`).
     pub fn validate(&self) -> ShowResult<()> {
-        if self.universe > 0x7FFF {
-            return Err(ShowError::InvalidParameter(
-                "light cue: universe must be 0-32767".to_string(),
-            ));
+        let uni_ok = match self.protocol {
+            LightProtocol::ArtNet => self.universe <= 0x7FFF,
+            // sACN-Universen sind 1-basiert (1–63999).
+            LightProtocol::Sacn => (1..=63999).contains(&self.universe),
+        };
+        if !uni_ok {
+            return Err(ShowError::InvalidParameter(format!(
+                "light cue: invalid universe for {} (Art-Net 0-32767, sACN 1-63999)",
+                self.protocol.label()
+            )));
         }
         if self.start_channel == 0 || self.start_channel as usize > DMX_CHANNELS {
             return Err(ShowError::InvalidParameter(
@@ -102,6 +144,58 @@ impl LightMessage {
         packet.extend_from_slice(&len.to_be_bytes()); // Data length
         packet.extend_from_slice(&self.values[..len as usize]);
         packet
+    }
+
+    /// Baut das sACN-(E1.31)-DMP-Paket (UDP-Port 5568).
+    ///
+    /// Root-Layer: Preamble 0x0010, Postamble 0x0000, ACN-Identifier
+    /// „ASC-E1.31\0\0\0", Flags+Length 0x7000|root_len, Vector
+    /// VECTOR_ROOT_E131_DATA (0x00000004), CID (16 B, Null).
+    /// Daten-Layer: Flags+Length 0x7000|len, VECTOR_E131_DATA_PACKET
+    /// (0x00000004), Source-Name (64 B, leer), Priority 100, Sync 0,
+    /// Sequence 0, Options 0, Universe (BE u16, 1-basiert).
+    /// DMP-Layer: Flags+Length 0x7200|len, Vector 0x02, Addr-Type 0xA1,
+    /// First-Property 0, Increment 1, Count = dmx_len, Startcode 0x00,
+    /// DMX-Daten.
+    pub fn to_sacn(&self) -> Vec<u8> {
+        // DMX-Block inkl. Startcode (min. 2, max. 513 lt. E1.31).
+        let dmx_len = (self.values.len() + 1).clamp(2, DMX_CHANNELS + 1) as u16;
+        // Längen inkl. des jeweiligen 2-Byte-Flags/Laengen-Felds.
+        let dmp_len = 10 + dmx_len as u32; // 2 + 8 (DMP-Header) + dmx_len
+        let data_len = 77 + dmp_len; // 2 + 75 (E1.31-Header) + dmp_len
+        let root_len = 22 + data_len; // 2 + 4 (Vector) + 16 (CID) + data_len
+        let mut p = Vec::with_capacity(126 + dmx_len as usize);
+        p.extend_from_slice(&0x0010u16.to_be_bytes()); // Preamble
+        p.extend_from_slice(&0x0000u16.to_be_bytes()); // Postamble
+        p.extend_from_slice(b"ASC-E1.31\0\0\0"); // ACN-Identifier (12 B)
+        p.extend_from_slice(&(0x7000 | root_len as u16).to_be_bytes());
+        p.extend_from_slice(&0x00000004u32.to_be_bytes()); // VECTOR_ROOT_E131_DATA
+        p.extend_from_slice(&[0u8; 16]); // CID
+        p.extend_from_slice(&(0x7000 | data_len as u16).to_be_bytes());
+        p.extend_from_slice(&0x00000004u32.to_be_bytes()); // VECTOR_E131_DATA_PACKET
+        p.extend_from_slice(&[0u8; 64]); // Source-Name
+        p.push(100); // Priority
+        p.extend_from_slice(&0u16.to_be_bytes()); // Sync-Address
+        p.push(0); // Sequence
+        p.push(0); // Options
+        p.extend_from_slice(&self.universe.to_be_bytes()); // Universe
+        p.extend_from_slice(&(0x7000 | dmp_len as u16).to_be_bytes());
+        p.push(0x02); // VECTOR_DMP_DATA
+        p.push(0xA1); // Address-Type & Data-Type
+        p.extend_from_slice(&0x0000u16.to_be_bytes()); // First Property Address
+        p.extend_from_slice(&0x0001u16.to_be_bytes()); // Address Increment
+        p.extend_from_slice(&dmx_len.to_be_bytes()); // Property Value Count
+        p.push(0x00); // DMX-Startcode
+        p.extend_from_slice(&self.values[..(dmx_len - 1) as usize]);
+        p
+    }
+
+    /// Baut das Paket zum gewählten Protokoll und liefert den Zielport.
+    pub fn packet(&self) -> (Vec<u8>, u16) {
+        match self.protocol {
+            LightProtocol::ArtNet => (self.to_artnet(), ARTNET_PORT),
+            LightProtocol::Sacn => (self.to_sacn(), SACN_PORT),
+        }
     }
 
     /// Anzeige-Text (z. B. „DMX u0 ch1: 255, 128“).
@@ -153,6 +247,7 @@ mod tests {
     #[test]
     fn artnet_packet_layout() {
         let msg = LightMessage {
+            protocol: LightProtocol::ArtNet,
             universe: 1,
             start_channel: 5,
             values: vec![255, 128, 0],
@@ -179,6 +274,68 @@ mod tests {
         let p = msg.to_artnet();
         assert_eq!(p[14], 0x02);
         assert_eq!(p[15], 0x01);
+    }
+
+    #[test]
+    fn sacn_packet_layout() {
+        let msg = LightMessage {
+            protocol: LightProtocol::Sacn,
+            universe: 5,
+            start_channel: 1,
+            values: vec![10, 20, 30],
+            host: "127.0.0.1".to_string(),
+        };
+        let p = msg.to_sacn();
+        // dmx_len = 3 Werte + Startcode = 4 → Paket = 125 + dmx_len = 129 Bytes.
+        assert_eq!(p.len(), 129);
+        assert_eq!(&p[4..16], b"ASC-E1.31\0\0\0");
+        let root_len = u16::from_be_bytes([p[16], p[17]]) & 0x0FFF;
+        assert_eq!(root_len as usize, 113); // 22 + 77 + 14
+        assert_eq!(u32::from_be_bytes([p[18], p[19], p[20], p[21]]), 0x00000004);
+        let data_len = u16::from_be_bytes([p[38], p[39]]) & 0x0FFF;
+        assert_eq!(data_len as usize, 91); // 77 + 14
+        assert_eq!(u32::from_be_bytes([p[40], p[41], p[42], p[43]]), 0x00000004);
+        assert_eq!(p[108], 100, "Priority");
+        assert_eq!(u16::from_be_bytes([p[113], p[114]]), 5, "Universe BE");
+        let dmp_len = u16::from_be_bytes([p[115], p[116]]) & 0x0FFF;
+        assert_eq!(dmp_len as usize, 14); // 10 + 4
+        assert_eq!(p[117], 0x02);
+        assert_eq!(p[118], 0xA1);
+        assert_eq!(
+            u16::from_be_bytes([p[123], p[124]]),
+            4,
+            "Property count inkl. Startcode"
+        );
+        assert_eq!(p[125], 0x00, "Startcode");
+        assert_eq!(&p[126..129], &[10, 20, 30]);
+        // Protokoll-Port + Paket-Auswahl.
+        assert_eq!(LightProtocol::Sacn.port(), SACN_PORT);
+        let (packet, port) = msg.packet();
+        assert_eq!(port, SACN_PORT);
+        assert_eq!(packet, p);
+        assert_eq!(LightProtocol::ArtNet.port(), ARTNET_PORT);
+    }
+
+    #[test]
+    fn sacn_universe_must_be_1_based() {
+        let msg = LightMessage {
+            protocol: LightProtocol::Sacn,
+            universe: 0,
+            ..Default::default()
+        };
+        assert!(msg.validate().is_err());
+        let msg = LightMessage {
+            protocol: LightProtocol::Sacn,
+            universe: 64000,
+            ..Default::default()
+        };
+        assert!(msg.validate().is_err());
+        let msg = LightMessage {
+            protocol: LightProtocol::Sacn,
+            universe: 1,
+            ..Default::default()
+        };
+        assert!(msg.validate().is_ok());
     }
 
     #[test]
@@ -233,6 +390,7 @@ mod tests {
     #[test]
     fn serde_roundtrip_and_legacy_default() {
         let msg = LightMessage {
+            protocol: LightProtocol::ArtNet,
             universe: 3,
             start_channel: 17,
             values: vec![10, 20],

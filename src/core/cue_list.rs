@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use crate::core::error::{ShowError, ShowResult};
 use crate::core::slideshow::SlideNav;
+use crate::core::Timecode;
 use crate::core::{ContinueMode, ControlAction, Cue, CueStatus, CueType, GroupMode};
 use crate::engine::EngineCommand;
 
@@ -564,30 +565,35 @@ impl CueList {
     /// Auto-Continue erreicht ist (Safety-Guard: max. 100 Verkettungen).
     /// Rückgabe: Index des ersten Cues + alle gesammelten Commands.
     pub fn go_chained(&mut self) -> Option<GoOutcome> {
-        let first = self.go()?;
-        let mut commands = first.commands;
-        let mut last_index = first.index;
-        for _ in 0..100 {
-            let auto_continue = self
-                .cues
-                .get(last_index)
-                .map(|c| c.continue_mode == ContinueMode::AutoContinue)
-                .unwrap_or(false);
-            if !auto_continue {
-                break;
+        // QLab-5-Semantik: Beim GO feuert nur der Standby-Cue. Auto-Continue
+        // feuert den Folge-Cue erst, wenn der laufende Cue abgeschlossen ist
+        // (inkl. Post-Wait → `set_status_with_follow` bei Completed);
+        // Auto-Follow feuert beim Start (Playing). Deshalb hier kein Chaining.
+        self.go()
+    }
+
+    /// Externer Timecode (LTC/MTC/OSC) erreicht die Liste: alle armed
+    /// Standby-Cues mit [`Cue::tc_trigger`] ≤ `tc` feuern (QLab
+    /// „timecode trigger"). Rückgabe: die dabei erzeugten Engine-Commands.
+    /// Top-Level-Cues only (Gruppen-Kinder feuern über ihre Gruppe).
+    pub fn receive_timecode(&mut self, tc: Timecode) -> Vec<EngineCommand> {
+        let tc_dur = tc.to_duration();
+        let mut indices = Vec::new();
+        for (index, cue) in self.cues.iter().enumerate() {
+            if !cue.is_armed || cue.status != CueStatus::Standby {
+                continue;
             }
-            match self.go() {
-                Some(outcome) => {
-                    last_index = outcome.index;
-                    commands.extend(outcome.commands);
+            if let Some(trigger) = cue.tc_trigger {
+                if trigger.to_duration() <= tc_dur {
+                    indices.push(index);
                 }
-                None => break,
             }
         }
-        Some(GoOutcome {
-            index: first.index,
-            commands,
-        })
+        let mut commands = Vec::new();
+        for index in indices {
+            self.go_single(index, &mut commands);
+        }
+        commands
     }
 
     /// GO auf einen bestimmten Cue per Q-Nummer (z. B. „5.1") – für die
@@ -636,6 +642,7 @@ impl CueList {
             | Some(EngineCommand::SendNetwork { .. })
             | Some(EngineCommand::SendMidi { .. })
             | Some(EngineCommand::SendDmx { .. })
+            | Some(EngineCommand::SendHttpPost { .. })
             | None => {
                 let _ = cue.transition_status(CueStatus::Completed);
             }
@@ -682,7 +689,8 @@ impl CueList {
                             | EngineCommand::PushJson { .. }
                             | EngineCommand::SendNetwork { .. }
                             | EngineCommand::SendMidi { .. }
-                            | EngineCommand::SendDmx { .. }),
+                            | EngineCommand::SendDmx { .. }
+                            | EngineCommand::SendHttpPost { .. }),
                         ) => {
                             let _ = child.transition_status(CueStatus::Completed);
                             commands.push(cmd);
@@ -861,6 +869,7 @@ impl CueList {
             | Some(EngineCommand::SendNetwork { .. })
             | Some(EngineCommand::SendMidi { .. })
             | Some(EngineCommand::SendDmx { .. })
+            | Some(EngineCommand::SendHttpPost { .. })
             | None => {
                 let _ = cue.transition_status(CueStatus::Completed);
             }
@@ -906,11 +915,15 @@ impl CueList {
         Ok(())
     }
 
-    /// Wie [`CueList::set_status`], triggert aber zusätzlich **Auto-Follow**
-    /// (QLab: „the next cue will be started as soon as the first cue
-    /// completes"): Endet ein Cue mit `AutoFollow` auf `Completed`, wird
-    /// der nächste Cue gefeuert. Rückgabe: Status-Ergebnis + die dabei
-    /// erzeugten Engine-Commands (leer, wenn kein Auto-Follow aktiv).
+    /// Wie [`CueList::set_status`], triggert aber zusätzlich die QLab-5-
+    /// Continue-Modi am richtigen Zeitpunkt:
+    /// * **Auto-Follow** feuert den nächsten Cue, sobald dieser Cue **startet**
+    ///   (`Playing` nach Pre-Wait) – QLab: „starts as soon as this cue starts".
+    /// * **Auto-Continue** feuert den nächsten Cue, wenn dieser Cue
+    ///   **abgeschlossen** ist (`Completed` inkl. Post-Wait) – QLab:
+    ///   „starts when this cue completes".
+    ///
+    /// Rückgabe: Status-Ergebnis + die dabei erzeugten Engine-Commands.
     pub fn set_status_with_follow(
         &mut self,
         id: Uuid,
@@ -918,15 +931,17 @@ impl CueList {
     ) -> (ShowResult<()>, Vec<EngineCommand>) {
         let result = self.set_status(id, status);
         let mut commands = Vec::new();
-        if status == CueStatus::Completed {
-            let auto_follow = self
-                .find_cue(id)
-                .map(|c| c.continue_mode == ContinueMode::AutoFollow)
-                .unwrap_or(false);
-            if auto_follow {
-                if let Some(outcome) = self.go_chained() {
-                    commands = outcome.commands;
-                }
+        let follow = self
+            .find_cue(id)
+            .map(|c| match status {
+                CueStatus::Playing => c.continue_mode == ContinueMode::AutoFollow,
+                CueStatus::Completed => c.continue_mode == ContinueMode::AutoContinue,
+                _ => false,
+            })
+            .unwrap_or(false);
+        if follow {
+            if let Some(outcome) = self.go() {
+                commands = outcome.commands;
             }
         }
         (result, commands)
@@ -1570,6 +1585,8 @@ mod tests {
 
     #[test]
     fn go_chained_follows_auto_continue_sequence() {
+        // QLab-5-Semantik: GO feuert nur den ersten Cue; Auto-Continue feuert
+        // den Folge-Cue erst beim Abschluss (Completed) des laufenden Cues.
         let mut list = CueList::new();
         list.add(
             audio("1")
@@ -1583,47 +1600,66 @@ mod tests {
         );
         list.add(audio("3").with_target("/media/c.wav"));
 
-        let outcome = list.go_chained().expect("GO triggert Sequenz");
-        assert_eq!(outcome.index, 0, "erster Cue der Sequenz");
-        assert_eq!(outcome.commands.len(), 3, "alle 3 Cues der Kette gefeuert");
-        assert_eq!(list.cursor(), 3);
-        assert!(list.cues().iter().all(|c| c.status == CueStatus::Playing));
+        let outcome = list.go_chained().expect("GO triggert ersten Cue");
+        assert_eq!(outcome.index, 0);
+        assert_eq!(outcome.commands.len(), 1, "beim GO nur ein Cue");
+        assert_eq!(list.cues()[0].status, CueStatus::Playing);
+        assert_eq!(list.cues()[1].status, CueStatus::Standby);
 
-        // Ohne Auto-Continue: nur der erste Cue.
+        // Cue 1 abgeschlossen → Auto-Continue feuert Cue 2.
+        let id1 = list.cues()[0].id;
+        let (result, commands) = list.set_status_with_follow(id1, CueStatus::Completed);
+        result.unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(list.cues()[1].status, CueStatus::Playing);
+        assert_eq!(list.cues()[2].status, CueStatus::Standby);
+
+        // Cue 2 abgeschlossen → Auto-Continue feuert Cue 3.
+        let id2 = list.cues()[1].id;
+        let (_, commands) = list.set_status_with_follow(id2, CueStatus::Completed);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(list.cues()[2].status, CueStatus::Playing);
+
+        // Ohne Auto-Continue: nur der erste Cue, kein Weiterfeuern.
         let mut list = CueList::new();
         list.add(audio("1"));
         list.add(audio("2"));
         let outcome = list.go_chained().unwrap();
         assert_eq!(outcome.commands.len(), 1);
+        let id1 = list.cues()[0].id;
+        let (_, commands) = list.set_status_with_follow(id1, CueStatus::Completed);
+        assert!(commands.is_empty());
         assert_eq!(list.cues()[1].status, CueStatus::Standby);
     }
 
     #[test]
-    fn auto_follow_fires_next_cue_when_cue_completes() {
+    fn auto_follow_fires_next_cue_when_cue_starts() {
+        // QLab 5: Auto-Follow feuert den Folge-Cue, sobald der Cue STARTET.
         let mut list = CueList::new();
         list.add(audio("1").with_continue_mode(ContinueMode::AutoFollow));
         list.add(audio("2"));
 
         let _ = list.go().unwrap();
-        assert_eq!(list.cues()[0].status, CueStatus::Playing);
-        assert_eq!(list.cues()[1].status, CueStatus::Standby);
-
-        // Cue 1 endet → Auto-Follow triggert Cue 2.
         let id1 = list.cues()[0].id;
-        let (result, commands) = list.set_status_with_follow(id1, CueStatus::Completed);
+        // Start (Playing nach Pre-Wait) → Auto-Follow triggert Cue 2 sofort.
+        let (result, commands) = list.set_status_with_follow(id1, CueStatus::Playing);
         result.unwrap();
         assert_eq!(commands.len(), 1, "nächster Cue bekommt ein Play-Command");
         assert!(matches!(commands[0], EngineCommand::Play { .. }));
         assert_eq!(list.cues()[1].status, CueStatus::Playing);
         assert_eq!(list.cursor(), 2);
 
-        // Cue ohne Auto-Follow → keine Commands beim Abschließen.
+        // Beim Abschluss (Completed) feuert Auto-Follow NICHT mehr.
+        let (_, commands) = list.set_status_with_follow(id1, CueStatus::Completed);
+        assert!(commands.is_empty(), "kein Doppel-Feuern beim Abschluss");
+
+        // Cue ohne Auto-Follow → keine Commands beim Start.
         let mut list = CueList::new();
         list.add(audio("1"));
         list.add(audio("2"));
         let _ = list.go().unwrap();
         let id1 = list.cues()[0].id;
-        let (_, commands) = list.set_status_with_follow(id1, CueStatus::Completed);
+        let (_, commands) = list.set_status_with_follow(id1, CueStatus::Playing);
         assert!(commands.is_empty());
         assert_eq!(list.cues()[1].status, CueStatus::Standby);
     }

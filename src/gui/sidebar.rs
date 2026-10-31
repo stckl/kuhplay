@@ -271,7 +271,11 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         if interact {
             if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
                 let frac = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-                app.seek_running(id, total.mul_f64(f64::from(frac)));
+                // Throttle beim Ziehen (150 ms / 2 %), Klick & Loslassen immer.
+                let force = response.clicked() || response.drag_stopped();
+                if app.scrub_throttle(id, frac, force) {
+                    app.seek_running(id, total.mul_f64(f64::from(frac)));
+                }
             }
         }
         response.on_hover_text("Drag to scrub / click to jump to this position");
