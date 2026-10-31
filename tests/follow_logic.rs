@@ -243,3 +243,56 @@ fn d11b_goto_auf_control_cue_fuehrt_aktion_aus() {
         "Control-Cue muss StopAll feuern"
     );
 }
+
+// --- Review G0: Control-Cue-Zyklen dürfen nicht abstürzen (Stack Overflow) ---
+
+use kuhplay::core::ControlAction;
+
+fn control_start(number: &str, target: &str) -> Cue {
+    let mut c = Cue::new(number, "ctl", CueType::Control);
+    c.control_action = ControlAction::Start;
+    c.control_target = Some(target.to_string());
+    c
+}
+
+#[test]
+fn g0_control_zwei_cue_zyklus_stürzt_nicht_ab() {
+    let mut list = CueList::new();
+    list.add(control_start("1", "2"));
+    list.add(control_start("2", "1"));
+    let _ = list.go().expect("GO");
+    // Zyklus stoppt kontrolliert: beide Cues Completed, kein Absturz (pre-fix: Stack Overflow).
+    let statuses: Vec<_> = list.cues().iter().map(|c| c.status).collect();
+    assert_eq!(
+        statuses,
+        vec![CueStatus::Completed, CueStatus::Completed],
+        "2er-Zyklus endet kontrolliert"
+    );
+}
+
+#[test]
+fn g0_control_selbststart_stürzt_nicht_ab() {
+    let mut list = CueList::new();
+    list.add(control_start("1", "1"));
+    let _ = list.go().expect("GO");
+    assert_eq!(
+        list.cues()[0].status,
+        CueStatus::Completed,
+        "Selbststart stoppt sofort"
+    );
+}
+
+#[test]
+fn g0_control_lange_kette_ueber_tiefen_guard() {
+    // 40 Control-Cues, jeder startet den nächsten → Depth-Guard bei 32 → Error, kein Absturz.
+    let mut list = CueList::new();
+    for i in 0..40 {
+        list.add(control_start(&format!("{i}"), &format!("{}", i + 1)));
+    }
+    let _ = list.go().expect("GO");
+    let statuses: Vec<_> = list.cues().iter().map(|c| c.status).collect();
+    assert!(
+        statuses.contains(&CueStatus::Error) || statuses.iter().all(|s| *s == CueStatus::Completed),
+        "Kette endet kontrolliert: {statuses:?}"
+    );
+}

@@ -14,6 +14,14 @@
 //! * **Control-Cues** wirken auf die Liste selbst (Start/Stop/Pause/Load/
 //!   Reset/Devamp/GoTo/Arm/Disarm) und sind Sofort-Cues.
 
+/// Maximale Verschachtelung von Control-Cue-Aktionen (Zyklus-Guard, Review G0).
+const MAX_CONTROL_DEPTH: u32 = 32;
+
+thread_local! {
+    /// Rekursionstiefe laufender Control-Cue-Aktionen (Zyklus-Erkennung).
+    static CONTROL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -742,6 +750,30 @@ impl CueList {
 
     /// Triggert einen Control-Cue (Sofort-Cue, wirkt auf die Liste selbst).
     fn go_control(&mut self, index: usize, commands: &mut Vec<EngineCommand>) {
+        // Review G0: Vor der Aktion als Playing markieren, damit ein Zyklus
+        // (Control A startet B, B startet A) an der Standby-Pruefung in
+        // trigger_by_number stoppt statt endlos zu rekursieren (Stack Overflow).
+        let _ = self.cues[index].transition_status(CueStatus::Playing);
+        let over_depth = CONTROL_DEPTH.with(|d| {
+            let depth = d.get() + 1;
+            d.set(depth);
+            depth > MAX_CONTROL_DEPTH
+        });
+        if over_depth {
+            let _ = self.cues[index].transition_status(CueStatus::Error);
+            CONTROL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            return;
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.go_control_inner(index, commands)
+        }));
+        CONTROL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        if result.is_err() {
+            let _ = self.cues[index].transition_status(CueStatus::Error);
+        }
+    }
+
+    fn go_control_inner(&mut self, index: usize, commands: &mut Vec<EngineCommand>) {
         let (action, target_number) = {
             let cue = &self.cues[index];
             (cue.control_action, cue.control_target.clone())
@@ -765,11 +797,13 @@ impl CueList {
                     commands.push(EngineCommand::Pause { cue_id: id });
                 }
                 None => {
-                    // Ohne Ziel: alle laufenden Cues pausieren.
+                    // Ohne Ziel: alle laufenden Cues pausieren – nicht der
+                    // Control-Cue selbst (der ist durch die G0-Markierung Playing).
+                    let self_id = self.cues[index].id;
                     let running: Vec<Uuid> = self
                         .cues
                         .iter()
-                        .filter(|c| c.status == CueStatus::Playing)
+                        .filter(|c| c.status == CueStatus::Playing && c.id != self_id)
                         .map(|c| c.id)
                         .collect();
                     for id in running {
@@ -844,8 +878,12 @@ impl CueList {
                 }
             }
         }
-        // Control-Cues sind Sofort-Cues (Reset hat bereits zurückgesetzt).
-        if self.cues[index].status == CueStatus::Standby {
+        // Control-Cues sind Sofort-Cues: Playing → Completed (G0-Markierung oben).
+        // Nach Reset steht der Cue wieder auf Standby – dann ebenfalls abschließen.
+        if matches!(
+            self.cues[index].status,
+            CueStatus::Playing | CueStatus::Standby
+        ) {
             let _ = self.cues[index].transition_status(CueStatus::Completed);
         }
     }

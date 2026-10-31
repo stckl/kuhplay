@@ -184,7 +184,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   „KuhPlay compatible with Blackmagic Design DeckLink“ oder „KuhPlay for Blackmagic Design
   DeckLink“ (Klausel 6.2).
 
-- [ ] **G0. Absturz bei Control-Cue-Zyklen beheben** (kritisch, zuerst und eigener Commit)
+- [x] **G0. Absturz bei Control-Cue-Zyklen beheben** (kritisch, zuerst und eigener Commit)
   - Ort: `go_control` → `trigger_by_number` → `trigger_at` (`src/core/cue_list.rs`), seit Block D.
   - Beleg: Cue 1 (Control, Start → „2“) und Cue 2 (Control, Start → „1“): GO endet mit `stack
     overflow, aborting`, die ganze App stürzt ab. Der Control-Cue bleibt während seiner Aktion
@@ -242,7 +242,9 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   - Am Mac ist eine **UltraStudio Monitor 3G** angeschlossen und wird vom SDK mit Ausgang erkannt
     (Treiber 16.5, SDK 16.0). Dort mit einem standardmäßig deaktivierten Test prüfen: Dauerlauf,
     Farben, Bildaussetzer. Key/Fill nur, soweit diese Karte es kann; sonst offen nennen.
-  - Fehlt die Karte plötzlich: Mac neu starten, das hat das Problem schon einmal behoben.
+  - Fehlt die Karte plötzlich, besonders nach einem macOS-Update: Der Auftraggeber installiert
+    Desktop Video neu und registriert es im System. Das Setup kann dabei aktiv aussehen. Die App
+    soll in diesem Fall (Treiber da, 0 Geräte) genau darauf hinweisen, siehe G5.
   - Die Windows-Tests auf dem ZBOOK macht der Auftraggeber am 2026-11-01, die Karte hängt dann
     dort. Vorher muss alles für Windows bauen.
   - Linux bleibt ohne Hardware-Test, falls keine Karte verfügbar ist; das im Commit und im README
