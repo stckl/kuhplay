@@ -201,10 +201,20 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 - **Light-Cue (Art-Net DMX, Commit siehe Git-Log):** `CueType::Light` +
   `src/core/light.rs` (ArtDmx-Paket OpDmx 0x5000, Port 6454), `EngineCommand::SendDmx`,
   Sofort-Cue. Camera/Mic-Cues bewusst **weggelassen** (kein Live-Input gewünscht).
-- **Offen aus qlab5-parity.md:** Lighting-Pult/LCC (nur DMX-Senden umgesetzt),
-  Timecode-Cue mit LTC/MTC-Empfang (Chasing pro Cue ist da), Audio Map Editor
-  (Patch-Matrix deckt Kanal→Ausgang ab), Script-Cue dediziert (HTML5/JS-Bridge
-  deckt ab), File Target Search Tool, Monitor/Status-Fenster, QLab-`.qlab5`-Import.
+- **File Target Search (Commit 37f75ce):** Tools-Menü → „File Target Search…“,
+  listet alle Datei-Ziele über alle Carts inkl. Gruppen-Kinder, Filter +
+  Klick-Sprung zum Cue (`src/gui/target_search.rs`).
+- **Audition-Fenster (Commit e7da3f9):** Workspace → „Audition Window“, zeigt
+  das neueste Frame des laufenden Video-/HTML5-/Diashow-Cues
+  (`src/gui/audition_window.rs`).
+- **Offen aus qlab5-parity.md (bewusst zurückgestellt):** Camera/Mic-Cues
+  (kein Live-Input gewünscht), Timecode-Cue mit LTC/MTC-Empfang (Chasing pro
+  Cue ist da), Lighting-Pult/LCC (nur Art-Net-DMX-Senden umgesetzt), Audio Map
+  Editor (Patch-Matrix deckt Kanal→Ausgang ab), dedizierter Script-Cue
+  (HTML5/JS-Bridge deckt ab), Theme-Auswahl Dark/Light (Palette ist const-
+  basiert, 197 Verwendungen – größerer Refactor), QLab-`.qlab5`-Import,
+  Auto-Continue erst nach Cue-Ende feuern (Abweichung Nr. 1, Tests hängen am
+  Sofort-Verhalten), Monitor/Status-Fenster (Active-Cues-Tab deckt ab).
 
 ---
 
