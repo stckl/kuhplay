@@ -169,39 +169,20 @@ Test: `multi_output_wizard_2x2_grid` (4 Regionen an (0,0)/(1820,0)/(0,1030)/
 
 ---
 
-## Aufgabe 5: Windows-11-PC (Testrechner) — Build & Tests dort
+## Aufgabe 5: Windows-11-PC — ERLEDIGT
 
-**Zugang:** `ssh wolfb@192.168.88.132` (Zertifikat, BatchMode funktioniert).
-Quelle liegt unter `C:\Users\wolfb\kuhplay` (tar-über-ssh-Kopie OHNE `.git`,
-`target`, `dist`; `assets/` + `icon.png` wurden nachkopiert — build.rs braucht sie).
-**Kein ffmpeg auf dem PC** (Video-Playout/real-engine-Video-Tests brauchen es —
-entweder ffmpeg nachinstallieren (Rückfrage beim Nutzer) oder die betreffenden
-Fehler als „fehlende Abhängigkeit“ im Bericht führen und nicht als Regression).
-
-**Offen:**
-1. Neuen Stand rüberspielen (auf dem Mac:
-   `tar czf - --exclude target --exclude .git --exclude dist --exclude .DS_Store src tests docs Cargo.toml Cargo.lock README.md LICENSE assets icon.png | ssh wolfb@192.168.88.132 "tar xf - -C kuhplay"`)
-   — ACHTUNG: Commits seit der letzten Kopie sind noch nicht drin.
-2. `cargo build --release` auf dem PC (ein Hintergrundlauf von vorhin lief mit
-   alten Dateien; Ergebnis in `kuhplay\build.log` — neu starten).
-   Bekannte Warnungen des neueren rustc 1.99: „falling back to f32 as the trait
-   bound `f32: From<f64>` …“ (28×, in Abhängigkeiten/unserem Code prüfen — beim
-   letzten Stand wurden sie nur als Warnung geführt; MACHT-Tests nicht stören).
-3. `cargo test --no-fail-fast` dort: Zu erwartende Abweichungen: MIDI-Tests
-   (midir/WinMM) evtl. SKIP, OSC/Remote binden Ports (Windows-Firewall-Prompt
-   möglich), Video-Tests ohne ffmpeg. Alles dokumentieren, keine „Heilung“ per
-   Abschwächung der Tests.
-4. App dort starten (via SSH: läuft in der SSH-Session, Fenster erscheint nicht
-   auf dem Desktop — aber Web-Remote/Engine testen): Start mit
-   `KUHPLAY_REMOTE_WEB_PORT=18080 ... kuhplay.exe`, dann vom Mac aus
-   `curl http://192.168.88.132:18080/api/session` prüfen (cross-machine).
-5. Bericht: was lief auf Windows, was nicht (ffmpeg, MIDI, …).
-
-**Auch macOS-live noch offen:** Esc/Fokus/Cursor-Verhalten des Ausgabefensters
-(Fix `14931e3`) ist gebaut, aber am Bildschirm noch nicht verifiziert; Nutzer
-soll es bestätigen (Vollbild auf, Esc → weg, Mauszeiger unsichtbar). Zwei-Display-
-Abnahme (5120×1440 + MacBook) war live begonnen (Fenster lagen exakt auf den
-Display-Grenzen); nach Aufgabe 3/4 nochmal mit Nutzer zusammen durchgehen.
+- Quelle per tar/ssh nach `C:\Users\wolfb\kuhplay` (inkl. assets/ + icon.png für build.rs).
+- `cargo build --release` dort: OK (2m18s; nur bekannte rustc-1.99-f32-Warnungen,
+  die eigenen davon in `Stroke::new` wurden auf `_f32` gefixt).
+- `cargo test --no-fail-fast --release` dort: 28 Test-Binaries, 546 passed, 0 failed,
+  2 SKIP (ffmpeg fehlt auf dem PC → Video-Real-Tests springen sauber, kein Fehler).
+- App dort gestartet (GUI-Session nötig; aus ssh-Session läuft sie headless weiter):
+  Web-Remote auf `KUHPLAY_REMOTE_WEB_PORT=18080`. Cross-Check vom Mac:
+  `curl http://192.168.88.132:18080/api/session` → HTTP 200. Dafür Firewall-Regel
+  nötig gewesen: `netsh advfirewall firewall add rule name="KuhPlay WebRemote 18080"
+  dir=in action=allow protocol=TCP localport=18080` (Port 8080 war schon freigegeben).
+- Achtung cmd: `set VAR=18080` (Leerzeichen!) landet als "18080 " → Port-Parsing schlägt
+  fehl → default 8080. Immer `set "VAR=18080"` in .bat-Dateien.
 
 ---
 
