@@ -281,6 +281,16 @@ pub fn rgba_to_uyvy422(src: &VideoFrame, dst: &mut [u8]) {
     rgba_to_uyvy422_cs(src, dst, ColorSpace::Bt601)
 }
 
+/// Frame-Intervall aus der konfigurierten fps-Zahl (Review G2): 29/2997 →
+/// 30000/1001 (29,97), 59/5994 → 60000/1001 (59,94), sonst exakt 1/fps.
+pub fn fps_frame_interval(fps: u32) -> std::time::Duration {
+    match fps {
+        29 | 2997 => std::time::Duration::from_nanos(1_000_000_000 * 1001 / 30_000),
+        59 | 5994 => std::time::Duration::from_nanos(1_000_000_000 * 1001 / 60_000),
+        other => std::time::Duration::from_secs_f64(1.0 / f64::from(other.max(1))),
+    }
+}
+
 /// BMD-Pixelformat FourCC: 8-Bit-YUV (UYVY, '2vuy') – das Standardformat der
 /// SDI-Decklink-Karten.
 pub const BMD_FORMAT_8BIT_YUV: u32 = 0x32767579;
@@ -636,5 +646,26 @@ mod review_g1_tests {
         assert_eq!(ColorSpace::from_height(720), ColorSpace::Bt709);
         assert_eq!(ColorSpace::from_height(1080), ColorSpace::Bt709);
         assert_eq!(ColorSpace::from_height(2160), ColorSpace::Bt709);
+    }
+}
+
+#[cfg(test)]
+mod review_g2_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn g2_frame_interval_bruchbildraten() {
+        assert_eq!(fps_frame_interval(25), Duration::from_millis(40));
+        // 29 und 2997 sind beide 29,97 fps → 30000/1001 s ≈ 33,367 ms.
+        let expect_2997 = Duration::from_nanos(1_000_000_000 * 1001 / 30_000);
+        assert_eq!(fps_frame_interval(29), expect_2997);
+        assert_eq!(fps_frame_interval(2997), expect_2997);
+        let expect_5994 = Duration::from_nanos(1_000_000_000 * 1001 / 60_000);
+        assert_eq!(fps_frame_interval(59), expect_5994);
+        assert_eq!(fps_frame_interval(5994), expect_5994);
+        // pre-fix: 1/2997 s ≈ 0,333 ms – deutlich falsch.
+        assert!(expect_2997 > Duration::from_millis(33));
+        assert_eq!(fps_frame_interval(50), Duration::from_millis(20));
     }
 }

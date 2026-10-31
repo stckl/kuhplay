@@ -198,7 +198,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
 - [x] **G1. Farbraum korrigieren** (zuerst, klein und eigener Commit)
   - Ort: `rgba_to_uyvy422` (`src/engine/decklink.rs`) rechnet immer mit BT.601.
   - Fix: BT.709 für HD und UHD, BT.601 nur für SD. Tests mit bekannten Farbwerten.
-- [ ] **G2. 29,97 und 59,94 fps korrigieren**
+- [x] **G2. 29,97 und 59,94 fps korrigieren**
   - Ort: `bmd_display_mode`, `DecklinkConfig.fps`, `frame_interval`
     (`src/engine/real_engine.rs:447`).
   - Problem (aus dem Code): `fps = 2997` wählt den richtigen Modus, die Engine taktet dann aber

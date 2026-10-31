@@ -465,7 +465,8 @@ impl RealMediaEngine {
         if self.decklink.is_none() || now < self.decklink_next_push {
             return;
         }
-        let frame_interval = Duration::from_secs_f64(1.0 / self.decklink_fps as f64);
+        // Review G2: Bruch-Bildraten (29,97/59,94) korrekt takten.
+        let frame_interval = super::decklink::fps_frame_interval(self.decklink_fps);
         self.decklink_next_push = now + frame_interval;
 
         let (width, height) = match &self.decklink {
