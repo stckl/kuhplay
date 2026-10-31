@@ -85,6 +85,14 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                 }
             }
         },
+        CueType::Midi => match &cue.midi {
+            None => problems.push("no MIDI message configured".to_string()),
+            Some(m) => {
+                if m.validate().is_err() {
+                    problems.push("MIDI channel/data out of range".to_string());
+                }
+            }
+        },
         CueType::Control => {
             // Ziel-Cue-Nummer prüfen (Aktionen ohne Ziel gelten für alle /
             // den Cue selbst und sind nie „kaputt").

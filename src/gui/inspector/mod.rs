@@ -44,6 +44,7 @@ mod basics;
 mod curve;
 mod geometry;
 mod media;
+mod midi;
 mod network;
 mod text;
 mod time_loops;
@@ -105,6 +106,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             InspectorTab::Data => media::draw_data(ui, app),
             InspectorTab::Text => text::draw_text(ui, app),
             InspectorTab::Network => network::draw_network(ui, app),
+            InspectorTab::Midi => midi::draw_midi(ui, app),
         });
 }
 
@@ -149,6 +151,7 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
         Some(CueType::HtmlData) => &[Basics, Triggers, Data],
         Some(CueType::Text) => &[Basics, Triggers, Geometry, Text],
         Some(CueType::Network) => &[Basics, Triggers, Network],
+        Some(CueType::Midi) => &[Basics, Triggers, Midi],
         // Group, Stop, Script, Control, Wait, Memo, keine Auswahl.
         _ => &[Basics, Triggers],
     }

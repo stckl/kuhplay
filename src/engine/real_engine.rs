@@ -281,6 +281,9 @@ pub struct RealMediaEngine {
     webview_bin: Option<PathBuf>,
     /// Cue-IDs mit aktiver Audio-Voice (Spiegel für [`super::EngineHandle::audio_voices`]).
     audio_voices: Arc<Mutex<HashSet<Uuid>>>,
+    /// MIDI-Ausgang für MIDI-Cues (lazy geöffnet beim ersten `SendMidi`,
+    /// Device via `KUHPLAY_MIDI_OUT_DEVICE`; `None` = noch nicht versucht).
+    midi_out: Option<super::midi_out::MidiOutputGuard>,
 }
 
 impl RealMediaEngine {
@@ -332,6 +335,7 @@ impl RealMediaEngine {
             decklink_next_push: Duration::ZERO,
             webview_bin: webview_binary(),
             audio_voices: Arc::new(Mutex::new(HashSet::new())),
+            midi_out: None,
         }
     }
 
@@ -1637,6 +1641,35 @@ impl MediaEngine for RealMediaEngine {
                     };
                     finish_send(events, cue_id, result);
                 });
+            }
+            EngineCommand::SendMidi { cue_id, bytes } => {
+                debug!(%cue_id, ?bytes, "send midi (real)");
+                // Ausgang lazy öffnen (erstes SendMidi); Fehler → Error-Event.
+                if self.midi_out.is_none() {
+                    match super::midi_out::open_midi_output(
+                        super::midi_out::midi_out_device_from_env().as_deref(),
+                    ) {
+                        Ok(guard) => {
+                            info!(port = %guard.port_name, "midi output connected");
+                            self.midi_out = Some(guard);
+                        }
+                        Err(err) => {
+                            self.emit(EngineEvent::Error {
+                                cue_id: Some(cue_id),
+                                message: format!("midi cue: {err}"),
+                            });
+                            return Ok(());
+                        }
+                    }
+                }
+                if let Some(out) = self.midi_out.as_mut() {
+                    if let Err(err) = out.send(&bytes) {
+                        self.emit(EngineEvent::Error {
+                            cue_id: Some(cue_id),
+                            message: format!("midi cue send failed: {err}"),
+                        });
+                    }
+                }
             }
             EngineCommand::Ping(seq) => {
                 self.emit(EngineEvent::Pong(seq));

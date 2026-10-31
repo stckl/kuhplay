@@ -128,7 +128,7 @@ jedem Feature-Schritt aktualisiert.
 | Show control broadcast | ⬜ | — |
 | Timecode | 🟡 | Timecode-Chasing (LTC/MTC) vorbereitet: `Cue::timecode_in`, `EngineCommand::ChaseTimecode`, präzise Zeitsprünge (Timecode-Chase-Tests). Kein echtes LTC/MTC-Empfangen in V1; Inspector-Tab „Triggers" mit FPS/Offset/„Start Timecode Chasing" |
 | Network cues | ✅ | **Network-Cue** (`CueType::Network`, `src/core/network.rs`): UDP/TCP-Nachricht an `host:port`, Sofort-Cue (in der Liste direkt „Completed“). Real-Engine sendet fire-and-forget in einem eigenen Thread (blockierendes Ziel hält die Engine nicht auf), Fehler als `EngineEvent::Error` (Footer ⚠). Inspector-Tab „Network“, Toolbox-Gruppe „Network“, Web-Remote. Loopback-Tests: UDP/TCP-Empfang + Connect-Fehler (`tests/network_cue.rs`) |
-| MIDI cues | ⬜ | — |
+| MIDI cues | ✅ | **MIDI-Cue** (`CueType::Midi`, `src/core/midi.rs`): Note On/Off, Control Change, Program Change (Kanal 1–16 in der UI, 0-basiert im Wire-Format), Sofort-Cue. Engine sendet über midir-Output (`src/engine/midi_out.rs`, lazy geöffnet, Gerät via `KUHPLAY_MIDI_OUT_DEVICE`), Fehler als `EngineEvent::Error`. Inspector-Tab „MIDI“ mit Hex-Vorschau, Toolbox-Gruppe „Network“, Web-Remote. MIDI-*Input* (Steuerung) bleibt `src/remote/midi.rs` |
 | MIDI File cues | ⬜ | — |
 | Timecode cues | 🟡 | Chasing-Trigger pro Cue (Inspector „Triggers"); dedizierter Timecode-Cue-Typ ⬜ |
 

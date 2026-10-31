@@ -100,6 +100,8 @@ pub enum InspectorTab {
     Text,
     /// Network (Protokoll/Host/Port/Nachricht) – Network-Cues.
     Network,
+    /// MIDI (Typ/Kanal/Note/Velocity) – MIDI-Cues.
+    Midi,
 }
 
 impl InspectorTab {
@@ -117,6 +119,7 @@ impl InspectorTab {
             InspectorTab::Data => "Data",
             InspectorTab::Text => "Text",
             InspectorTab::Network => "Network",
+            InspectorTab::Midi => "MIDI",
         }
     }
 }
@@ -1073,6 +1076,10 @@ impl ShowApp {
         // Network-Cue: leere Nachricht mit Platzhalter-Ziel als Vorgabe.
         if cue_type == CueType::Network {
             cue.network = Some(crate::core::NetworkMessage::default());
+        }
+        // MIDI-Cue: Note On C4 als Vorgabe.
+        if cue_type == CueType::Midi {
+            cue.midi = Some(crate::core::MidiMessage::default());
         }
         list.insert(at, cue);
         list.select(Some(at));

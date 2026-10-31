@@ -34,6 +34,7 @@ pub mod cue;
 pub mod cue_list;
 pub mod error;
 pub mod html;
+pub mod midi;
 pub mod network;
 pub mod screen;
 pub mod show;
@@ -69,6 +70,7 @@ pub use cue::{
 pub use cue_list::{CueList, GoOutcome};
 pub use error::{ShowError, ShowResult};
 pub use html::{HtmlSource, HtmlSourceKind};
+pub use midi::{MidiMessage, MidiMessageKind};
 pub use network::{NetworkMessage, NetworkProtocol};
 pub use screen::{
     screen_color_for_index, DisplayGeometry, Screen, ScreenManager, ScreenRotation,

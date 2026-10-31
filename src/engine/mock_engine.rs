@@ -1058,6 +1058,9 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 // Sofort-Cue: die Mock-Engine sendet nichts, protokolliert aber.
                 debug!(%cue_id, ?protocol, %host, port, %message, "send network (mock)");
             }
+            EngineCommand::SendMidi { cue_id, bytes } => {
+                debug!(%cue_id, ?bytes, "send midi (mock)");
+            }
             EngineCommand::Ping(n) => {
                 self.emit(EngineEvent::Pong(n));
             }

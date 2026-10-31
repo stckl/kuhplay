@@ -39,8 +39,8 @@ const GROUPS: &[(&str, &[CueType])] = &[
     ("Data", &[CueType::HtmlData]),
     // Wait/Memo (QLab 5): Timer- und Notiz-Cues ohne eigenes Medium.
     ("Misc", &[CueType::Wait, CueType::Memo]),
-    // Network (QLab 5): UDP/TCP-Nachricht an ein Ziel im Show-Netz.
-    ("Network", &[CueType::Network]),
+    // Network/MIDI (QLab 5): UDP/TCP-Nachricht bzw. MIDI an Ziele im Show-Netz.
+    ("Network", &[CueType::Network, CueType::Midi]),
 ];
 
 /// Zeichnet die Toolbox (linkes SidePanel, ~136 px breit).

@@ -155,6 +155,11 @@ pub enum EngineCommand {
         port: u16,
         message: String,
     },
+    /// MIDI-Cue (QLab 5): sendet `bytes` (Wire-Format, siehe
+    /// [`crate::core::MidiMessage::to_bytes`]) an das MIDI-Ausgabegerät.
+    /// Sofort-Cue; Fehler (kein Gerät, Send-Fehler) als
+    /// [`super::EngineEvent::Error`].
+    SendMidi { cue_id: Uuid, bytes: Vec<u8> },
     /// Health-Check: Engine antwortet mit [`super::EngineEvent::Pong`].
     /// Dient Stress-Tests zur verlässlichen "keine Message-Drops"-Prüfung.
     Ping(u64),

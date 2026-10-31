@@ -63,11 +63,14 @@ pub enum CueType {
     /// Network-Cue (QLab 5): sendet eine Nachricht per UDP/TCP an
     /// `host:port` ([`EngineCommand::SendNetwork`]) – Sofort-Cue.
     Network,
+    /// MIDI-Cue (QLab 5): sendet eine MIDI-Nachricht an das Ausgabegerät
+    /// ([`EngineCommand::SendMidi`]) – Sofort-Cue.
+    Midi,
 }
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 14] = [
+    pub const ALL: [CueType; 15] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
@@ -82,6 +85,7 @@ impl CueType {
         CueType::Memo,
         CueType::Text,
         CueType::Network,
+        CueType::Midi,
     ];
 
     /// Symbol für Tabellenzellen.
@@ -101,6 +105,7 @@ impl CueType {
             CueType::Memo => "📝",
             CueType::Text => "🅣",
             CueType::Network => "📡",
+            CueType::Midi => "🎹",
         }
     }
 
@@ -121,6 +126,7 @@ impl CueType {
             CueType::Memo => "Memo",
             CueType::Text => "Text",
             CueType::Network => "Network",
+            CueType::Midi => "MIDI",
         }
     }
 }
@@ -577,6 +583,9 @@ pub struct Cue {
     /// Netzwerk-Nachricht – nur [`CueType::Network`].
     #[serde(default)]
     pub network: Option<crate::core::network::NetworkMessage>,
+    /// MIDI-Nachricht – nur [`CueType::Midi`].
+    #[serde(default)]
+    pub midi: Option<crate::core::midi::MidiMessage>,
     /// Freitext-Notizen für Operatoren.
     #[serde(default)]
     pub notes: String,
@@ -636,6 +645,7 @@ impl Cue {
             js_test_script: String::new(),
             text_content: None,
             network: None,
+            midi: None,
             notes: String::new(),
             color: None,
             status: CueStatus::Standby,
@@ -882,6 +892,18 @@ impl Cue {
                     self.number, self.name
                 ))),
             },
+            CueType::Midi => match &self.midi {
+                Some(m) => m.validate().map_err(|_| {
+                    ShowError::InvalidParameter(format!(
+                        "midi cue \"{}\" ({}): invalid channel/data",
+                        self.number, self.name
+                    ))
+                }),
+                None => Err(ShowError::InvalidParameter(format!(
+                    "midi cue \"{}\" ({}): no message configured",
+                    self.number, self.name
+                ))),
+            },
             _ => Ok(()),
         }
     }
@@ -1121,6 +1143,10 @@ impl Cue {
                     message: n.message.clone(),
                 })
             }
+            CueType::Midi => self.midi.as_ref().map(|m| EngineCommand::SendMidi {
+                cue_id: self.id,
+                bytes: m.to_bytes(),
+            }),
             CueType::Group | CueType::Script | CueType::Control | CueType::Memo => None,
         }
     }

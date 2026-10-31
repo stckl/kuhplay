@@ -14,7 +14,7 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 
 | Bereich | Funktionen |
 |---|---|
-| **Cues** | Audio, Video, HTML5, Diashow, Fade, Group, Stop, Control, HTML-Data; Pre-Wait, Duration, Post-Wait, Auto-Continue und Auto-Follow |
+| **Cues** | Audio, Video, HTML5, Diashow, Fade, Group, Stop, Control, HTML-Data, **Wait, Memo, Text, Network, MIDI**; Pre-Wait, Duration, Post-Wait, Auto-Continue und Auto-Follow |
 | **Ablauf** | Playhead und GO, mehrere Cue-Listen (Carts), Gruppen (Simultaneous, Sequential, Timeline, Loop, Shuffle), Timecode-Chasing (LTC/MTC) |
 | **Audio** | Dekodierung mit symphonia, Ausgabe mit cpal, Geräteauswahl, Fades (Volume, Rate, Opacity; linear oder dB), Slices mit Play-Count |
 | **Audio-Routing** | Pro Cue: Datei-Kanal → 16 benannte Kanäle; Patch-Matrix in den Workspace Settings: Kanal → mehrere Ausgänge UND mehrere Ausgabegeräte parallel; Umlegen wirkt live |
@@ -77,6 +77,7 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_OSC_OUT`, `KUHPLAY_OSC_PREFIX` | Ziel `host:port` oder `off`, Adress-Präfix | `127.0.0.1:9001`, `/kuhplay` |
 | `KUHPLAY_MIDI`, `KUHPLAY_MIDI_DEVICE` | MIDI an/aus, Gerätename (Teilstring) | an, erstes Gerät |
 | `KUHPLAY_MIDI_MAP` | Noten, z. B. `go=36,panic=37,pause=38,resume=39,reset=40` | Noten 0–4 |
+| `KUHPLAY_MIDI_OUT_DEVICE` | MIDI-Ausgabegerät für MIDI-Cues (Teilstring) | erstes Output-Device |
 | `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS`, `_PIXFMT` | Decklink-Ausgabe über ffmpeg: Die Stage liefert über ihre Region das Route-Bild auf die Karte | aus |
 | `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
 

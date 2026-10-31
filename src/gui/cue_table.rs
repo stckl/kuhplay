@@ -1397,6 +1397,11 @@ fn target_display(cue: &Cue) -> String {
             .as_ref()
             .map(|n| format!("{} {}", n.protocol.label().to_lowercase(), n.target()))
             .unwrap_or_else(|| "–".to_string()),
+        CueType::Midi => cue
+            .midi
+            .as_ref()
+            .map(|m| m.describe())
+            .unwrap_or_else(|| "–".to_string()),
         CueType::Text => cue
             .text_content
             .as_ref()
