@@ -187,15 +187,21 @@ pub fn render_region_into(
                     }
                     dst[3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
                 }
-            } else if a >= 1.0 {
-                // Fill-Route: deckend kopieren, Alpha flach auf 255.
-                dst.copy_from_slice(src);
-                dst[3] = 255;
             } else {
+                // Fill-Route: effektive Deckkraft = Source-Alpha × Kantenfaktor
+                // (Review C8: vorher wurde das Quell-Alpha ignoriert – eine
+                // halbtransparente obere Stage wurde schwarz deckend statt
+                // die untere durchscheinen zu lassen; Opacity wirkte nicht).
+                // Ergebnis-Alpha bleibt 255 (Fill komponiert auf Schwarz).
+                let sa = (f32::from(src[3]) / 255.0) * a;
+                if sa <= 0.0 {
+                    continue;
+                }
+                let inv = 1.0 - sa;
                 for c in 0..3 {
                     let s = f32::from(src[c]);
                     let d = f32::from(dst[c]);
-                    dst[c] = (s * a + d * (1.0 - a)).clamp(0.0, 255.0) as u8;
+                    dst[c] = (s * sa + d * inv).round().clamp(0.0, 255.0) as u8;
                 }
                 dst[3] = 255;
             }
@@ -222,7 +228,13 @@ pub fn render_route(
     let mut out = if route.alpha {
         VideoFrame::transparent(rw, rh)
     } else {
-        VideoFrame::black(rw, rh)
+        // Fill-Route: deckendes Schwarz (Alpha 255) als Hintergrund –
+        // VideoFrame::black() ist transparent-schwarz, Alpha hier auf 255.
+        let mut f = VideoFrame::black(rw, rh);
+        for px in f.rgba.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        f
     };
     // Unten zuerst malen (Layer-Regel aus Abschnitt 4).
     let mut ordered: Vec<&Stage> = stages.iter().collect();
@@ -1048,14 +1060,73 @@ mod stage_crop_edge_tests {
             "Key: Alpha 128 bleibt"
         );
 
-        // Fill-Route (alpha = false): flach auf 255.
+        // Fill-Route (alpha = false): Alpha flach auf 255, aber RGB mit
+        // effektiver Deckkraft (Quell-Alpha × Faktor) gemischt (Review C8) –
+        // halbtransparentes Weiß auf Schwarz ergibt Grau 128, nicht Weiß.
         let mut fstage = stage.clone();
         fstage.regions[0].route = Some(route.id);
         let out = render_route(&route, &[fstage], &frames);
         assert_eq!(
             &out.rgba[..4],
-            &[255, 255, 255, 255],
-            "Fill: Alpha flach 255"
+            &[128, 128, 128, 255],
+            "Fill: Alpha flach 255, RGB = 255×(128/255) ≈ 128"
+        );
+    }
+
+    #[test]
+    fn c8_fill_route_uses_source_alpha_not_opaque_copy() {
+        // 25 % Opacity: Canvas-Pixel [255,255,255,64] → Fill-Route über Schwarz
+        // muss RGB ≈ 64 liefern (vorher: 255, weil Alpha ignoriert wurde).
+        let frame = Arc::new(VideoFrame::new(
+            2,
+            2,
+            vec![255, 255, 255, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ));
+        let mut stage = Stage::new("S", StageGeometry::new(2.0, 2.0));
+        let mut region = Region::full_stage(2.0, 2.0);
+        let route = OutputRoute::new("R", 2, 2);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+        let mut frames = HashMap::new();
+        frames.insert("S".to_string(), frame);
+        let out = render_route(&route, &[stage], &frames);
+        let p0 = &out.rgba[..4];
+        assert_eq!(p0[3], 255, "Fill-Alpha bleibt 255");
+        assert!(
+            (p0[0] as i32 - 64).abs() <= 2,
+            "RGB muss 255×(64/255)≈64 sein, got {}",
+            p0[0]
+        );
+        // Transparenter Quell-Pixel (Alpha 0): wird übersprungen, Ziel bleibt
+        // deckendes Schwarz des Fill-Hintergrunds (vorher: RGB kopiert, egal).
+        assert_eq!(&out.rgba[4..8], &[0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn c8_transparent_upper_stage_does_not_cover_lower() {
+        // Untere Stage rot (deckend), obere Stage komplett transparent:
+        // Fill-Route muss Rot zeigen (vorher: Schwarz, Alpha wurde auf 255 gesetzt).
+        let lower = Arc::new(VideoFrame::new(2, 2, [255, 0, 0, 255].repeat(4)));
+        let upper = Arc::new(VideoFrame::new(2, 2, [0, 0, 0, 0].repeat(4)));
+        let mut s1 = Stage::new("lower", StageGeometry::new(2.0, 2.0));
+        s1.layer = 0;
+        let mut r1 = Region::full_stage(2.0, 2.0);
+        let route = OutputRoute::new("R", 2, 2);
+        r1.route = Some(route.id);
+        s1.regions = vec![r1];
+        let mut s2 = Stage::new("upper", StageGeometry::new(2.0, 2.0));
+        s2.layer = 1;
+        let mut r2 = Region::full_stage(2.0, 2.0);
+        r2.route = Some(route.id);
+        s2.regions = vec![r2];
+        let mut frames = HashMap::new();
+        frames.insert("lower".to_string(), lower);
+        frames.insert("upper".to_string(), upper);
+        let out = render_route(&route, &[s1, s2], &frames);
+        assert_eq!(
+            &out.rgba[..4],
+            &[255, 0, 0, 255],
+            "transparente obere Stage darf untere rote nicht verdecken"
         );
     }
 }

@@ -94,7 +94,7 @@ cargo check --target x86_64-pc-windows-msvc --features webview
 
 ## Block C: Video-Rendering (ein Commit)
 
-- [ ] **8. Opacity/Fades wirken auf Fill-Routen nicht, obere Stage verdeckt untere** (kritisch)
+- [x] **8. Opacity/Fades wirken auf Fill-Routen nicht, obere Stage verdeckt untere** (kritisch)
   - Ort: `render_region_into`, Zweige ohne `keep_alpha` (`src/engine/route_renderer.rs:190-201`).
   - Problem: Das Stage-Canvas ist transparent und nicht vormultipliziert, Fill-Routen
     kopieren aber RGB und setzen Alpha auf 255, ohne das Quell-Alpha zu beachten.
@@ -104,13 +104,13 @@ cargo check --target x86_64-pc-windows-msvc --features webview
     Prüfen, wer das Canvas sonst noch direkt anzeigt (Stage-Fenster in
     `src/gui/stage_view.rs`). Der Test `key_route_preserves_alpha_fill_route_flattens`
     deckt das nicht ausreichend ab, ebenso wenig opake Testbilder.
-- [ ] **9. Surfaces werden am Canvas-Rand gestaucht statt abgeschnitten**
+- [x] **9. Surfaces werden am Canvas-Rand gestaucht statt abgeschnitten**
   - Ort: `composite_canvas` (`src/engine/compositor.rs:177-187`, `:216-217`).
   - Beleg: Canvas 100×100, Bild 100×100 (links rot, rechts blau), Custom `x=-50`: Pixel 0
     ist rot, Pixel 49 blau; erwartet ist blau ab Pixel 0.
   - Fix: Skalierung aus dem ungeklemmten Rechteck berechnen und den Quell-Offset um den
     abgeschnittenen Teil verschieben. Links, rechts, oben und unten testen.
-- [ ] **10. Hard Edge rechts/unten geht im Fast Path verloren**
+- [x] **10. Hard Edge rechts/unten geht im Fast Path verloren**
   - Ort: `composite_canvas` (`src/engine/compositor.rs:203`).
   - Beleg: Hard Edge rechts, 50 px Breite, Vollbild: Pixel 99 hat Alpha 255 (erwartet nahe 0).
   - Fix: Bedingung durch `surface.hard_edge.is_none()` ersetzen.
@@ -169,7 +169,20 @@ weitergegeben werden. Das lokale Homebrew-ffmpeg 9.0.2 enthält es auch nicht.
 
 **Voraussetzung:** Das Blackmagic DeckLink SDK liegt lokal in `third_party/blackmagic-sdk/`
 (per `.gitignore` ausgeschlossen). Fehlt es dort, stoppen und melden, keine Header aus dem
-Gedächtnis nachbauen. Vor dem Einchecken von Headern die SDK-Lizenz prüfen.
+Gedächtnis nachbauen. Verwendete Version: **Desktop Video SDK 16.0**; das ist auch die
+Mindestversion für Desktop Video, in der README nennen und in der App bei älterem Treiber klar
+melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
+
+**Lizenz (SDK-EULA, Klausel 0.1, 1.4, 1.7, 6):**
+- Einchecken dürfen nur die Dateien aus `Mac/Include`, `Win/Include`, `Linux/Include`, und zwar
+  in `third_party/decklink-sdk-16.0/`. Der Lizenzkopf der Header erlaubt das (geprüft an
+  `Mac/Include/DeckLinkAPI.h`) und muss in allen Kopien erhalten bleiben.
+- **Nicht einchecken oder ausliefern:** Beispielcode (Klausel 1.7: nur intern), Dokumentation und
+  alle übrigen SDK-Dateien; Beispielcode auch nicht in unseren Code übernehmen.
+- Desktop Video selbst wird nicht mitgeliefert.
+- Produktname: Marken wie „DeckLink“ nicht in unserem Produktnamen. Als Kompatibilitätsaussage nur
+  „KuhPlay compatible with Blackmagic Design DeckLink“ oder „KuhPlay for Blackmagic Design
+  DeckLink“ (Klausel 6.2).
 
 - [ ] **G1. Farbraum korrigieren** (zuerst, klein und eigener Commit)
   - Ort: `rgba_to_uyvy422` (`src/engine/decklink.rs`) rechnet immer mit BT.601.
@@ -180,7 +193,13 @@ Gedächtnis nachbauen. Vor dem Einchecken von Headern die SDK-Lizenz prüfen.
   - Problem (aus dem Code): `fps = 2997` wählt den richtigen Modus, die Engine taktet dann aber
     mit `1.0 / 2997` Sekunden. `fps = 29` taktet mit 29 statt 29,97.
   - Fix: Bildrate als Bruch führen (30000/1001), Test für das Intervall.
-- [ ] **G3. Native Ausgabe auf macOS und Linux**
+- [ ] **G3. Native Ausgabe auf macOS und Linux, Windows auf SDK 16.0 heben**
+  - Windows: `decklink_com.rs` nutzt laut Vergleich mit dem SDK 16.0 alte Schnittstellen.
+    `IDeckLinkOutput` steht in `DeckLinkAPI_v10_11.idl`, `IDeckLinkVideoFrame` und
+    `IDeckLinkMutableVideoFrame` in `DeckLinkAPI_v14_2_1.idl`, und `GetBytes` liegt jetzt nicht mehr
+    am Frame. Die vier CLSIDs stammen aus `_v10_8` und `_v10_11`; aktuell ist
+    `BA6C6F44-6DA5-4DCE-94AA-EE2D1372A676`. Auf die aktuellen IDs und Layouts aus `DeckLinkAPI.idl`
+    umstellen, die vtable-Reihenfolge dagegen prüfen und auf echter Karte testen.
   - Kleine C++-Brücke mit der `DeckLinkAPIDispatch` des SDK, die den Treiber zur Laufzeit lädt.
     Die App muss ohne installierten Treiber starten und dann eine klare Meldung zeigen.
   - Der Build muss auch ohne SDK durchlaufen, z. B. über ein Cargo-Feature, und die Build-Skripte

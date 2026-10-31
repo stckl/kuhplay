@@ -181,14 +181,33 @@ pub fn composite_canvas(canvas: (u32, u32), surfaces: &[SurfaceEntry]) -> Vec<u8
             if dx1 <= dx0 || dy1 <= dy0 {
                 continue;
             }
-            let src_w = (sx1 - sx0).max(1) as usize;
-            let src_h = (sy1 - sy0).max(1) as usize;
+            // Quell-Fenster an das sichtbare (geclampte) Dest-Rechteck koppeln:
+            // Abgeschnittene Surface-Teile fallen aus der Quelle heraus (Crop),
+            // statt dass das gesamte Bild auf den sichtbaren Teil gestaucht wird
+            // (Review C9).
+            let fx0 = ((dx0 as f32 - x) / width.max(1.0)).clamp(0.0, 1.0);
+            let fy0 = ((dy0 as f32 - y) / height.max(1.0)).clamp(0.0, 1.0);
+            let fx1 = ((dx1 as f32 - x) / width.max(1.0)).clamp(0.0, 1.0);
+            let fy1 = ((dy1 as f32 - y) / height.max(1.0)).clamp(0.0, 1.0);
+            let src_x0 = sx0 as f32 + fx0 * (sx1 - sx0) as f32;
+            let src_y0 = sy0 as f32 + fy0 * (sy1 - sy0) as f32;
+            let src_x1 = sx0 as f32 + fx1 * (sx1 - sx0) as f32;
+            let src_y1 = sy0 as f32 + fy1 * (sy1 - sy0) as f32;
+            let src_w = (src_x1 - src_x0).max(1.0) as usize;
+            let src_h = (src_y1 - src_y0).max(1.0) as usize;
             let dest_w = (dx1 - dx0) as usize;
             let dest_h = (dy1 - dy0) as usize;
             let src_stride = frame.width as usize;
+            // Obere Sampling-Grenzen (AoI-Ende bzw. Frame-Ende).
+            let src_x_cap = ((src_x1.ceil() as usize).max(src_x0 as usize + 1) - 1)
+                .min(frame.width as usize - 1);
+            let src_y_cap = ((src_y1.ceil() as usize).max(src_y0 as usize + 1) - 1)
+                .min(frame.height as usize - 1);
 
             // Fast Path: Quelle deckt die gesamte Canvas 1:1 und ist voll
             // deckend → kompletten Puffer per memcpy (kein Per-Pixel-Loop).
+            // Hard Edge darf hier nicht gesetzt sein – sonst gingen rechte/
+            // untere Kanten im Fast Path verloren (Review C10).
             if alpha_base >= 1.0
                 && surface.blend_mode == crate::core::BlendMode::SourceOver
                 && dx0 == 0
@@ -198,9 +217,9 @@ pub fn composite_canvas(canvas: (u32, u32), surfaces: &[SurfaceEntry]) -> Vec<u8
                 && src_w == frame.width as usize
                 && src_h == frame.height as usize
                 && frame.rgba.len() == out.len()
-                && sx0 == 0
-                && sy0 == 0
-                && surface.hard_edge_factor(0.5, 0.5) >= 1.0
+                && src_x0 == 0.0
+                && src_y0 == 0.0
+                && surface.hard_edge.is_none()
             {
                 // noch prüfen, ob die Quelle überall alpha=255 → dann copy,
                 // sonst pro Pixel (Alpha < 255 → Over-Pfad unten greift eh).
@@ -219,7 +238,7 @@ pub fn composite_canvas(canvas: (u32, u32), surfaces: &[SurfaceEntry]) -> Vec<u8
             for dy in 0..dest_h {
                 let py = (dy0 + dy as u32) as f32 + 0.5;
                 // Quell-Y (Nearest-Neighbor innerhalb des AoI).
-                let sy = (sy0 as usize + (src_y_f * step_y) as usize).min((sy1 - 1) as usize);
+                let sy = (src_y0 as usize + (src_y_f * step_y) as usize).min(src_y_cap);
                 src_y_f += 1.0;
                 let mut src_x_f = 0.5f32;
                 for dx in 0..dest_w {
@@ -235,7 +254,7 @@ pub fn composite_canvas(canvas: (u32, u32), surfaces: &[SurfaceEntry]) -> Vec<u8
                         continue;
                     }
                     let a = alpha_base * edge;
-                    let sx = (sx0 as usize + (src_x_f * step_x) as usize).min((sx1 - 1) as usize);
+                    let sx = (src_x0 as usize + (src_x_f * step_x) as usize).min(src_x_cap);
                     src_x_f += 1.0;
                     let src = &frame.rgba[(sy * src_stride + sx) * 4..][..4];
                     let dst = &mut out
@@ -645,6 +664,163 @@ mod perf_tests {
         assert!(
             elapsed < std::time::Duration::from_millis(800),
             "1080p-Alpha-Composite zu langsam: {elapsed:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod review_c_tests {
+    use super::*;
+    use crate::core::{BlendCurve, EdgeSide, GeometryMode, HardEdge};
+
+    fn surface_at(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        frame: Arc<VideoFrame>,
+        hard_edge: Option<HardEdge>,
+    ) -> SurfaceEntry {
+        let surface = SurfaceGeometry {
+            x,
+            y,
+            width: w,
+            height: h,
+            area_of_interest: None,
+            hard_edge,
+            opacity: 1.0,
+            visible: true,
+            mode: GeometryMode::Custom,
+            lock_aspect: false,
+            blend_mode: Default::default(),
+        };
+        (Uuid::new_v4(), 0, surface, Some(frame), 1.0)
+    }
+
+    fn half_red_right_blue() -> Arc<VideoFrame> {
+        let mut rgba = Vec::new();
+        for _y in 0..100 {
+            for x in 0..100 {
+                if x < 50 {
+                    rgba.extend_from_slice(&[255, 0, 0, 255]);
+                } else {
+                    rgba.extend_from_slice(&[0, 0, 255, 255]);
+                }
+            }
+        }
+        Arc::new(VideoFrame::new(100, 100, rgba))
+    }
+
+    fn px(out: &[u8], x: u32, y: u32) -> &[u8] {
+        let i = ((y * 100 + x) * 4) as usize;
+        &out[i..i + 4]
+    }
+
+    #[test]
+    fn c9_surface_clipped_left_is_cropped_not_squeezed() {
+        // Custom x=-50: Canvas-Spalten 0..50 zeigen Quell-Spalten 50..100 (blau).
+        let surfaces = vec![surface_at(
+            -50.0,
+            0.0,
+            100.0,
+            100.0,
+            half_red_right_blue(),
+            None,
+        )];
+        let out = composite_canvas((100, 100), &surfaces);
+        assert_eq!(
+            px(&out, 0, 0),
+            &[0, 0, 255, 255],
+            "Pixel 0 = Blau (Quell-Spalte 50)"
+        );
+        assert_eq!(px(&out, 49, 0), &[0, 0, 255, 255], "Pixel 49 = Blau");
+        assert_eq!(
+            px(&out, 60, 0),
+            &[0, 0, 0, 0],
+            "Pixel 60 außerhalb der Surface → transparent"
+        );
+    }
+
+    #[test]
+    fn c9_surface_clipped_right_top_bottom_crops() {
+        // x=+50: Canvas-Spalten 50..100 zeigen Quell-Spalten 0..50 (rot).
+        let surfaces = vec![surface_at(
+            50.0,
+            0.0,
+            100.0,
+            100.0,
+            half_red_right_blue(),
+            None,
+        )];
+        let out = composite_canvas((100, 100), &surfaces);
+        assert_eq!(
+            px(&out, 50, 0),
+            &[255, 0, 0, 255],
+            "Pixel 50 = Rot (Quell-Spalte 0)"
+        );
+        assert_eq!(
+            px(&out, 99, 99),
+            &[255, 0, 0, 255],
+            "Pixel 99 = Rot (Quell-Spalte 49)"
+        );
+        assert_eq!(
+            px(&out, 0, 0),
+            &[0, 0, 0, 0],
+            "Pixel 0 außerhalb → transparent"
+        );
+        // y=-50: Canvas-Zeile 0 zeigt Quell-Zeile 50.
+        let surfaces = vec![surface_at(
+            0.0,
+            -50.0,
+            100.0,
+            100.0,
+            half_red_right_blue(),
+            None,
+        )];
+        let out = composite_canvas((100, 100), &surfaces);
+        assert_eq!(
+            px(&out, 0, 0),
+            &[255, 0, 0, 255],
+            "Zeile 0 = Quell-Zeile 50, Spalte 0 = Rot"
+        );
+        // y=+50: Canvas-Zeile 99 zeigt Quell-Zeile 49.
+        let surfaces = vec![surface_at(
+            0.0,
+            50.0,
+            100.0,
+            100.0,
+            half_red_right_blue(),
+            None,
+        )];
+        let out = composite_canvas((100, 100), &surfaces);
+        assert_eq!(
+            px(&out, 0, 99),
+            &[255, 0, 0, 255],
+            "letzte Zeile = Quell-Zeile 49"
+        );
+    }
+
+    #[test]
+    fn c10_hard_edge_right_survives_fast_path() {
+        // Vollbild mit Hard Edge rechts (50 px): Pixel 99 fast transparent
+        // (vorher Fast Path memcpy → Alpha 255, Kante verloren).
+        let frame = Arc::new(VideoFrame::new(
+            100,
+            100,
+            [255, 255, 255, 255].repeat(100 * 100),
+        ));
+        let edge = HardEdge::new(EdgeSide::Right, 50.0, BlendCurve::Linear);
+        let surfaces = vec![surface_at(0.0, 0.0, 100.0, 100.0, frame, Some(edge))];
+        let out = composite_canvas((100, 100), &surfaces);
+        assert!(
+            px(&out, 99, 99)[3] < 10,
+            "Pixel 99 an rechter Kante fast transparent, got {}",
+            px(&out, 99, 99)[3]
+        );
+        assert_eq!(
+            px(&out, 25, 25)[3],
+            255,
+            "Pixel 25 in der Mitte voll deckend"
         );
     }
 }
