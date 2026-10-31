@@ -2098,7 +2098,13 @@ fn copy_paste_cue_properties() {
     }
     // Cue 1: Properties setzen (Name, Pre-Wait) und selektieren → kopieren.
     {
-        let cue = app.carts.active_mut().cues_mut().iter_mut().find(|c| c.id == ids[0]).unwrap();
+        let cue = app
+            .carts
+            .active_mut()
+            .cues_mut()
+            .iter_mut()
+            .find(|c| c.id == ids[0])
+            .unwrap();
         cue.name = "Quelle".to_string();
         cue.pre_wait = Duration::from_secs(2);
         app.carts.active_mut().select_id(Some(ids[0]));
@@ -2109,7 +2115,13 @@ fn copy_paste_cue_properties() {
     app.carts.active_mut().select_id(Some(ids[1]));
     let applied = app.paste_cue_properties();
     assert_eq!(applied, 1);
-    let pasted = app.carts.active().cues().iter().find(|c| c.id == ids[1]).unwrap();
+    let pasted = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .find(|c| c.id == ids[1])
+        .unwrap();
     assert_eq!(pasted.name, "Quelle");
     assert_eq!(pasted.pre_wait, Duration::from_secs(2));
     assert_ne!(pasted.id, ids[0], "ID darf nicht übernommen werden");

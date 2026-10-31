@@ -128,8 +128,63 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
     }
     draw_circle(rgba, w, h);
     draw_label(rgba, w, h, &spec.label);
+    // Branding: KuhPlay-Logo mittig und groß, in der Screen-/Routenfarbe getönt.
+    draw_logo(rgba, w, h, spec.color);
     // Zuletzt: Der Rand ist immer vollständig sichtbar.
     draw_frame(rgba, w, h, [255; 3]);
+}
+
+/// Eingebettetes KuhPlay-Logo (aus `assets/kuhlogo.png`, Graustufen).
+static LOGO_PNG: &[u8] = include_bytes!("../../assets/kuhlogo.png");
+
+/// Dekodiertes Logo (RGBA), einmalig dekodiert.
+fn logo_rgba() -> &'static (u32, u32, Vec<u8>) {
+    static LOGO: std::sync::OnceLock<(u32, u32, Vec<u8>)> = std::sync::OnceLock::new();
+    LOGO.get_or_init(|| {
+        let img = image::load_from_memory(LOGO_PNG)
+            .expect("eingebettetes Logo muss dekodierbar sein")
+            .to_rgba8();
+        let (w, h) = img.dimensions();
+        (w, h, img.into_raw())
+    })
+}
+
+/// Zeichnet das Logo zentriert und groß (ca. 55 % der kleineren Canvas-Kante),
+/// in `color` getönt: Grauwert × Farbe/255, Alpha bleibt.
+fn draw_logo(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
+    let (lw, lh, lrgba) = logo_rgba();
+    let (lw, lh) = (*lw as usize, *lh as usize);
+    let target = ((w.min(h) as f32 * 0.55) as usize).max(8);
+    let scale = target as f32 / lw.max(lh) as f32;
+    let dw = ((lw as f32 * scale) as usize).max(1);
+    let dh = ((lh as f32 * scale) as usize).max(1);
+    let x0 = (w.saturating_sub(dw)) / 2;
+    let y0 = (h.saturating_sub(dh)) / 2;
+    let (cr, cg, cb) = (color[0] as u16, color[1] as u16, color[2] as u16);
+    for dy in 0..dh {
+        let sy = (dy as f32 / dh as f32 * lh as f32) as usize;
+        for dx in 0..dw {
+            let sx = (dx as f32 / dw as f32 * lw as f32) as usize;
+            let si = (sy * lw + sx) * 4;
+            let alpha = lrgba[si + 3] as u16;
+            if alpha == 0 {
+                continue;
+            }
+            // Grauwert des Logos (ist in Graustufen gebaut).
+            let gray = lrgba[si] as u16;
+            let di = ((y0 + dy) * w + (x0 + dx)) * 4;
+            // Getönt: gray * color / 255, dann Source-Over auf den Hintergrund.
+            let r = (gray * cr / 255) as u16;
+            let g = (gray * cg / 255) as u16;
+            let b = (gray * cb / 255) as u16;
+            let a = alpha as f32 / 255.0;
+            let dst = &mut rgba[di..di + 4];
+            dst[0] = (r as f32 * a + dst[0] as f32 * (1.0 - a)).min(255.0) as u8;
+            dst[1] = (g as f32 * a + dst[1] as f32 * (1.0 - a)).min(255.0) as u8;
+            dst[2] = (b as f32 * a + dst[2] as f32 * (1.0 - a)).min(255.0) as u8;
+            dst[3] = 255;
+        }
+    }
 }
 
 /// LED-Wand-Testbild: Schachbrettmuster mit durchnummerierten Kacheln und
@@ -987,5 +1042,34 @@ mod region_grid_color_tests {
             minor[0] > minor[1] && minor[0] > minor[2],
             "Nebenlinie rötlich: {minor:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod logo_tests {
+    use super::{draw_test_pattern, TestPatternSpec};
+    use crate::core::TestPatternKind;
+
+    #[test]
+    fn test_pattern_draws_tinted_logo_centered() {
+        let (w, h) = (400usize, 300usize);
+        let mut rgba = vec![0u8; w * h * 4];
+        let spec = TestPatternSpec {
+            label: "T".to_string(),
+            width: w as u32,
+            height: h as u32,
+            kind: TestPatternKind::SolidColor,
+            color: [255, 0, 0], // Route rot
+            index: 0,
+            checker_size: 32,
+        };
+        draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
+        // Mitte: Logo-Pixel in Rottönen (r deutlich > g/b), nicht schwarz.
+        let i = (h / 2 * w + w / 2) * 4;
+        let px = [rgba[i], rgba[i + 1], rgba[i + 2]];
+        assert!(px[0] > 40 && px[0] > px[1] * 2 && px[0] > px[2] * 2, "Logo-Mitte soll rot getönt sein: {px:?}");
+        // Ecke (außerhalb des Logos): bleibt die Solid-Color-Farbe.
+        let j = (5 * w + 5) * 4;
+        assert_eq!([rgba[j], rgba[j + 1], rgba[j + 2]], [255, 0, 0]);
     }
 }

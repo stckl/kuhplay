@@ -386,11 +386,13 @@ fn engine_webview_snapshot_backoff_bei_fehlern() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    // Backoff: nach 3 Fehlschlägen werden keine Requests mehr gesendet …
+    // Backoff: nach Fehlschlägen wird nur noch alle 500 ms retried (statt
+    // dauerhaft zu stoppen, damit HTML nie einfriert) – in 1 s deutlich
+    // weniger Requests als ohne Backoff (~30 bei 33 ms).
     let log = std::fs::read_to_string(dir.path().join("requests.log")).unwrap();
     let snapshot_requests = log.matches("\"snapshot\"").count();
     assert!(
-        snapshot_requests <= 3,
+        snapshot_requests <= 6,
         "Backoff greift nicht: {snapshot_requests} Snapshot-Requests in 1 s"
     );
     // … und der Fehler wird nur einmal als Engine-Event gemeldet.
