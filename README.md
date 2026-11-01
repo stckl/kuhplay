@@ -98,8 +98,16 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_MIDI`, `KUHPLAY_MIDI_DEVICE` | MIDI an/aus, Gerätename (Teilstring) | an, erstes Gerät |
 | `KUHPLAY_MIDI_MAP` | Noten, z. B. `go=36,panic=37,pause=38,resume=39,reset=40` | Noten 0–4 |
 | `KUHPLAY_MIDI_OUT_DEVICE` | MIDI-Ausgabegerät für MIDI-Cues (Teilstring) | erstes Output-Device |
-| `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS`, `_PIXFMT` | Decklink-Ausgabe über ffmpeg: Die Stage liefert über ihre Region das Route-Bild auf die Karte | aus |
-| `KUHPLAY_DECKLINK_KEY_DEVICE` | Zweiter Decklink-Port für Key/Fill: Key-Route der Stage (Alpha) als Luma auf SDI | aus |
+| `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS` | DeckLink-Ausgabe direkt über das Blackmagic SDK 16.0 (Build mit `--features decklink`): Die Stage liefert über ihre Region das Route-Bild auf die Karte, Scheduled Playback mit late/dropped-Zählern | aus |
+| `KUHPLAY_DECKLINK_KEY_DEVICE` | Zweiter DeckLink-Port für Key/Fill: Key-Route der Stage (Alpha) als Luma auf SDI | aus |
+
+**DeckLink-Hardware (SDI/HDMI):** Ausgabe läuft direkt über das Blackmagic SDK
+(Header unter `third_party/decklink-sdk-16.0/`, nur Include-Dateien eingecheckt,
+Lizenzkopf erhalten). Mindestversion Desktop Video **16.0** – bei älterem Treiber
+zeigt die App eine klare Meldung; fehlt die Karte nach einem macOS-Update, Desktop
+Video neu installieren und registrieren. Kompatibilität: „KuhPlay compatible with
+Blackmagic Design DeckLink“. Ohne Treiber/Gerät: Meldung in GUI und Web-Remote.
+Build: `cargo build --release --features webview,decklink`.
 | `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
 | `KUHPLAY_HWACCEL` | `off` schaltet Hardware-Dekodierung ab (VideoToolbox/NVDEC/VAAPI/DXVA, auto mit Software-Fallback) | an |
 

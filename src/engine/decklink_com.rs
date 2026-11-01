@@ -478,11 +478,9 @@ impl ComDeckLinkOutput {
             // Nächste Frame-Zeit an die aktuelle Stream-Zeit koppeln (G4).
             let mut stream_time: i64 = 0;
             let mut speed: f64 = 1.0;
-            unsafe {
-                let _ = self
-                    .output
-                    .GetScheduledStreamTime(25_000, &mut stream_time, &mut speed);
-            }
+            let _ = self
+                .output
+                .GetScheduledStreamTime(25_000, &mut stream_time, &mut speed);
             state.lock().unwrap().next_time = stream_time + 1_000;
         }
         state.lock().unwrap().scheduled = true;

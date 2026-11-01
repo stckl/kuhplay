@@ -50,7 +50,7 @@ use crate::core::{
 
 use super::audio_backend::AudioBackend;
 use super::compositor::{canvas_size, Compositor, SurfaceEntry};
-use super::decklink::{scale_nearest, DecklinkConfig, DecklinkOutput, DecklinkSink};
+use super::decklink::{scale_nearest, DecklinkConfig, DecklinkSink};
 use super::frame::{
     new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store, FrameStore,
     OpacityStore, RouteFrameStore, StageFrameStore, VideoFrame,
@@ -459,10 +459,9 @@ impl RealMediaEngine {
         self
     }
 
-    /// Hängt eine Decklink-Ausgabe programmatisch an (für Tests: beliebiger
-    /// Subprocess-Sink via [`DecklinkOutput::spawn`]).
-    pub fn with_decklink(mut self, output: DecklinkOutput, stage: String, fps: u32) -> Self {
-        self.decklink = Some(DecklinkSink::Ffmpeg(output));
+    /// Hängt eine Decklink-Senke programmatisch an (für Tests: Capture-Senke).
+    pub fn with_decklink(mut self, output: DecklinkSink, stage: String, fps: u32) -> Self {
+        self.decklink = Some(output);
         self.decklink_stage = stage;
         self.decklink_fps = fps.max(1);
         self

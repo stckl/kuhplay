@@ -227,7 +227,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     (`src/gui/workspace_settings.rs:1358`) und Umgebungsvariablen. Klare Meldungen für fehlenden
     Treiber und nicht unterstützte Formate.
   - Im Stil von `docs/UI.md`; die Web-Remote bekommt dieselbe Auswahl.
-- [ ] **G6. ffmpeg-Ausgabeweg entfernen**
+- [x] **G6. ffmpeg-Ausgabeweg entfernt** (DecklinkOutput/ffmpeg_decklink_args/KUHPLAY_DECKLINK_BACKEND/pix_fmt samt Tests raus; DecklinkSink nur noch Native + Capture für Tests; README + Modul-Doku angepasst)
   - Erst nach G3 und G4: `DecklinkOutput`, `ffmpeg_decklink_args`, `KUHPLAY_DECKLINK_BACKEND`,
     `pix_fmt`, den Fallback in `DecklinkSink` und die Tests dazu entfernen. README und falschen
     Kommentar in `decklink.rs` anpassen.

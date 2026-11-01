@@ -165,7 +165,6 @@ mod platform {
             width,
             height,
             fps: 25,
-            pix_fmt: "uyvy422".into(),
         };
         let com = ComDeckLinkOutput::start(&config)?;
         let name = com.device_name().to_string();
