@@ -260,26 +260,8 @@ fn live_com_output_test_pattern() {
     );
 }
 
-/// G8 Dauerlauf auf dem Mac (UltraStudio Monitor 3G): 30 s rotierende
-/// Farbalken, Scheduled Playback; danach dropped == 0 und alle Frames raus.
-/// Key/Fill kann diese Karte nicht (nur Monitor-Ausgang) – offen notiert.
-#[cfg(all(not(target_os = "windows"), feature = "decklink"))]
-#[test]
-#[ignore = "Dauerlauf: echte Hardware + KUHPLAY_DECKLINK_LIVE=1"]
-fn live_native_soak_color_bars() {
-    if std::env::var("KUHPLAY_DECKLINK_LIVE").ok().as_deref() != Some("1") {
-        return;
-    }
-    use kuhplay::engine::decklink_native::NativeOutput;
-    let config = DecklinkConfig {
-        device: std::env::var("KUHPLAY_DECKLINK_DEVICE").unwrap_or_default(),
-        width: 1920,
-        height: 1080,
-        fps: 25,
-    };
-    let mut out = NativeOutput::open(&config).expect("open");
-    out.start_scheduled().expect("scheduled");
-    let frames = 750; // 30 s @ 25 fps
+/// H5: SMPTE-Farbalken (8 vertikale Balken, 75% RGB-Werte) als RGBA 1920×1080.
+fn color_bars_rgba() -> Vec<u8> {
     let colors = [
         [235u8, 235, 235], // weiß
         [235, 235, 0],     // gelb
@@ -288,25 +270,187 @@ fn live_native_soak_color_bars() {
         [235, 0, 235],     // magenta
         [235, 0, 0],       // rot
         [0, 0, 235],       // blau
-        [0, 0, 0],         // schwarz
+        [16, 16, 16],      // schwarz (Referenzpegel)
     ];
+    let (w, h) = (1920usize, 1080usize);
+    let mut rgba = vec![0u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let c = colors[x * colors.len() / w];
+            let o = (y * w + x) * 4;
+            rgba[o] = c[0];
+            rgba[o + 1] = c[1];
+            rgba[o + 2] = c[2];
+            rgba[o + 3] = 255;
+        }
+    }
+    rgba
+}
+
+/// H5 (Host, ohne Hardware): Farbalken nach UYVY (BT.709) konvertieren und die
+/// Y/Cb/Cr-Werte der Balkenmitten gegen die Sollwerte rechnen – das ist die
+/// Farbkontrolle des Testbilds auf Pixel-Ebene.
+#[test]
+fn farbalken_uyvy_farben_passen() {
+    use kuhplay::engine::decklink::{rgba_to_uyvy422_cs, ColorSpace};
+    let rgba = color_bars_rgba();
+    let (w, h) = (1920usize, 1080usize);
+    let mut uyvy = vec![0u8; w * h * 2];
+    rgba_to_uyvy422_cs(
+        &VideoFrame::new(w as u32, h as u32, rgba.clone()),
+        &mut uyvy,
+        ColorSpace::Bt709,
+    );
+    let rgb_bars = [
+        [235u8, 235, 235],
+        [235, 235, 0],
+        [0, 235, 235],
+        [0, 235, 0],
+        [235, 0, 235],
+        [235, 0, 0],
+        [0, 0, 235],
+        [16, 16, 16],
+    ];
+    for (i, &[r, g, b]) in rgb_bars.iter().enumerate() {
+        let x = (2 * i + 1) * w / 16; // Balkenmitte
+        let y = h / 2;
+        let o = (y * w + x) * 2; // UYVY: 2 Pixel = 4 Byte
+        let (u, y0, v) = (uyvy[o], uyvy[o + 1], uyvy[o + 2]);
+        // BT.709 Studio-Range, normiert 0..1 (wie rgba_to_uyvy422_cs Bt709)
+        let ef = |r: u8, g: u8, b: u8| -> (u8, u8, u8) {
+            let (r, g, b) = (
+                f64::from(r) / 255.0,
+                f64::from(g) / 255.0,
+                f64::from(b) / 255.0,
+            );
+            let (kr, kg, kb) = (0.2126, 0.7152, 0.0722);
+            let y = 16.0 + 219.0 * (kr * r + kg * g + kb * b);
+            let cb = 128.0
+                + 224.0 * (-kr / (2.0 * (1.0 - kb)) * r - kg / (2.0 * (1.0 - kb)) * g + 0.5 * b);
+            let cr = 128.0
+                + 224.0 * (0.5 * r - kg / (2.0 * (1.0 - kr)) * g - kb / (2.0 * (1.0 - kr)) * b);
+            (y as u8, cb as u8, cr as u8)
+        };
+        let (ey, ecb, ecr) = ef(r, g, b);
+        assert!(
+            (i32::from(y0) - i32::from(ey)).abs() <= 3
+                && (i32::from(u) - i32::from(ecb)).abs() <= 3
+                && (i32::from(v) - i32::from(ecr)).abs() <= 3,
+            "Balken {i} RGB({r},{g},{b}): got YUV({y0},{u},{v}), erwartet ({ey},{ecb},{ecr})"
+        );
+    }
+}
+
+/// H5 Dauerlauf (UltraStudio Monitor 3G): mindestens 30 Minuten
+/// (KUHPLAY_DECKLINK_SOAK_SECS, Default 1800) SMPTE-Farbalken per Scheduled
+/// Playback; danach dropped == 0 und alle Frames raus. Zusätzlich Sichtprüfung
+/// am angeschlossenen Monitor: Balken müssen sauber und farbrichtig stehen.
+/// Key/Fill kann diese Karte nicht (nur Monitor-Ausgang) – offen notiert.
+#[cfg(feature = "decklink")]
+#[test]
+#[ignore = "Dauerlauf: echte Hardware + KUHPLAY_DECKLINK_LIVE=1"]
+fn live_native_soak_color_bars() {
+    if std::env::var("KUHPLAY_DECKLINK_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    use kuhplay::engine::decklink_native::NativeOutput;
+    let fps = 25u32;
+    let secs: u64 = std::env::var("KUHPLAY_DECKLINK_SOAK_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1800); // H5: mindestens 30 Minuten
+    let config = DecklinkConfig {
+        device: std::env::var("KUHPLAY_DECKLINK_DEVICE").unwrap_or_default(),
+        width: 1920,
+        height: 1080,
+        fps,
+    };
+    let mut out = NativeOutput::open(&config).expect("open");
+    out.start_scheduled().expect("scheduled");
+    let frames = secs * u64::from(fps);
+    let bars = color_bars_rgba();
     for i in 0..frames {
-        let c = colors[(i / 25) % colors.len()]; // 1 s pro Farbe
-        let rgba = [c[0], c[1], c[2], 255].repeat(1920 * 1080);
+        let mut rgba = bars.clone();
+        // bewegter Marker (1 s wandert über das Bild) gegen Einfrieren
+        let mx = ((i * 8) % 1920) as usize;
+        for y in 0..64usize {
+            for x in mx..(mx + 64).min(1920) {
+                let o = (y * 1920 + x) * 4;
+                rgba[o] = 255;
+                rgba[o + 1] = 255;
+                rgba[o + 2] = 255;
+                rgba[o + 3] = 255;
+            }
+        }
         out.push_frame(&VideoFrame::new(1920, 1080, rgba))
             .expect("push");
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(Duration::from_millis(1000 / u64::from(fps)));
     }
     std::thread::sleep(Duration::from_secs(2)); // Queue auslaufen lassen
     let (late, dropped, queued) = out.stats();
     println!(
-        "soak: frames={} late={late} dropped={dropped} queued={queued}",
+        "soak: secs={secs} frames={} late={late} dropped={dropped} queued={queued}",
         out.frames_pushed()
     );
-    assert_eq!(out.frames_pushed(), frames as u64);
+    println!(
+        "SICHTPRÜFUNG: am Ausgang müssen 8 saubere Farbalken + wandernder weißer Marker stehen."
+    );
+    assert_eq!(out.frames_pushed(), frames);
     assert_eq!(dropped, 0, "keine Bildaussetzer (dropped) erwartet");
     println!(
-        "OK: Dauerlauf 30 s ohne Aussetzer auf {}",
+        "OK: Dauerlauf {secs} s ohne Aussetzer auf {}",
         out.device_name()
     );
+}
+
+/// H5: zusätzlich 1080p29,97 und 1080p50 (soweit die Karte den Modus kann),
+/// je 10 s Farbalken per Scheduled Playback, dropped == 0.
+#[cfg(feature = "decklink")]
+#[test]
+#[ignore = "braucht echte Hardware + KUHPLAY_DECKLINK_LIVE=1"]
+fn live_native_modes_2997_50() {
+    if std::env::var("KUHPLAY_DECKLINK_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    use kuhplay::engine::decklink_native::NativeOutput;
+    let bars = color_bars_rgba();
+    for (fps, num, den) in [(2997u32, 30000u32, 1001u32), (50, 50000, 1000)] {
+        let config = DecklinkConfig {
+            device: std::env::var("KUHPLAY_DECKLINK_DEVICE").unwrap_or_default(),
+            width: 1920,
+            height: 1080,
+            fps,
+        };
+        let mut out = match NativeOutput::open(&config) {
+            Ok(o) => o,
+            Err(e) => {
+                println!("1080p{fps}: open fehlgeschlagen ({e}) – übersprungen");
+                continue;
+            }
+        };
+        let kann = out
+            .modes()
+            .iter()
+            .any(|m| m.width == 1920 && m.height == 1080 && m.fps_num == num && m.fps_den == den);
+        if !kann {
+            println!("1080p{fps}: Modus nicht von der Karte unterstützt – übersprungen");
+            continue;
+        }
+        out.start_scheduled().expect("scheduled");
+        let frames = 10 * u64::from(num) / u64::from(den); // 10 s
+        for _ in 0..frames {
+            out.push_frame(&VideoFrame::new(1920, 1080, bars.clone()))
+                .expect("push");
+            std::thread::sleep(Duration::from_millis(u64::from(1000 * den / num)));
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        let (late, dropped, queued) = out.stats();
+        println!(
+            "1080p{fps}: frames={} late={late} dropped={dropped} queued={queued}",
+            out.frames_pushed()
+        );
+        assert_eq!(out.frames_pushed(), frames);
+        assert_eq!(dropped, 0, "1080p{fps}: keine Aussetzer erwartet");
+        println!("OK: 1080p{fps} (10 s) sauber auf {}", out.device_name());
+    }
 }
