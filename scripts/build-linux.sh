@@ -32,10 +32,11 @@ fi
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 name="kuhplay-${version}-linux-$(uname -m)"
 
+# H4: DeckLink gehört seit G6 zum Release (SDK liegt unter third_party/).
 if [ "$webview" = 1 ]; then
-  cargo build --release --locked --features webview
+  cargo build --release --locked --features webview,decklink
 else
-  cargo build --release --locked
+  cargo build --release --locked --features decklink
 fi
 
 out="dist/$name"
@@ -46,12 +47,9 @@ cp target/release/kuhplay README.md icon.png "$out/"
 if [ "$webview" = 1 ]; then
   cp target/release/kuhplay-webview "$out/"
 fi
+# H3: ffmpeg/ffprobe gebündelt neben das Binary – schlägt das Mitliefern fehl
+# (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build hier ab.
+scripts/vendor-ffmpeg.sh "$out"
 tar -czf "$out.tar.gz" -C dist "$name"
 
-command -v ffmpeg >/dev/null || echo "Hinweis: ffmpeg fehlt im PATH, Video-Cues brauchen es zur Laufzeit." >&2
 echo "Fertig: $out.tar.gz"
-
-# G7: ffmpeg/ffprobe gebündelt neben das Binary.
-if [ -x scripts/vendor-ffmpeg.sh ]; then
-  scripts/vendor-ffmpeg.sh dist/linux/ || echo "Hinweis: vendor-ffmpeg fehlgeschlagen – ffmpeg/ffprobe müssen im PATH liegen." >&2
-fi

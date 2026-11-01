@@ -110,7 +110,7 @@ webview = [
 ]
 # Native DeckLink-Ausgabe direkt über das Blackmagic SDK 16.0
 # (third_party/decklink-sdk-16.0, nur Include-Header eingecheckt). Ohne SDK
-# oder ohne Feature läuft der Build normal durch (ffmpeg-Fallback).
+# oder ohne Feature läuft der Build normal durch.
 decklink = []
 
 [[bin]]

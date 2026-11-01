@@ -1,7 +1,7 @@
 //! Build-Skript: kompiliert die DeckLink-C++-Bridge (macOS/Linux), wenn das
 //! Feature `decklink` aktiv ist und das SDK unter third_party/decklink-sdk-16.0
-//! liegt. Ohne SDK läuft der Build normal durch (nativer Pfad deaktiviert,
-//! ffmpeg-Fallback). Windows braucht keinen C++-Build (COM-Pfad in Rust).
+//! liegt. Ohne SDK läuft der Build normal durch (nativer Pfad deaktiviert).
+//! Windows braucht keinen C++-Build (COM-Pfad in Rust).
 
 use std::path::Path;
 

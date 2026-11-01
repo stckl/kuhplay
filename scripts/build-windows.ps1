@@ -14,7 +14,9 @@ $arch = $env:PROCESSOR_ARCHITECTURE.ToLower()
 $name = "kuhplay-$version-windows-$arch"
 
 $cargoArgs = @('build', '--release', '--locked')
-if (-not $NoWebview) { $cargoArgs += @('--features', 'webview') }
+# H4: DeckLink gehört seit G6 zum Release (SDK liegt unter third_party/).
+$features = if ($NoWebview) { 'decklink' } else { 'webview,decklink' }
+$cargoArgs += @('--features', $features)
 & cargo @cargoArgs
 if ($LASTEXITCODE -ne 0) { throw "cargo build fehlgeschlagen ($LASTEXITCODE)." }
 
@@ -25,15 +27,11 @@ Copy-Item 'target\release\kuhplay.exe', 'README.md', 'icon.png' $out
 # Die Engine sucht den WebView-Prozess neben dem Haupt-Binary.
 if (-not $NoWebview) { Copy-Item 'target\release\kuhplay-webview.exe' $out }
 
+# H3: ffmpeg/ffprobe gebündelt neben die exe (vor dem Zip) – schlägt das
+# Mitliefern fehl (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build ab.
+& "$PSScriptRoot\vendor-ffmpeg.ps1" $out
+
 $zip = "$out.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $out -DestinationPath $zip
-
-# G7: ffmpeg/ffprobe gebündelt neben die exe (vor dem Zip).
-if (Test-Path "$PSScriptRoot\vendor-ffmpeg.ps1") {
-  & "$PSScriptRoot\vendor-ffmpeg.ps1" $out
-}
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $out 'ffmpeg.exe'))) {
-    Write-Warning 'ffmpeg/ffprobe weder gebündelt noch im PATH – Video-Cues brauchen eines davon.'
-}
 Write-Host "Fertig: $zip"

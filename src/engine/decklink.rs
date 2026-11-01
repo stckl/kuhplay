@@ -13,7 +13,7 @@ use crate::engine::frame::VideoFrame;
 /// Konfiguration einer Decklink-Ausgabe.
 #[derive(Debug, Clone)]
 pub struct DecklinkConfig {
-    /// Gerätename für den ffmpeg-decklink-Muxer (z. B. „DeckLink SDI").
+    /// Gerätename (Substring, case-insensitive; leer/„auto“ = erstes Gerät).
     pub device: String,
     /// Frame-Breite in Pixeln.
     pub width: u32,
@@ -259,7 +259,7 @@ pub enum DecklinkSink {
 }
 
 impl DecklinkSink {
-    /// Startet die native Senke (G6: kein ffmpeg-Fallback mehr).
+    /// Startet die native Senke.
     pub fn start(config: &DecklinkConfig) -> ShowResult<Self> {
         Ok(Self::Native(
             crate::engine::decklink_native::NativeOutput::open(config)?,
@@ -307,7 +307,7 @@ impl DecklinkSink {
         }
     }
 
-    /// (late, dropped, queued) – nur native Senke (G4); ffmpeg: (0,0,0).
+    /// (late, dropped, queued) der nativen Senke.
     pub fn stats(&self) -> (u64, u64, u64) {
         match self {
             Self::Native(out) => out.stats(),

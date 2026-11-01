@@ -18,10 +18,11 @@ command -v cargo >/dev/null || { echo "cargo fehlt (https://rustup.rs)." >&2; ex
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 arch=$(uname -m)
 
+# H4: DeckLink gehört seit G6 zum Release (SDK liegt unter third_party/).
 if [ "$webview" = 1 ]; then
-  cargo build --release --locked --features webview
+  cargo build --release --locked --features webview,decklink
 else
-  cargo build --release --locked
+  cargo build --release --locked --features decklink
 fi
 
 app=dist/KuhPlay.app
@@ -32,10 +33,9 @@ cp target/release/kuhplay "$app/Contents/MacOS/"
 if [ "$webview" = 1 ]; then
   cp target/release/kuhplay-webview "$app/Contents/MacOS/"
 fi
-# G7: ffmpeg/ffprobe gebündelt ins App-Bundle (falls vorhanden, sonst PATH-Hinweis).
-if [ -x scripts/vendor-ffmpeg.sh ]; then
-  scripts/vendor-ffmpeg.sh "$app/Contents/MacOS" || echo "Hinweis: vendor-ffmpeg fehlgeschlagen – ffmpeg/ffprobe müssen im PATH liegen." >&2
-fi
+# H3: ffmpeg/ffprobe gebündelt ins App-Bundle – schlägt das Mitliefern fehl
+# (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build hier ab.
+scripts/vendor-ffmpeg.sh "$app/Contents/MacOS"
 
 # App-Icon: icon.png ist nicht quadratisch, iconutil braucht Quadrate.
 work=$(mktemp -d)
@@ -78,5 +78,4 @@ zip="dist/kuhplay-${version}-macos-${arch}.zip"
 rm -f "$zip"
 ditto -c -k --keepParent "$app" "$zip"
 
-command -v ffmpeg >/dev/null || [ -x "$app/Contents/MacOS/ffmpeg" ] || echo "Hinweis: ffmpeg/ffprobe weder gebündelt noch im PATH – Video-Cues brauchen eines davon." >&2
 echo "Fertig: $app und $zip"
