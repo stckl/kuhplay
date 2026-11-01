@@ -15,6 +15,16 @@ version="${2:?version}"
 notes_file="${3:-}"
 
 cd "$dir"
+
+# Git Bash auf Windows hat sha256sum, macOS nur shasum.
+sha256_of() {
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 assets=$(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.zip' -o -name '*.AppImage' \) | sed 's|^\./||' | sort)
 [ -n "$assets" ] || { echo "keine Pakete in $dir gefunden" >&2; exit 1; }
 
@@ -28,7 +38,7 @@ base="https://github.com/${GITHUB_REPOSITORY:-stckl/kuhplay}/releases/download/$
   printf '{"version":"%s","notes":%s,"assets":[' "$version" "$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<<"$notes")"
   first=1
   for a in $assets; do
-    sha=$(shasum -a 256 "$a" | awk '{print $1}')
+    sha=$(sha256_of "$a")
     [ $first = 1 ] || printf ','
     first=0
     printf '{"name":"%s","url":"%s/%s","sha256":"%s"}' "$a" "$base" "$a" "$sha"
