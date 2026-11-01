@@ -7,6 +7,7 @@ use std::path::Path;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=KUH_UPDATE_PUBKEY");
     // U1: Build-Info für About/Web-Remote (nie Secrets, nur öffentlicher Commit).
     let sha = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])

@@ -1,4 +1,4 @@
-# Baut KuhPlay für Windows: dist\kuhplay-<version>-windows-<arch>.zip
+﻿# Baut KuhPlay für Windows: dist\kuhplay-<version>-windows-<arch>.zip
 # Aufruf: powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 [-NoWebview]
 param([switch]$NoWebview)
 

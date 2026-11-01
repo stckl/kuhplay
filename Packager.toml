@@ -22,19 +22,17 @@ homepage = "https://github.com/stckl/kuhplay"
 out_dir = "dist/packager"
 binaries_dir = "target/release"
 
-# Baut Release-Binaries und vendored ffmpeg/ffprobe (LGPL, H3) neben die Binaries –
-# die Engine sucht sie dort. Schlägt Vendoring fehl, bricht der Build ab (H3).
-before_packaging_command = "cargo build --release --locked --features webview,decklink && bash scripts/vendor-ffmpeg.sh target/release"
+# Build und ffmpeg laufen vor dem Packen im Workflow (.github/workflows/release.yml).
 
 binaries = [
   { path = "kuhplay", main = true },
   { path = "kuhplay-webview" },
 ]
 
-# ffmpeg/ffprobe + Lizenzdateien landen neben dem Haupt-Binary im Paket.
-external_binaries = ["ffmpeg", "ffprobe", "LICENSE-ffmpeg.txt", "BUILD-ffmpeg.txt"]
+# ffmpeg/ffprobe landen neben dem Haupt-Binary im Paket (Dateiname mit Ziel-Triple).
+external_binaries = ["target/release/ffmpeg", "target/release/ffprobe"]
 
-resources = ["LICENSE", "LICENSES.md", "README.md", "icon.png"]
+resources = ["LICENSE", "LICENSES.md", "README.md", "icon.png", "target/release/LICENSE-ffmpeg.txt", "target/release/BUILD-ffmpeg.txt"]
 
 icons = ["icon.png"]
 
@@ -47,7 +45,7 @@ languages = ["English"]
 [deb]
 # U2: Abhängigkeiten, die apt automatisch installiert (ffmpeg als LGPL-Quelle
 # siehe H3; zusätzlich wird ffmpeg gebündelt, siehe external_binaries).
-depends = ["ffmpeg", "libgtk-3-0", "libwebkit2gtk-4.1-0", "libasound2"]
+depends = ["ffmpeg", "libgtk-3-0", "libwebkit2gtk-4.1-0", "libasound2", "libva2", "libva-drm2", "libva-x11-2", "libvdpau1"]
 section = "video"
 priority = "optional"
 

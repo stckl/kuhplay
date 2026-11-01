@@ -45,7 +45,7 @@ midir = "0.11"
 # (nie unsignierte Updates installieren) + SHA-256. HTTP läuft über das
 # systemeigene `curl` (ab Win10 immer vorhanden) – bewusst keine TLS-Crate,
 # damit der Windows-Cross-Check ohne C-Toolchain grün bleibt.
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+minisign-verify = "0.3"
 sha2 = "0.10"
 
 # Observability
@@ -135,7 +135,7 @@ windows-core = "0.62"
 cc = "1"
 
 [dev-dependencies]
-rand_core = { version = "0.6", features = ["getrandom"] }
+minisign = "0.10"
 
 hound = "3.5.1"
 # Test-Suite: echte Temp-Dateien für Resilienz-Tests

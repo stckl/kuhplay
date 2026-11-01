@@ -1,4 +1,4 @@
-# H3: ffmpeg + ffprobe als LGPL-Builds neben die App legen (Windows).
+﻿# H3: ffmpeg + ffprobe als LGPL-Builds neben die App legen (Windows).
 # Gepinnt auf BtbN/FFmpeg-Builds LGPL-Variante (statisch, kein --enable-gpl,
 # --disable-libx264/-libx265), Release-Tag autobuild-2026-10-31-12-59,
 # SHA-256 aus dessen checksums.sha256 – keine beweglichen "release"-Links.

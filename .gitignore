@@ -3,3 +3,4 @@
 /third_party/blackmagic-sdk/
 *.rs.bk
 .DS_Store
+/docs/TODO-review-2026-10-31.md

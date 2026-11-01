@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Öffentlicher Update-Schlüssel, wird in die App eingebaut.
+  KUH_UPDATE_PUBKEY: RWR7OrESeUEG0lWvfW/n1uBxymBVJ8WFChxK4BNb6Za/eGISFgX4yOnn
+
 jobs:
   # U2/U5: Installer-Pakete (NSIS/DMG/DEB) mit cargo-packager, plus signiertes
   # Update-Manifest (latest.json + latest.json.sig, Ed25519/minisign).
@@ -31,28 +35,38 @@ jobs:
       - name: cargo-packager installieren
         run: cargo install cargo-packager --locked
       - name: System-Setup
+        shell: bash
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y build-essential pkg-config libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+            sudo apt-get install -y build-essential pkg-config libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libva2 libva-drm2 libva-x11-2 libvdpau1
           fi
           if [ "${{ runner.os }}" = "macOS" ]; then
             brew install create-dmg || true
           fi
-      - name: Build + ffmpeg vendoren (H3, LGPL) + Installer
+      - name: Build + ffmpeg vendoren (LGPL) + Installer
+        shell: bash
         run: |
           cargo build --release --locked --features webview,decklink
           if [ "${{ runner.os }}" = "Windows" ]; then
-            powershell -ExecutionPolicy Bypass -File scripts\vendor-ffmpeg.ps1 target\release
+            powershell -ExecutionPolicy Bypass -File scripts/vendor-ffmpeg.ps1 target/release
           else
             bash scripts/vendor-ffmpeg.sh target/release
           fi
+          # cargo-packager erwartet externe Programme mit dem Ziel-Triple im Namen.
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          for tool in ffmpeg ffprobe; do
+            cp "target/release/$tool$ext" "target/release/$tool-$triple$ext"
+          done
           cargo packager --release -f ${{ matrix.format }} -o dist/packager
       - name: Update-Manifest erzeugen + signieren (Ed25519)
+        shell: bash
         env:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
-        run: scripts/release-manifest.sh dist/packager "${GITHUB_REF_NAME#v}"
+        run: bash scripts/release-manifest.sh dist/packager "${GITHUB_REF_NAME#v}"
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.artifact }}
@@ -85,7 +99,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libasound2-dev \
-            libgtk-3-dev libwebkit2gtk-4.1-dev
+            libgtk-3-dev libwebkit2gtk-4.1-dev libva2 libva-drm2 libva-x11-2 libvdpau1
 
       - name: Bauen (Linux)
         if: runner.os == 'Linux'
@@ -127,7 +141,7 @@ jobs:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           cargo install cargo-packager --locked
-          scripts/release-manifest.sh pakete "${GITHUB_REF_NAME#v}"
+          bash scripts/release-manifest.sh pakete "${GITHUB_REF_NAME#v}"
           if [ -n "${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}" ]; then
             echo "SIGNED=1" >> "$GITHUB_ENV"
           else

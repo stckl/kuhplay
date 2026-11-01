@@ -1,13 +1,13 @@
 //! Update-Funktion (Block U4): signierte Release-Manifeste von GitHub Releases.
 //!
 //! Ablauf: `latest.json` (Manifest mit Version, Notizen, Assets + SHA-256) und
-//! `latest.json.sig` (Ed25519-Detached-Signatur über das Manifest) werden aus dem
+//! `latest.json.sig` (Minisign-Signatur von `cargo packager signer`) werden aus dem
 //! neuesten GitHub-Release geladen. **Ohne gültige Signatur gegen den gepinnten
 //! Verifizierungsschlüssel wird nie installiert** – unsignierte oder manipulierte
 //! Updates werden abgelehnt. Das Paket selbst wird zusätzlich per SHA-256 geprüft.
 //!
-//! Der öffentliche Schlüssel kommt zur Build-Zeit über `KUH_UPDATE_PUBKEY_HEX`
-//! (Hex, 32 Bytes) aus den CI-Secrets; fehlt er, gibt es keine verifizierten
+//! Der öffentliche Schlüssel kommt zur Build-Zeit über `KUH_UPDATE_PUBKEY`
+//! (Minisign-Base64-Zeile, öffentlich); fehlt er, gibt es keine verifizierten
 //! Updates (Check/Anzeige ja, Installation nein). Private Schlüssel liegen nie
 //! im Repo.
 //!
@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -105,63 +105,36 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// minisign-kompatible Signaturdatei parsen: letzte nicht-leere Zeile ist
-/// base64 aus [sig_alg(2)][key_id(8)][ed25519-signatur(64)] – die Signatur
-/// liegt über den exakten Datei-Bytes (kein Prehash).
-pub fn parse_minisign_signature(sig_file: &[u8]) -> Result<[u8; 64], String> {
+/// Text der Signaturdatei: `cargo packager signer` legt ihn base64-kodiert ab,
+/// `minisign` selbst schreibt ihn direkt.
+fn signature_text(sig_file: &[u8]) -> Result<String, String> {
     let text = String::from_utf8_lossy(sig_file);
-    let line = text
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .ok_or("Signaturdatei leer")?;
-    let raw = base64_decode(line.trim()).ok_or("Signatur ist kein base64")?;
-    if raw.len() < 64 {
-        return Err(format!("Signatur zu kurz ({} Bytes)", raw.len()));
+    if text.trim().is_empty() {
+        return Err("Signaturdatei leer".to_string());
     }
-    let sig: [u8; 64] = raw[raw.len() - 64..]
-        .try_into()
-        .map_err(|_| "Signatur-Bytes ungültig")?;
-    Ok(sig)
+    if text.contains("untrusted comment:") {
+        return Ok(text.into_owned());
+    }
+    let decoded = base64_decode(text.trim()).ok_or("Signatur ist kein base64")?;
+    String::from_utf8(decoded).map_err(|_| "Signatur ist kein Text".to_string())
 }
 
-/// minisign-kompatiblen öffentlichen Schlüssel parsen: base64 aus
-/// [pk_alg(2) = "ED"][32-Byte-Ed25519-Pubkey].
-pub fn minisign_pubkey_from_b64(line: &str) -> Option<[u8; 32]> {
-    let raw = base64_decode(line.trim())?;
-    if raw.len() < 32 {
-        return None;
-    }
-    raw[raw.len() - 32..].try_into().ok()
-}
-
-/// Ed25519-Signatur des Manifests prüfen. 64-Byte-Rohsignatur.
+/// Minisign-Signatur des Manifests prüfen.
 pub fn verify_manifest_signature(
     manifest: &[u8],
-    sig: &[u8],
-    pubkey: &VerifyingKey,
+    sig_file: &[u8],
+    pubkey: &PublicKey,
 ) -> Result<(), String> {
-    let sig = Signature::from_slice(sig).map_err(|e| format!("Signatur ungültig: {e}"))?;
-    pubkey.verify(manifest, &sig).map_err(|_| {
+    let sig = Signature::decode(&signature_text(sig_file)?)
+        .map_err(|e| format!("Signatur ungültig: {e}"))?;
+    pubkey.verify(manifest, &sig, false).map_err(|_| {
         "Signatur-Prüfung fehlgeschlagen (manipuliert oder falscher Schlüssel)".to_string()
     })
 }
 
-/// Gepinnter Verifizierungsschlüssel (Hex) aus der Build-Umgebung, falls gesetzt.
-pub fn pinned_pubkey() -> Option<VerifyingKey> {
-    let hex = option_env!("KUH_UPDATE_PUBKEY_HEX")?.trim();
-    let bytes = hex_decode(hex)?;
-    VerifyingKey::from_bytes(&bytes.try_into().ok()?).ok()
-}
-
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
-        .collect()
+/// Gepinnter Verifizierungsschlüssel aus der Build-Umgebung, falls gesetzt.
+pub fn pinned_pubkey() -> Option<PublicKey> {
+    PublicKey::from_base64(option_env!("KUH_UPDATE_PUBKEY")?.trim()).ok()
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -226,8 +199,7 @@ pub fn fetch_update_check(feed_base: &str) -> Result<UpdateCheck, String> {
     let parsed = parse_manifest(&manifest)?;
     let verified = match pinned_pubkey() {
         Some(pk) => {
-            let raw_sig = parse_minisign_signature(&sig)?;
-            verify_manifest_signature(&manifest, &raw_sig, &pk)?;
+            verify_manifest_signature(&manifest, &sig, &pk)?;
             true
         }
         None => false, // kein Schlüssel gepinnt → nicht verifiziert
@@ -243,10 +215,10 @@ pub fn select_asset<'a>(manifest: &'a UpdateManifest, platform: &str) -> Option<
     manifest.assets.iter().find(|a| {
         let n = a.name.to_lowercase();
         match platform {
-            "windows-x64" => n.contains("windows") && n.ends_with(".exe"),
-            "macos-arm64" => n.contains("macos") && n.contains("arm64") && n.ends_with(".dmg"),
-            "macos-x64" => n.contains("macos") && n.contains("x64") && n.ends_with(".dmg"),
-            "linux-x64" => n.contains("linux") && n.ends_with(".deb"),
+            "windows-x64" => n.ends_with(".exe"),
+            "macos-arm64" => (n.contains("arm64") || n.contains("aarch64")) && n.ends_with(".dmg"),
+            "macos-x64" => (n.contains("x64") || n.contains("x86_64")) && n.ends_with(".dmg"),
+            "linux-x64" => n.ends_with(".deb"),
             _ => false,
         }
     })
@@ -336,12 +308,55 @@ pub fn run_installer(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
 
-    fn test_keypair() -> (SigningKey, VerifyingKey) {
-        let sk = SigningKey::generate(&mut rand_core::OsRng);
-        let pk = sk.verifying_key();
-        (sk, pk)
+    fn test_keypair() -> (minisign::SecretKey, PublicKey) {
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let pk = PublicKey::from_base64(&kp.pk.to_base64()).unwrap();
+        (kp.sk, pk)
+    }
+
+    fn sign(sk: &minisign::SecretKey, data: &[u8]) -> String {
+        minisign::sign(None, sk, std::io::Cursor::new(data), None, None)
+            .unwrap()
+            .to_string()
+    }
+
+    /// Echte Ausgabe von `cargo packager signer` (Wegwerf-Schlüssel nur für diesen Test).
+    #[test]
+    fn signatur_von_cargo_packager_wird_akzeptiert() {
+        let pk = PublicKey::from_base64("RWQDFHVvQhehbdUVjv3GZdd3gelAYrTymnZKgKmubGq/n/2AmXJDwT4e")
+            .unwrap();
+        let manifest = b"{\"version\":\"9.9.9\",\"notes\":\"Test\",\"assets\":[]}\n";
+        let sig = b"dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIGNhcmdvLXBhY2thZ2VyIHNlY3JldCBrZXkKUlVRREZIVnZRaGVoYlViaS8zQnNncWp3SU1kMEJmYmxZYkdrTFd5NHkrdTUvUFFYdUFSdHNPR0lRTDUyRGlodU5pd1hpN2hIMFVhNHJUa04xM2lxVW9QN3NxdlFTWWpJbFFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNTY0NjA1CWZpbGU6bS5qc29uCm5pNUdDRHlmM201aVkxL2Zlc1ZtRnM0WnR2RDdrWUJLYy85eDcxeUFHdlRZa1ZBUy92Y1pjYVZtZjRTV3hNOWllMWY5cGcwL0xiSERvVXU3UWx5a0RRPT0K";
+        verify_manifest_signature(manifest, sig, &pk).unwrap();
+        assert!(verify_manifest_signature(b"manipuliert", sig, &pk).is_err());
+    }
+
+    #[test]
+    fn asset_namen_von_cargo_packager_werden_gefunden() {
+        let asset = |name: &str| UpdateAsset {
+            name: name.to_string(),
+            url: name.to_string(),
+            sha256: String::new(),
+        };
+        let m = UpdateManifest {
+            version: "9.9.9".to_string(),
+            notes: String::new(),
+            assets: vec![
+                asset("KuhPlay_0.1.0_x64-setup.exe"),
+                asset("KuhPlay_0.1.0_aarch64.dmg"),
+                asset("kuhplay_0.1.0_amd64.deb"),
+            ],
+        };
+        assert!(select_asset(&m, "windows-x64")
+            .unwrap()
+            .url
+            .ends_with(".exe"));
+        assert!(select_asset(&m, "macos-arm64")
+            .unwrap()
+            .url
+            .ends_with(".dmg"));
+        assert!(select_asset(&m, "linux-x64").unwrap().url.ends_with(".deb"));
     }
 
     #[test]
@@ -364,69 +379,21 @@ mod tests {
         assert!(parse_manifest(b"{kaputt").is_err());
     }
 
-    fn b64(bytes: &[u8]) -> String {
-        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::new();
-        for chunk in bytes.chunks(3) {
-            let b = [
-                chunk[0],
-                *chunk.get(1).unwrap_or(&0),
-                *chunk.get(2).unwrap_or(&0),
-            ];
-            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-            out.push(T[(n >> 18 & 63) as usize] as char);
-            out.push(T[(n >> 12 & 63) as usize] as char);
-            out.push(if chunk.len() > 1 {
-                T[(n >> 6 & 63) as usize] as char
-            } else {
-                '='
-            });
-            out.push(if chunk.len() > 2 {
-                T[(n & 63) as usize] as char
-            } else {
-                '='
-            });
-        }
-        out
-    }
-
-    #[test]
-    fn minisign_format_kompatibel() {
-        let (sk, pk) = test_keypair();
-        let manifest = br#"{"version":"0.2.0","assets":[]}"#;
-        let sig = sk.sign(manifest);
-        // minisign-Datei: Kommentarzeile + base64(["Ed"][key_id 8][sig 64])
-        let mut boxbytes = b"Ed".to_vec();
-        boxbytes.extend_from_slice(&[0u8; 8]);
-        boxbytes.extend_from_slice(&sig.to_bytes());
-        let sig_file = format!("untrusted comment: signature\n{}\n", b64(&boxbytes));
-        let raw = parse_minisign_signature(sig_file.as_bytes()).unwrap();
-        assert_eq!(raw, sig.to_bytes());
-        verify_manifest_signature(manifest, &raw, &pk).unwrap();
-        // Pubkey im minisign-Format
-        let pk_box = format!("untrusted comment: public key\n{}\n", {
-            let mut b = b"ED".to_vec();
-            b.extend_from_slice(&pk.to_bytes());
-            b64(&b)
-        });
-        let pk_line = pk_box.lines().last().unwrap();
-        assert_eq!(minisign_pubkey_from_b64(pk_line).unwrap(), pk.to_bytes());
-    }
-
     #[test]
     fn signatur_pruefung_ok_und_manipuliert() {
         let (sk, pk) = test_keypair();
         let manifest = br#"{"version":"0.2.0","assets":[]}"#;
-        let sig = sk.sign(manifest);
-        verify_manifest_signature(manifest, &sig.to_bytes(), &pk).unwrap();
+        let sig = sign(&sk, manifest);
+        verify_manifest_signature(manifest, sig.as_bytes(), &pk).unwrap();
         // manipuliertes Manifest → ablehnen
         let tampered = br#"{"version":"9.9.9","assets":[]}"#;
-        assert!(verify_manifest_signature(tampered, &sig.to_bytes(), &pk).is_err());
+        assert!(verify_manifest_signature(tampered, sig.as_bytes(), &pk).is_err());
         // falscher Schlüssel → ablehnen
         let (_sk2, pk2) = test_keypair();
-        assert!(verify_manifest_signature(manifest, &sig.to_bytes(), &pk2).is_err());
-        // kaputte Signatur → ablehnen
-        assert!(verify_manifest_signature(manifest, &[7u8; 64], &pk).is_err());
+        assert!(verify_manifest_signature(manifest, sig.as_bytes(), &pk2).is_err());
+        // kaputte oder leere Signatur → ablehnen
+        assert!(verify_manifest_signature(manifest, b"kaputt", &pk).is_err());
+        assert!(verify_manifest_signature(manifest, b"", &pk).is_err());
     }
 
     #[test]
@@ -471,13 +438,7 @@ mod tests {
         let manifest = format!(
             r#"{{"version":"9.9.9","notes":"test","assets":[{{"name":"kuhplay-9.9.9-linux-x64.deb","url":"http://127.0.0.1:{port}/pkg.deb","sha256":"{asset_sha}"}}]}}"#
         );
-        let sig = sk.sign(manifest.as_bytes());
-        let sig_file = {
-            let mut b = b"Ed".to_vec();
-            b.extend_from_slice(&[0u8; 8]);
-            b.extend_from_slice(&sig.to_bytes());
-            format!("untrusted comment: signature\n{}\n", b64(&b))
-        };
+        let sig_file = sign(&sk, manifest.as_bytes());
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -518,8 +479,7 @@ mod tests {
         // 1) Manifest + Signatur laden und gegen Test-Schlüssel prüfen
         let m_bytes = http_get(&format!("{feed}/latest.json")).unwrap();
         let s_bytes = http_get(&format!("{feed}/latest.json.sig")).unwrap();
-        let raw_sig = parse_minisign_signature(&s_bytes).unwrap();
-        verify_manifest_signature(&m_bytes, &raw_sig, &pk).unwrap();
+        verify_manifest_signature(&m_bytes, &s_bytes, &pk).unwrap();
         let manifest = parse_manifest(&m_bytes).unwrap();
         assert!(version_newer(&manifest.version, current_version()));
 
@@ -530,8 +490,8 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"paket-inhalt");
 
         // 3) manipulierte Signatur (minisign-Format) → ablehnen
-        let bad = sk.sign(b"anderes manifest");
-        assert!(verify_manifest_signature(&m_bytes, &bad.to_bytes(), &pk).is_err());
+        let bad = sign(&sk, b"anderes manifest");
+        assert!(verify_manifest_signature(&m_bytes, bad.as_bytes(), &pk).is_err());
 
         // 4) manipuliertes Asset (SHA passt nicht) → ablehnen
         let mut bad_asset = asset.clone();
