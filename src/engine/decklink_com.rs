@@ -30,7 +30,10 @@ use crate::engine::decklink::{
 };
 use crate::engine::frame::VideoFrame;
 
-// --- COM-Interfaces (vtable-Reihenfolge wie im IDL) -------------------------
+// --- COM-Interfaces -------------------------------------------------------
+// H1: Methode fuer Methode aus third_party/decklink-sdk-16.0/windows/include/
+// DeckLinkAPI.idl (SDK 16.0) uebernommen – vtable-Reihenfolge und IIDs exakt.
+// Der Test tests/decklink_com_idl.rs vergleicht beides automatisch gegen die IDL.
 
 /// IDeckLink (DeckLinkAPIDiscovery.idl).
 #[interface("C418FBDD-0587-48ED-8FE5-640F0A14AF91")]
@@ -39,25 +42,44 @@ unsafe trait IDeckLink: IUnknown {
     fn GetDisplayName(&self, displayname: *mut BSTR) -> HRESULT;
 }
 
-/// IDeckLinkIterator (DeckLinkAPI.idl) – enumeriert die Hardware.
+/// IDeckLinkIterator (DeckLinkAPI.idl).
 #[interface("50FB36CD-3063-4B73-BDBB-958087F2D8BA")]
 unsafe trait IDeckLinkIterator: IUnknown {
     fn Next(&self, decklinkinstance: *mut Option<IDeckLink>) -> HRESULT;
 }
 
-/// IDeckLinkVideoFrame (DeckLinkAPI.idl).
-#[interface("3F716FE0-F023-4111-BE5D-EF4414C05B17")]
+/// IDeckLinkVideoFrame (DeckLinkAPI.idl, SDK 16.0: IID 6502091C-…, GetBytes entfällt).
+#[interface("6502091C-615F-4F51-BAF6-45C4256DD5B0")]
 unsafe trait IDeckLinkVideoFrame: IUnknown {
     fn GetWidth(&self) -> i32;
     fn GetHeight(&self) -> i32;
     fn GetRowBytes(&self) -> i32;
     fn GetPixelFormat(&self) -> u32;
     fn GetFlags(&self) -> u32;
-    // SDK 16.0: GetBytes liegt nicht mehr am Frame (v14_2_1-vtable), sondern
-    // am IDeckLinkVideoBuffer (siehe unten).
+    fn GetTimecode(&self, format: u32, timecode: *mut *mut c_void) -> HRESULT;
+    fn GetAncillaryData(&self, ancillary: *mut *mut c_void) -> HRESULT;
 }
 
-/// IDeckLinkVideoBuffer (DeckLinkAPI.h, SDK 16.0) – Pixelpuffer des Frames.
+/// IDeckLinkMutableVideoFrame (SDK 16.0: IID CF9EB134-…).
+#[interface("CF9EB134-0374-4C5B-95FA-1EC14819FF62")]
+unsafe trait IDeckLinkMutableVideoFrame: IDeckLinkVideoFrame {
+    fn SetFlags(&self, newflags: u32) -> HRESULT;
+    fn SetTimecode(&self, format: u32, timecode: *mut c_void) -> HRESULT;
+    fn SetTimecodeFromComponents(
+        &self,
+        format: u32,
+        hours: u8,
+        minutes: u8,
+        seconds: u8,
+        frames: u8,
+        flags: u32,
+    ) -> HRESULT;
+    fn SetAncillaryData(&self, ancillary: *mut c_void) -> HRESULT;
+    fn SetTimecodeUserBits(&self, format: u32, userbits: u64) -> HRESULT;
+    fn SetInterfaceProvider(&self, iid: *const GUID, iface: *mut c_void) -> HRESULT;
+}
+
+/// IDeckLinkVideoBuffer (SDK 16.0: Pixelpuffer, GetBytes liegt hier).
 #[interface("81F03D70-DE13-4B17-873A-C8AC9689C682")]
 unsafe trait IDeckLinkVideoBuffer: IUnknown {
     fn GetBytes(&self, buffer: *mut *mut c_void) -> HRESULT;
@@ -66,23 +88,14 @@ unsafe trait IDeckLinkVideoBuffer: IUnknown {
     fn EndAccess(&self, flags: u32) -> HRESULT;
 }
 
-/// bmdBufferAccessWrite (DeckLinkAPITypes.idl).
-const BMD_BUFFER_ACCESS_WRITE: u32 = 1 << 1;
-
-/// IDeckLinkMutableVideoFrame (DeckLinkAPI.idl) – von CreateVideoFrame.
-#[interface("69E2639F-40DA-4E19-B6F2-20ACE815C390")]
-unsafe trait IDeckLinkMutableVideoFrame: IDeckLinkVideoFrame {
-    fn SetFlags(&self, newflags: u32) -> HRESULT;
-}
-
-/// IDeckLinkVideoOutputCallback (DeckLinkAPI.idl) – Scheduled Playback (G4).
-#[interface("20AA5225-1958-47CB-820B-80A8D521A6EE")]
+/// IDeckLinkVideoOutputCallback (SDK 16.0: IID 5BE6DF26-…).
+#[interface("5BE6DF26-02CE-433E-99D9-9A87C3AC171F")]
 unsafe trait IDeckLinkVideoOutputCallback: IUnknown {
     fn ScheduledFrameCompleted(&self, completedframe: *mut c_void, result: u32) -> HRESULT;
     fn ScheduledPlaybackHasStopped(&self) -> HRESULT;
 }
 
-/// IDeckLinkOutput (DeckLinkAPI.idl) – nur das benötigte vtable-Präfix.
+/// IDeckLinkOutput (DeckLinkAPI.idl, SDK 16.0) – komplette vtable-Liste in Reihenfolge.
 #[interface("5F227C95-39D7-46C7-8B7D-9C81795FBBE4")]
 unsafe trait IDeckLinkOutput: IUnknown {
     fn DoesSupportVideoMode(
@@ -100,7 +113,6 @@ unsafe trait IDeckLinkOutput: IUnknown {
     fn SetScreenPreviewCallback(&self, previewcallback: *mut c_void) -> HRESULT;
     fn EnableVideoOutput(&self, displaymode: u32, flags: u32) -> HRESULT;
     fn DisableVideoOutput(&self) -> HRESULT;
-    fn SetVideoOutputFrameMemoryAllocator(&self, theallocator: *mut c_void) -> HRESULT;
     fn CreateVideoFrame(
         &self,
         width: i32,
@@ -110,6 +122,17 @@ unsafe trait IDeckLinkOutput: IUnknown {
         flags: u32,
         outframe: *mut Option<IDeckLinkMutableVideoFrame>,
     ) -> HRESULT;
+    fn CreateVideoFrameWithBuffer(
+        &self,
+        width: i32,
+        height: i32,
+        rowbytes: i32,
+        pixelformat: u32,
+        flags: u32,
+        buffer: *mut c_void,
+        outframe: *mut Option<IDeckLinkMutableVideoFrame>,
+    ) -> HRESULT;
+    fn RowBytesForPixelFormat(&self, pixelformat: u32, width: i32, rowbytes: *mut i32) -> HRESULT;
     fn CreateAncillaryData(&self, pixelformat: u32, outbuffer: *mut *mut c_void) -> HRESULT;
     fn DisplayVideoFrameSync(&self, theframe: *mut c_void) -> HRESULT;
     fn ScheduleVideoFrame(
@@ -120,6 +143,34 @@ unsafe trait IDeckLinkOutput: IUnknown {
         timescale: i64,
     ) -> HRESULT;
     fn SetScheduledFrameCompletionCallback(&self, thecallback: *mut c_void) -> HRESULT;
+    fn GetBufferedVideoFrameCount(&self, bufferedframecount: *mut u32) -> HRESULT;
+    fn EnableAudioOutput(
+        &self,
+        samplerate: u32,
+        sampletype: u32,
+        channelcount: u32,
+        streamtype: u32,
+    ) -> HRESULT;
+    fn DisableAudioOutput(&self) -> HRESULT;
+    fn WriteAudioSamplesSync(
+        &self,
+        buffer: *mut c_void,
+        sampleframecount: u32,
+        sampleframeswritten: *mut u32,
+    ) -> HRESULT;
+    fn BeginAudioPreroll(&self) -> HRESULT;
+    fn EndAudioPreroll(&self) -> HRESULT;
+    fn ScheduleAudioSamples(
+        &self,
+        buffer: *mut c_void,
+        sampleframecount: u32,
+        streamtime: i64,
+        timescale: i64,
+        sampleframeswritten: *mut u32,
+    ) -> HRESULT;
+    fn GetBufferedAudioSampleFrameCount(&self, bufferedsampleframecount: *mut u32) -> HRESULT;
+    fn FlushBufferedAudioSamples(&self) -> HRESULT;
+    fn SetAudioCallback(&self, thecallback: *mut c_void) -> HRESULT;
     fn StartScheduledPlayback(
         &self,
         playbackstarttime: i64,
@@ -132,13 +183,31 @@ unsafe trait IDeckLinkOutput: IUnknown {
         actualstoptime: *mut i64,
         timescale: i64,
     ) -> HRESULT;
+    fn IsScheduledPlaybackRunning(&self, active: *mut i32) -> HRESULT;
     fn GetScheduledStreamTime(
         &self,
         desiredtimescale: i64,
         streamtime: *mut i64,
         playbackspeed: *mut f64,
     ) -> HRESULT;
+    fn GetReferenceStatus(&self, referencestatus: *mut u32) -> HRESULT;
+    fn GetHardwareReferenceClock(
+        &self,
+        desiredtimescale: i64,
+        hardwaretime: *mut i64,
+        timeinframe: *mut i64,
+        ticksperframe: *mut i64,
+    ) -> HRESULT;
+    fn GetFrameCompletionReferenceTimestamp(
+        &self,
+        theframe: *mut c_void,
+        desiredtimescale: i64,
+        framecompletiontimestamp: *mut i64,
+    ) -> HRESULT;
 }
+
+// BMDBufferAccessFlags (DeckLinkAPI.idl, SDK 16.0): bmdBufferAccessWrite = 1 << 1.
+const BMD_BUFFER_ACCESS_WRITE: u32 = 1 << 1;
 
 // CDeckLinkIterator-CLSIDs (SDK 16.0: BA6C6F44-… ist die aktuelle; die alten
 // v10_8/v10_11-CLSIDs aus älteren Desktop-Video-Versionen bleiben als Fallback).

@@ -240,6 +240,91 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   - Fehlende Programme klar melden, und ein Video-Test läuft ohne ffmpeg im `PATH`.
 - [x] **G8. Test auf echter Hardware** (macOS, UltraStudio Monitor 3G, Treiber 16.5 / SDK 16.0): `live_native_output_test_pattern` (125 Frames 1080p25, scheduled) und `live_native_soak_color_bars` (30 s Farbalken, 750 Frames, late=0 dropped=0) bestanden, beide per `KUHPLAY_DECKLINK_LIVE=1 ... -- --ignored`. Key/Fill kann die Karte nicht (nur Monitor-Ausgang) – offen. Windows-Tests auf dem ZBOOK macht der Auftraggeber am 2026-11-01 (Karte hängt dann dort); dafür baut alles für Windows (`--features decklink` auf msvc clean). Linux ohne Karte ohne Hardware-Test – im Commit und README vermerkt.
 
+## Block H: Nachprüfung von Block G (vor dem Windows-Test, jeweils eigener Commit)
+
+- [x] **H1. Windows: COM-Layout passt nicht zum SDK 16.0** (kritisch, zuerst) — erledigt: alle
+  Traits (IDeckLink, IDeckLinkIterator, IDeckLinkVideoFrame, IDeckLinkMutableVideoFrame,
+  IDeckLinkVideoBuffer, IDeckLinkVideoOutputCallback, IDeckLinkOutput mit allen 29 Methoden)
+  Methode für Methode aus den SDK-16.0-IDLs übernommen, IIDs aktualisiert
+  (Frame `6502091C-…`, Mutable `CF9EB134-…`, Callback `5BE6DF26-…`, Output `5F227C95-…`,
+  Iterator `50FB36CD-…`, CLSID `BA6C6F44-…`); neuer Test `tests/decklink_com_idl.rs` vergleicht
+  IIDs + Methodenreihenfolge automatisch gegen `DeckLinkAPI.idl`/`DeckLinkAPIDiscovery.idl`.
+  - Ort: `src/engine/decklink_com.rs`. `IDeckLinkOutput` nutzt die aktuelle IID `5F227C95-…`, aber
+    eine alte Methodenliste: `SetVideoOutputFrameMemoryAllocator` gibt es dort nicht mehr,
+    `CreateVideoFrameWithBuffer` und `RowBytesForPixelFormat` fehlen, ebenso alle Methoden zwischen
+    `SetScheduledFrameCompletionCallback` und `StartScheduledPlayback`. Ab Slot 6 ruft der Code
+    also die falschen Methoden auf: `CreateVideoFrame` landet in Slot 7
+    (`CreateVideoFrameWithBuffer`), `StartScheduledPlayback` in Slot 12 statt 23. Das ist undefiniertes
+    Verhalten und kann abstürzen. Kompilieren beweist hier nichts.
+  - Außerdem alte IIDs: Frame `3F716FE0-…` → `6502091C-…`, Mutable Frame `69E2639F-…` →
+    `CF9EB134-…`, Callback `20AA5225-…` → `5BE6DF26-…`. Das Frame-Layout hat außerdem
+    `GetTimecode` und `GetAncillaryData`.
+  - Fix: Alle Traits Methode für Methode aus `third_party/decklink-sdk-16.0/windows/include/*.idl`
+    übernehmen. Ein Test vergleicht IIDs und Methodenreihenfolge automatisch gegen die IDL-Dateien.
+- [ ] **H2. Windows: Scheduled Playback fest auf 25 fps**
+  - Ort: `start_scheduled` (`time_scale: 25_000`, `frame_dur: 1_000`, `StartScheduledPlayback(0,
+    25_000, 1.0)`). Andere Bildraten laufen falsch. Fix: wie in `decklink_bridge.cpp` aus der
+    Bildrate ableiten, auch 30000/1001. Test für 25, 29,97, 50 und 59,94.
+- [ ] **H3. ffmpeg-Mitlieferung ist falsch**
+  - `scripts/vendor-ffmpeg.sh` lädt auf macOS und Linux das Windows-Paket von gyan.dev und sucht dann
+    `bin/ffmpeg`, das schlägt fehl. Der Fehler wird im Build-Skript nur als Hinweis ausgegeben.
+  - `LICENSE-ffmpeg.txt` behauptet LGPL ohne GPL-Teile; das ist für diese Builds nicht belegt und nach
+    Kenntnis des Reviews falsch, gyan.dev baut mit GPL. **Solche Builds nicht als LGPL ausliefern.**
+  - Fix: Pro Plattform eine belegte LGPL-Quelle oder ein eigener Build (`--disable-gpl`, ohne x264/x265
+    und Nonfree). Mit `ffmpeg -version` prüfen und die Build-Konfiguration beilegen. Prüfsumme
+    festschreiben statt `release`-Link. Hardware-Decoder testen. Schlägt das Mitliefern fehl, muss der
+    Release-Build abbrechen.
+- [ ] **H4. Release-Builds ohne DeckLink**
+  - `scripts/build-mac.sh` und `build-linux.sh` bauen nur `--features webview`. Seit G6 gibt es dann auf
+    Mac und Linux keine DeckLink-Ausgabe mehr. Fix: `decklink` in die Release-Skripte aufnehmen.
+    Veraltete Hinweise auf den ffmpeg-Fallback in `build.rs`, `Cargo.toml` und `decklink.rs`
+    (`device`, `frames`-Kommentar) entfernen.
+- [ ] **H5. Hardware-Test nachschärfen**
+  - Bisher nur 30 s in 1080p25. Ergänzen: mindestens 30 Minuten, zusätzlich 1080p29,97 und 1080p50,
+    soweit die Karte es kann. Farbkontrolle mit Testbild und Sichtprüfung, kein reiner Zählertest.
+
+## Block U: Installer und Update-Funktion (nach Block H)
+
+**Ziel:** KuhPlay installiert sich auf Windows, macOS und Ubuntu mit einem Installer samt
+Abhängigkeiten und prüft selbst auf Updates. **Voraussetzung:** H3 und H4, sonst wird Falsches verpackt.
+
+**Festgelegt:**
+- Werkzeug: `cargo-packager` für die Pakete, `cargo-packager-updater` für Updates. Vor dem Einsatz kurz
+  prüfen, ob beide unseren Bedarf decken, und abweichende Wahl begründen.
+- Quelle der Updates: GitHub Releases des Repos, Manifest und Pakete mit Ed25519 signiert. Eine Prüfung
+  der Signatur ist Pflicht, unsignierte Updates werden nie installiert.
+- **Keine Veröffentlichung ohne Freigabe:** Ein Release und Pushes von Tags nur nach ausdrücklicher
+  Zustimmung des Auftraggebers. Private Schlüssel nie ins Repo.
+
+**Punkte:**
+- [ ] **U1. Version und Build-Info:** Version aus `Cargo.toml` im About-Fenster und in der Web-Remote.
+  Einstellungen, PIN und Shows bleiben bei Update und Deinstallation erhalten.
+- [ ] **U2. Installer pro Plattform**
+  | Plattform | Paket | Abhängigkeiten |
+  |---|---|---|
+  | Windows | NSIS-Installer (x64) | ffmpeg/ffprobe (LGPL, H3) und `kuhplay-webview` im Paket; WebView2 prüfen und bei Bedarf per Microsoft-Bootstrapper installieren, solange CEF nicht da ist |
+  | macOS | signierte und notarisierte DMG (arm64, x64 prüfen) | ffmpeg/ffprobe und `kuhplay-webview` im Bundle |
+  | Ubuntu | `.deb` (amd64, aktuelle LTS) | `Depends` für ffmpeg, GTK, WebKit und ALSA, die `apt` automatisch installiert |
+  Jedes Paket auf einem sauberen System ohne Rust und ohne `ffmpeg` im `PATH` testen.
+- [ ] **U3. Blackmagic-Treiber:** Desktop Video wird **nicht** mitgeliefert, die Weitergabe ist nicht
+  geklärt. KuhPlay erkennt Fehlen oder Version unter 16.0, nennt das klar und verlinkt den
+  Blackmagic-Download. Der Installer erwähnt das, ohne ihn zu erzwingen, weil Karten optional sind.
+- [ ] **U4. Update-Funktion**
+  - Menü „Check for Updates…“, automatische Prüfung beim Start, abschaltbar für Offline-Shows. Prüfungs-
+    fehler ohne Netz stören nie.
+  - Hinweis mit Version und Änderungen; der Nutzer entscheidet, nichts wird still installiert.
+  - **Show-Sicherheit:** Während Cues laufen oder im Show-Mode keine Prüfungshinweise, kein Download
+    und keine Installation. Ein Update läuft nur nach Bestätigung, ungespeicherte Änderungen werden
+    vorher abgefragt, und danach startet die App neu.
+  - Fehlgeschlagene Updates lassen die alte Version lauffähig. Downgrades nur ausdrücklich.
+  - `.deb`: Installation über `pkexec`/`apt`, mit Passwortabfrage. Web-Remote zeigt nur den Hinweis.
+- [ ] **U5. Build-Pipeline:** GitHub Actions baut alle drei Pakete aus einem Tag als **Entwurf**.
+  Signaturschlüssel kommen aus Secrets; fehlen sie, entsteht ein klar markiertes Test-Paket.
+- [ ] **U6. Lizenzen:** Hinweise für ffmpeg und Phosphor sowie MIT liegen im Paket und im About-Fenster.
+- [ ] **U7. Ende-zu-Ende-Test:** Installation von Version A, Update auf B aus einem Test-Feed, auf allen
+  drei Plattformen. Dazu manipulierte Signatur (muss abgelehnt werden), abgebrochener Download und
+  laufender Cue.
+
 ## Block F: Look and Feel wie QLab 5 (zum Schluss, nach den Blöcken A–E)
 
 **Ziel:** Wer QLab 5 kennt, findet sich ohne Umlernen zurecht, vor allem blind per Tastatur.
