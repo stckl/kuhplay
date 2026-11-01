@@ -250,7 +250,7 @@ fn live_com_output_test_pattern() {
         }
         out.push_frame(&VideoFrame::new(1920, 1080, rgba))
             .expect("push");
-        std::thread::sleep(Duration::from_millis(40));
+        pace_frame(t0, 40);
     }
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(out.frames_pushed(), frames as u64);
