@@ -130,11 +130,17 @@ case "$os:$arch" in
         --disable-gpl --disable-nonfree --disable-libx264 --disable-libx265 \
         --disable-doc --disable-ffplay --disable-debug \
         --enable-static --disable-shared $extra \
+        --disable-autodetect --enable-videotoolbox --enable-audiotoolbox --enable-zlib \
         --prefix="$work/prefix" \
       && make -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
       && make install )
     install_bins "$work/prefix/bin"
     check_binary "$dest/ffmpeg"
+    # Nur Systembibliotheken: Auf Rechnern ohne Homebrew liefe ffmpeg sonst nicht.
+    for bin in "$dest/ffmpeg" "$dest/ffprobe"; do
+      foreign=$(otool -L "$bin" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/)' || true)
+      [ -z "$foreign" ] || { echo "FEHLER: $bin hängt an fremden Bibliotheken:" >&2; echo "$foreign" >&2; exit 1; }
+    done
     write_license "eigener LGPL-Build aus ffmpeg-${FFMPEG_SRC_VER}.tar.xz (ffmpeg.org, SHA-256 ${FFMPEG_SRC_SHA256:0:16}…), configure: --disable-gpl --disable-nonfree --disable-libx264 --disable-libx265"
     ;;
   *)

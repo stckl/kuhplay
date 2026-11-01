@@ -8,7 +8,7 @@
  * Eine Nachricht pro Zeile (\n-getrennt), siehe src/remote/companion.rs.
  */
 
-const { InstanceBase, runEntrypoint, TCPHelper } = require('companion-module-base')
+const { InstanceBase, InstanceStatus, runEntrypoint, TCPHelper } = require('@companion-module/base')
 
 class KuhPlayInstance extends InstanceBase {
 	constructor(internal) {
@@ -20,12 +20,16 @@ class KuhPlayInstance extends InstanceBase {
 		this.rxBuffer = '' // Zeilen-Puffer für TCP-Daten
 	}
 
-	init(config) {
+	async init(config) {
 		this.config = config
+		this.setActionDefinitions(this.getActionDefinitions())
+		this.setFeedbackDefinitions(this.getFeedbackDefinitions())
+		this.setVariableDefinitions(this.getVariableDefinitions())
+		this.setVariableValues({ connected: 'no' })
 		this.connect()
 	}
 
-	configUpdated(config) {
+	async configUpdated(config) {
 		this.config = config
 		this.connect()
 	}
@@ -36,25 +40,28 @@ class KuhPlayInstance extends InstanceBase {
 			this.socket = undefined
 		}
 		if (!this.config.host) {
-			this.updateStatus('bad_config', 'Host fehlt in der Konfiguration')
+			this.updateStatus(InstanceStatus.BadConfig, 'Host fehlt in der Konfiguration')
 			return
 		}
 		const port = this.config.port || 9999
+		this.rxBuffer = ''
+		this.updateStatus(InstanceStatus.Connecting)
 		this.socket = new TCPHelper(this.config.host, port)
 
 		this.socket.on('connect', () => {
-			this.updateStatus('ok')
+			this.updateStatus(InstanceStatus.Ok)
 			this.setVariableValues({ connected: 'yes' })
 			// App pusht den Status ohnehin regelmäßig; explizit anfordern
 			// schadet nicht (Antwort: {"type":"status",…}).
 			this.sendCommand({ action: 'get_status' })
 		})
 		this.socket.on('error', (err) => {
-			this.updateStatus('connection_failure', String(err))
+			this.updateStatus(InstanceStatus.ConnectionFailure, String(err))
 			this.setVariableValues({ connected: 'no' })
 			this.log('error', `TCP-Fehler: ${err}`)
 		})
-		this.socket.on('close', () => {
+		this.socket.on('end', () => {
+			this.updateStatus(InstanceStatus.Disconnected)
 			this.setVariableValues({ connected: 'no' })
 		})
 		this.socket.on('data', (data) => this.handleData(data))
@@ -135,7 +142,7 @@ class KuhPlayInstance extends InstanceBase {
 		})
 	}
 
-	destroy() {
+	async destroy() {
 		if (this.socket) {
 			this.socket.destroy()
 			this.socket = undefined
@@ -252,14 +259,14 @@ class KuhPlayInstance extends InstanceBase {
 
 	getVariableDefinitions() {
 		return [
-			{ name: 'connected', label: 'Verbunden (yes/no)' },
-			{ name: 'show_name', label: 'Show-Name' },
-			{ name: 'show_mode', label: 'Show-Mode (An/Aus)' },
-			{ name: 'active_cart_name', label: 'Aktiver Cart' },
-			{ name: 'playhead', label: 'Playhead (Index)' },
-			{ name: 'standby_number', label: 'Standby-Cue (Nummer)' },
-			{ name: 'standby_name', label: 'Standby-Cue (Name)' },
-			{ name: 'running_count', label: 'Anzahl laufender Cues' },
+			{ variableId: 'connected', name: 'Verbunden (yes/no)' },
+			{ variableId: 'show_name', name: 'Show-Name' },
+			{ variableId: 'show_mode', name: 'Show-Mode (An/Aus)' },
+			{ variableId: 'active_cart_name', name: 'Aktiver Cart' },
+			{ variableId: 'playhead', name: 'Playhead (Index)' },
+			{ variableId: 'standby_number', name: 'Standby-Cue (Nummer)' },
+			{ variableId: 'standby_name', name: 'Standby-Cue (Name)' },
+			{ variableId: 'running_count', name: 'Anzahl laufender Cues' },
 		]
 	}
 
@@ -290,19 +297,6 @@ class KuhPlayInstance extends InstanceBase {
 	runningNumbers() {
 		return new Set(this.running.values())
 	}
-
-	// Aliases für ältere Companion-Versionen (API v1/v2-Namen).
-	getActions() {
-		return this.getActionDefinitions()
-	}
-
-	getVariables() {
-		return this.getVariableDefinitions()
-	}
-
-	getFeedbacks() {
-		return this.getFeedbackDefinitions()
-	}
 }
 
-runEntrypoint(KuhPlayInstance)
+runEntrypoint(KuhPlayInstance, [])

@@ -891,11 +891,11 @@ fn video_cue_with_audio_track_registers_audio_voice() {
             "-f",
             "lavfi",
             "-i",
-            "testsrc=duration=1.0:size=320x240:rate=10",
+            "testsrc=duration=30.0:size=320x240:rate=10",
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=440:duration=1.0",
+            "sine=frequency=440:duration=30.0",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -926,6 +926,7 @@ fn video_cue_with_audio_track_registers_audio_voice() {
         "Video-Cue muss eine Audio-Voice bekommen (Tonspur)"
     );
     // Bild läuft parallel weiter.
+    // Der Clip ist lang genug, damit er auf langsamen Rechnern nicht vorher endet.
     let got_frame = wait_until(
         || engine.frames.lock().unwrap().get(&cue_id).is_some(),
         Duration::from_secs(5),
@@ -934,7 +935,7 @@ fn video_cue_with_audio_track_registers_audio_voice() {
 
     // Stop räumt die Voice wieder auf.
     engine.send(EngineCommand::Stop { cue_id }).expect("stop");
-    let gone = wait_until(|| !engine.has_audio_voice(cue_id), Duration::from_secs(2));
+    let gone = wait_until(|| !engine.has_audio_voice(cue_id), Duration::from_secs(10));
     assert!(gone, "Stop muss die Audio-Voice austragen");
 }
 

@@ -442,12 +442,10 @@ fn live_native_modes_2997_50() {
                 continue;
             }
         };
-        // Windows liefert noch keine Modusliste; dort entscheidet das Öffnen oben.
-        let modes = out.modes();
-        let kann = modes.is_empty()
-            || modes.iter().any(|m| {
-                m.width == 1920 && m.height == 1080 && m.fps_num == num && m.fps_den == den
-            });
+        let kann = out
+            .modes()
+            .iter()
+            .any(|m| m.width == 1920 && m.height == 1080 && m.fps_num == num && m.fps_den == den);
         if !kann {
             println!("1080p{fps}: Modus nicht von der Karte unterstützt – übersprungen");
             continue;

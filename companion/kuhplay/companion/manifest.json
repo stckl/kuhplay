@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
+  "id": "kuhplay",
+  "name": "KuhPlay",
+  "shortname": "kuhplay",
+  "description": "KuhPlay Show Control: GO, Panic, Cue-Trigger und Status-Feedback über TCP",
+  "manufacturer": "KuhPlay",
+  "products": [
+    "Show Control"
+  ],
+  "keywords": [
+    "show control",
+    "cue",
+    "playback",
+    "video"
+  ],
+  "version": "0.0.0",
+  "license": "MIT",
+  "repository": "git+https://github.com/stckl/kuhplay.git",
+  "bugs": "https://github.com/stckl/kuhplay/issues",
+  "maintainers": [
+    {
+      "name": "KuhPlay"
+    }
+  ],
+  "legacyIds": [],
+  "runtime": {
+    "type": "node22",
+    "api": "nodejs-ipc",
+    "apiVersion": "0.0.0",
+    "entrypoint": "../index.js"
+  }
+}

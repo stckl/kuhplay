@@ -107,6 +107,24 @@ unsafe trait IDeckLinkAPIInformation: IUnknown {
     fn GetString(&self, cfgid: u32, value: *mut BSTR) -> HRESULT;
 }
 
+/// IDeckLinkDisplayMode (DeckLinkAPIModes.idl, SDK 16.0).
+#[interface("3EB2C1AB-0A3D-4523-A3AD-F40D7FB14E78")]
+unsafe trait IDeckLinkDisplayMode: IUnknown {
+    fn GetName(&self, name: *mut BSTR) -> HRESULT;
+    fn GetDisplayMode(&self) -> u32;
+    fn GetWidth(&self) -> i32;
+    fn GetHeight(&self) -> i32;
+    fn GetFrameRate(&self, frameduration: *mut i64, timescale: *mut i64) -> HRESULT;
+    fn GetFieldDominance(&self) -> u32;
+    fn GetFlags(&self) -> u32;
+}
+
+/// IDeckLinkDisplayModeIterator (DeckLinkAPIModes.idl, SDK 16.0).
+#[interface("9C88499F-F601-4021-B80B-032E4EB41C35")]
+unsafe trait IDeckLinkDisplayModeIterator: IUnknown {
+    fn Next(&self, mode: *mut Option<IDeckLinkDisplayMode>) -> HRESULT;
+}
+
 /// IDeckLinkOutput (DeckLinkAPI.idl, SDK 16.0) – komplette vtable-Liste in Reihenfolge.
 #[interface("5F227C95-39D7-46C7-8B7D-9C81795FBBE4")]
 unsafe trait IDeckLinkOutput: IUnknown {
@@ -121,7 +139,10 @@ unsafe trait IDeckLinkOutput: IUnknown {
         supported: *mut i32,
     ) -> HRESULT;
     fn GetDisplayMode(&self, displaymode: u32, resultdisplaymode: *mut *mut c_void) -> HRESULT;
-    fn GetDisplayModeIterator(&self, iterator: *mut *mut c_void) -> HRESULT;
+    fn GetDisplayModeIterator(
+        &self,
+        iterator: *mut Option<IDeckLinkDisplayModeIterator>,
+    ) -> HRESULT;
     fn SetScreenPreviewCallback(&self, previewcallback: *mut c_void) -> HRESULT;
     fn EnableVideoOutput(&self, displaymode: u32, flags: u32) -> HRESULT;
     fn DisableVideoOutput(&self) -> HRESULT;
@@ -393,6 +414,45 @@ pub struct ComDeckLinkOutput {
 }
 
 impl ComDeckLinkOutput {
+    /// Modi, die die Karte meldet: (Breite, Höhe, fps-Zähler, fps-Nenner, Halbbilder).
+    pub fn display_modes(&self) -> Vec<(u32, u32, u32, u32, bool)> {
+        /// bmdProgressiveFrame und bmdProgressiveSegmentedFrame.
+        const PROGRESSIVE: [u32; 2] = [0x7072_6F67, 0x7073_6620];
+        let mut modes = Vec::new();
+        let mut iterator: Option<IDeckLinkDisplayModeIterator> = None;
+        unsafe {
+            if self.output.GetDisplayModeIterator(&mut iterator) != HRESULT(0) {
+                return modes;
+            }
+            let Some(iterator) = iterator else {
+                return modes;
+            };
+            loop {
+                let mut mode: Option<IDeckLinkDisplayMode> = None;
+                if iterator.Next(&mut mode) != HRESULT(0) {
+                    break;
+                }
+                let Some(mode) = mode else {
+                    break;
+                };
+                let (mut duration, mut scale) = (0i64, 0i64);
+                if mode.GetFrameRate(&mut duration, &mut scale) == HRESULT(0)
+                    && duration > 0
+                    && scale > 0
+                {
+                    modes.push((
+                        mode.GetWidth() as u32,
+                        mode.GetHeight() as u32,
+                        scale as u32,
+                        duration as u32,
+                        !PROGRESSIVE.contains(&mode.GetFieldDominance()),
+                    ));
+                }
+            }
+        }
+        modes
+    }
+
     /// Öffnet das Gerät (Name-Substring, case-insensitive; leer/„auto" = erstes
     /// Gerät mit Output) und aktiviert das Display-Mode.
     pub fn start(config: &DecklinkConfig) -> ShowResult<Self> {

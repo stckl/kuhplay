@@ -183,7 +183,10 @@ fn com_traits_match_sdk16_idl() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let idl_dir = root.join("third_party/decklink-sdk-16.0/windows/include");
     let mut idl = parse_idl_interfaces(&idl_dir.join("DeckLinkAPI.idl"));
-    for (name, iface) in parse_idl_interfaces(&idl_dir.join("DeckLinkAPIDiscovery.idl")) {
+    for (name, iface) in ["DeckLinkAPIDiscovery.idl", "DeckLinkAPIModes.idl"]
+        .into_iter()
+        .flat_map(|file| parse_idl_interfaces(&idl_dir.join(file)))
+    {
         idl.insert(name, iface);
     }
 

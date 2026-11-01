@@ -40,6 +40,8 @@ jobs:
           cargo_v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           pack_v=$(sed -n 's/^version = "\(.*\)"/\1/p' Packager.toml | head -1)
           [ "$cargo_v" = "$pack_v" ] || { echo "Cargo.toml $cargo_v, Packager.toml $pack_v"; exit 1; }
+          mod_v=$(node -p "require('./companion/kuhplay/package.json').version")
+          [ "$cargo_v" = "$mod_v" ] || { echo "Cargo.toml $cargo_v, Companion-Modul $mod_v"; exit 1; }
           if [ "${{ github.ref_type }}" = "tag" ] && [ "${{ github.ref_name }}" != "v$cargo_v" ]; then
             echo "Tag ${{ github.ref_name }} passt nicht zu Version $cargo_v"; exit 1
           fi
@@ -131,10 +133,33 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
 
+  companion:
+    name: Companion-Modul
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Modul bauen
+        working-directory: companion/kuhplay
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-modul
+          if-no-files-found: error
+          path: companion/kuhplay/kuhplay-*.tgz
+
   draft:
     name: Release-Entwurf
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, packager]
+    needs: [build, packager, companion]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

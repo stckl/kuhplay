@@ -182,8 +182,18 @@ mod platform {
         Ok((Output { com }, name))
     }
 
-    pub fn modes(_out: &Output) -> Vec<NativeMode> {
-        Vec::new() // Windows: Modi-Abfrage folgt mit G5 (COM-Iterator)
+    pub fn modes(out: &Output) -> Vec<NativeMode> {
+        out.com
+            .display_modes()
+            .into_iter()
+            .map(|(width, height, fps_num, fps_den, interlaced)| NativeMode {
+                width,
+                height,
+                fps_num,
+                fps_den,
+                interlaced,
+            })
+            .collect()
     }
 
     pub fn push(out: &mut Output, uyvy: &[u8]) -> ShowResult<()> {

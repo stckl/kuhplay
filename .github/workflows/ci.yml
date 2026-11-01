@@ -61,3 +61,20 @@ jobs:
 
       - name: Tests
         run: cargo test --locked --no-fail-fast --features webview,decklink
+
+  companion:
+    name: Companion-Modul
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Modul bauen
+        working-directory: companion/kuhplay
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
