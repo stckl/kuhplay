@@ -621,6 +621,9 @@ pub struct Cue {
     /// Freitext-Notizen für Operatoren.
     #[serde(default)]
     pub notes: String,
+    /// Markierung für später (Taste F), wird mit der Show gespeichert.
+    #[serde(default)]
+    pub flagged: bool,
     /// Anzeigefarbe des Cues („Cue Color", RGB) – `None` = keine Farbe.
     #[serde(default)]
     pub color: Option<[u8; 3]>,
@@ -683,6 +686,7 @@ impl Cue {
             companion: None,
             tc_trigger: None,
             notes: String::new(),
+            flagged: false,
             color: None,
             status: CueStatus::Standby,
             is_armed: true,

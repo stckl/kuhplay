@@ -150,6 +150,23 @@ fn check_file(path: &str, problems: &mut Vec<String>) {
     }
 }
 
+/// Hinweise, die den Cue nicht kaputt machen: Er startet, bleibt aber unsichtbar.
+pub fn cue_warnings(cue: &Cue, app: &ShowApp) -> Vec<String> {
+    let visual = matches!(
+        cue.cue_type,
+        CueType::Video | CueType::Html | CueType::SlideShow | CueType::Text
+    );
+    let Some(stage) = cue.stage.as_deref().filter(|_| visual) else {
+        return Vec::new();
+    };
+    match app.stages.find(stage) {
+        Some(found) if !found.regions.iter().any(|r| r.route.is_some()) => {
+            vec![format!("stage \"{stage}\" has no output route")]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Prüft die Stage eines Video-Cues (unbekannte Stage = broken).
 fn check_stage(cue: &Cue, app: &ShowApp, problems: &mut Vec<String>) {
     if let Some(stage) = &cue.stage {

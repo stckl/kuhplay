@@ -84,6 +84,10 @@ pub struct UiState {
     pub masthead_visible: bool,
     /// Höhe des Mastheads in px (F1.5: per Drag änderbar, persistiert).
     pub masthead_height: f32,
+    /// Sichtbarkeit Toolbar im Masthead.
+    pub toolbar_visible: bool,
+    /// Eigene Reihenfolge der Cue-Typen in Toolbox und Toolbar.
+    pub toolbox_order: Vec<crate::core::CueType>,
     /// Sichtbarkeit Toolbox (linke Leiste, default: sichtbar).
     pub toolbox_visible: bool,
     /// Sichtbarkeit Sidebar (rechte Leiste).
@@ -161,6 +165,8 @@ impl Default for UiState {
             video_tab: Default::default(),
             masthead_visible: true,
             masthead_height: crate::gui::theme::size::MASTHEAD_HEIGHT,
+            toolbar_visible: true,
+            toolbox_order: Vec::new(),
             toolbox_visible: true,
             sidebar_visible: true,
             inspector_visible: true,

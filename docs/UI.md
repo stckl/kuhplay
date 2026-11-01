@@ -144,23 +144,19 @@ Zeiten sind immer Monospace, damit herunterzählende Werte nicht springen.
 
 ## 5. Bereiche im Detail
 
-### 5.1 Masthead (Höhe per Drag änderbar, Default 108 px, Fläche `PANEL`)
+### 5.1 Masthead (Höhe ziehbar, Standard 140 px, Fläche `PANEL`)
 
 * **GO** links: 132 × 64 px, Radius 8. Grüner 3-px-Rahmen, wenn ein Cue
   bereitsteht, sonst 1 px grau; **roter Rahmen, solange der Doppel-GO-Schutz
   aktiv ist**, im Audition-Mode heißt der Button „AUDITION" (F1.3).
   Space = GO.
-* **Transport rechts:** Pause All gelb, solange Cues laufen; Resume All grün,
-  solange Cues pausiert sind (F1.2).
+
 * Daneben **Standby**: kleines Label „STANDBY" (11, `TEXT_DIM`), darunter
   Nummer (Monospace, gedimmt) + Name groß. Ohne Standby: „No cue standing
   by" gedimmt.
 * Darunter **Notes** des Standby-Cues: sichtbares Eingabefeld (Fläche
   `BACKGROUND`), volle Breite bis zum Transport-Block.
-* **Transport rechts**, gleich hoch ausgerichtet: Pause All, Resume All,
-  Reset (Icon-Buttons 32 px, neutral weiß) und **Panic** als beschrifteter
-  Button mit rotem Rahmen. Esc = Panic. GO und Panic sind die beiden
-  einzigen „lauten" Buttons im Fenster.
+* **Toolbar** unter den Notes: ein Icon-Button pro Cue-Typ, in der Reihenfolge der Toolbox.
 * Audition-Badge: Pill rechts vom Standby-Namen, nur wenn aktiv.
 * Show-Mode: roter 2-px-Rahmen um den Masthead.
 
@@ -199,7 +195,11 @@ Post-wait · Continue**.
 
 ### 5.4 Sidebar (rechts, 240 px, Fläche `PANEL`)
 
-* Oben eine **Tab-Leiste** (siehe 6.2): „Lists & Carts" | „Active Cues (N)".
+* Ganz oben der **Transport**: Pause All (gelb, solange Cues laufen), Resume All (grün, solange
+  Cues pausiert sind), Reset (Icon-Buttons 32 px) und **Panic**
+  als beschrifteter Button mit rotem Rahmen. GO und Panic sind die beiden einzigen „lauten"
+  Buttons im Fenster. Esc blendet aus, zweimal Esc stoppt sofort, auch bei geschlossener Sidebar.
+* Darunter eine **Tab-Leiste** (siehe 6.2): „Lists & Carts" | „Active Cues (N)".
 * Lists & Carts: Listenzeilen „Name … Anzahl" (Anzahl rechtsbündig,
   gedimmt), aktive Liste = Selektion. Darunter dezent „+ New Cart".
 * Active Cues: Karte pro laufendem Cue (44 px): Statusstreifen links,
@@ -227,7 +227,7 @@ Post-wait · Continue**.
 
 ### 5.6 Footer (unterste Zeile, 28 px, Fläche `PANEL`)
 
-* Links: Segment „Edit | Show".
+* Links: Segment „Edit | Show", daneben der Toggle für die Toolbar.
 * Daneben: rotes Warn-Icon + „N broken" nur wenn Cues kaputt sind – Klick springt zum
   ersten kaputten Cue. Engine-Fehler als gekürzte rote Zeile mit ×.
 * Mitte: „N cues in M lists" gedimmt.

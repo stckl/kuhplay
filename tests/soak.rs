@@ -64,7 +64,8 @@ fn soak_mixed_remote_commands_and_renders_stay_stable() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    // Finaler Zustand: Panic räumt alles ab, kein Cue bleibt aktiv.
+    // Finaler Zustand: Panic zweimal stoppt sofort, kein Cue bleibt aktiv.
+    app.handle_remote_command(RemoteCommand::Panic);
     app.handle_remote_command(RemoteCommand::Panic);
     app.poll_engine_events();
     render_frame(&ctx, &mut app);

@@ -123,6 +123,10 @@ pub enum RemoteCommand {
     SetAudition {
         enabled: bool,
     },
+    /// Ausblendzeit von Panic in Millisekunden (0 = sofort stoppen).
+    SetPanicDuration {
+        ms: u64,
+    },
     /// Audio-Gerät wählen (`None` = System-Standard).
     SetAudioOutput {
         device: Option<String>,
@@ -286,6 +290,8 @@ pub struct RemoteWorkspace {
     /// Aktuelle Show-Datei (`None` = noch nie gespeichert).
     pub file: Option<String>,
     pub audition_mode: bool,
+    /// Ausblendzeit von Panic in Millisekunden.
+    pub panic_duration_ms: u64,
     /// `off`, `preview` oder `displays`.
     pub output_mode: String,
     pub audio_output: Option<String>,

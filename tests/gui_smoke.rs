@@ -661,15 +661,42 @@ fn sidebar_renders_tabs() {
     assert!(output_has_text(&out, "Active Cues (0)"));
 }
 
-/// Globaler Transport sitzt im Masthead neben GO (docs/UI.md §5.1).
+/// Die Toolbar liegt im Masthead und lässt sich ausblenden (docs/UI.md §5.1).
 #[test]
-fn masthead_renders_transport_and_panic() {
+fn masthead_toolbar_can_be_hidden() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    icons::install(&ctx);
+    let audio_icon = kuhplay::gui::icons::Icon::for_cue_type(kuhplay::core::CueType::Audio).glyph();
+    let draw = |app: &mut ShowApp| {
+        ctx.run(egui::RawInput::default(), |ctx| {
+            egui::TopBottomPanel::top("masthead").show(ctx, |ui| {
+                masthead::draw(ui, app);
+            });
+        })
+    };
+    let out = draw(&mut app);
+    assert!(
+        output_has_text(&out, audio_icon),
+        "Toolbar zeigt die Cue-Typen"
+    );
+    app.ui.toolbar_visible = false;
+    let out = draw(&mut app);
+    assert!(
+        !output_has_text(&out, audio_icon),
+        "Toolbar ist ausgeblendet"
+    );
+}
+
+/// Der globale Transport sitzt oben in der Sidebar (docs/UI.md §5.4).
+#[test]
+fn sidebar_renders_transport_and_panic() {
     let ctx = egui::Context::default();
     let mut app = demo_app();
     icons::install(&ctx);
     let out = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::TopBottomPanel::top("masthead").show(ctx, |ui| {
-            masthead::draw(ui, &mut app);
+        egui::SidePanel::right("sidebar").show(ctx, |ui| {
+            kuhplay::gui::sidebar::draw(ui, &mut app);
         });
     });
     // Transport-Icons (Phosphor-Glyphs): Reset, Pause, Resume, Panic.
@@ -1031,6 +1058,7 @@ fn duration_cell_shows_remaining_time_for_playing_cue() {
             elapsed: Some(Duration::from_secs(1)),
             pre_wait_remaining: None,
             media_duration: None,
+            ..Default::default()
         },
     );
     render_table_with_meta(&ctx, &mut app, &meta);
@@ -1078,6 +1106,7 @@ fn post_wait_cell_shows_countdown() {
             elapsed: Some(Duration::from_millis(50)),
             pre_wait_remaining: None,
             media_duration: None,
+            ..Default::default()
         },
     );
     render_table_with_meta(&ctx, &mut app, &meta);

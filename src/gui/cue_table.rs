@@ -123,6 +123,10 @@ struct RowRef {
 pub struct CueRowMeta {
     /// Broken-Gründe (leer = Cue heil) – rotes ✕ + Tooltip mit Grund.
     pub problems: Vec<String>,
+    /// Hinweise, die den Cue nicht kaputt machen.
+    pub warnings: Vec<String>,
+    /// Die Engine hat den Cue vorgeladen.
+    pub loaded: bool,
     /// Vergangene Zeit seit Phasenbeginn (Playing/Paused/Post-Wait) –
     /// Fortschrittsbalken + Restzeit in der Action-/Post-Wait-Spalte.
     pub elapsed: Option<Duration>,
@@ -493,6 +497,7 @@ pub fn draw(
                     } else {
                         cue.status.label().to_string()
                     };
+                    draw_status_markers(ui, cue.flagged, row_meta);
                     if is_cursor_row {
                         // Playhead = sehr hellgrauer Dreieck-Zeiger am
                         // linken Rand (Klick setzt den Playhead, s. u.).
@@ -1266,6 +1271,43 @@ fn render_cell_editor(
         *cancel_edit = true;
     }
     true
+}
+
+/// Kleine Markierungen am rechten Rand der Status-Spalte: Flag oben, darunter
+/// Warnung oder geladen.
+fn draw_status_markers(ui: &mut egui::Ui, flagged: bool, meta: Option<&CueRowMeta>) {
+    let right = ui.max_rect().right_top();
+    let top = egui::Rect::from_min_size(right + egui::vec2(-12.0, 3.0), egui::vec2(10.0, 10.0));
+    let bottom = egui::Rect::from_min_size(right + egui::vec2(-12.0, 15.0), egui::vec2(10.0, 10.0));
+    if flagged {
+        let painter = ui.painter();
+        let stroke = egui::Stroke::new(1.5, palette::ACCENT);
+        painter.line_segment([top.left_top(), top.left_bottom()], stroke);
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                top.left_top(),
+                top.right_top() + egui::vec2(0.0, 2.5),
+                top.left_center(),
+            ],
+            palette::ACCENT,
+            egui::Stroke::NONE,
+        ));
+        ui.interact(top, ui.id().with("flag"), Sense::hover())
+            .on_hover_text("Flagged");
+    }
+    let Some(meta) = meta else {
+        return;
+    };
+    if !meta.warnings.is_empty() {
+        icons::paint_at(ui, Icon::Panic, bottom, palette::ACCENT);
+        ui.interact(bottom, ui.id().with("warning"), Sense::hover())
+            .on_hover_text(format!("Warning: {}", meta.warnings.join("; ")));
+    } else if meta.loaded {
+        ui.painter()
+            .circle_filled(bottom.center(), 4.0, palette::ACCENT);
+        ui.interact(bottom, ui.id().with("loaded"), Sense::hover())
+            .on_hover_text("Loaded");
+    }
 }
 
 /// Start-Text eines Zellen-Editors (aktueller Wert, Zeiten als

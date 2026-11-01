@@ -56,6 +56,14 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         ) {
             app.ui.masthead_visible = !app.ui.masthead_visible;
         }
+        let toolbar_tooltip = if app.ui.toolbar_visible {
+            "Hide Toolbar"
+        } else {
+            "Show Toolbar"
+        };
+        if panel_toggle(ui, Icon::Group, toolbar_tooltip, app.ui.toolbar_visible) {
+            app.ui.toolbar_visible = !app.ui.toolbar_visible;
+        }
         // Warnungs-Indikator (Anzahl kaputter Cues) – F1.4: rechts im Footer.
         let broken = app.broken_count();
         // Fehleranzeige (nicht-blockierend): Warn-Icon + gekürzte Meldung +

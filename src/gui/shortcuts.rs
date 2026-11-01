@@ -9,7 +9,7 @@
 //! Belegung:
 //!
 //! * Space = GO, Esc = Panic All, `[` = Pause All, `]` = Resume All
-//! * ⌘0–⌘9 = neue Cues in den Standard-Cue-Typen
+//! * ⌘0 Group, ⌘1 Audio, ⌘3 Video, ⌘5 Text, ⌘6 Light, ⌘7 Fade, ⌘8 Network, ⌘9 MIDI
 //! * ⌘I/⌘K/⌘L = Inspector/Toolbox/Lists & Carts, ⌘F = Find, ⌘G = Find Next
 //! * ⌘N/⌘O/⌘S/⇧⌘S/⌘, /⌘Q = Datei-Menü
 //!
@@ -33,13 +33,17 @@ pub enum ShortcutAction {
     ResumeAll,
     /// Reset All (keine Standard-Taste – Menü-only, `key: None`).
     ResetAll,
-    /// Playhead eine Zeile nach oben (nackte Pfeiltaste).
+    /// Playhead eine Zeile nach oben (nackte Pfeiltaste oder ⇧⌘↑).
     PlayheadUp,
     /// Playhead eine Zeile nach unten.
     PlayheadDown,
-    /// Selektierten Cue nach oben verschieben (⌘↑ und ⌥⌘↑).
+    /// Vorherigen Cue auswählen (⌘↑).
+    SelectPrevious,
+    /// Nächsten Cue auswählen (⌘↓).
+    SelectNext,
+    /// Selektierten Cue nach oben verschieben (⌥⌘↑).
     MoveCueUp,
-    /// Selektierten Cue nach unten verschieben (⌘↓ und ⌥⌘↓).
+    /// Selektierten Cue nach unten verschieben (⌥⌘↓).
     MoveCueDown,
     /// Neuen Cue des Typs erzeugen (⌘0–⌘9).
     NewCue(CueType),
@@ -67,8 +71,12 @@ pub enum ShortcutAction {
     FindNext,
     /// Selektierten Cue löschen – nur Edit-Mode (⌘⌫ sowie ⌫/Delete).
     DeleteCue,
-    /// Selektion duplizieren (⌘D).
+    /// Selektion duplizieren (⇧⌘D).
     DuplicateCues,
+    /// Nummern der ausgewählten Cues löschen (⌘D).
+    DeleteCueNumbers,
+    /// Flag der ausgewählten Cues umschalten (F).
+    ToggleFlag,
     /// Selektion zu Group-Cue gruppieren (kein Standard-Kürzel,
     /// ⌘G ist Find Next – daher Menü-only, `key: None`).
     GroupCues,
@@ -160,10 +168,17 @@ pub const ALL: &[Shortcut] = &[
     },
     Shortcut {
         group: "Navigation",
-        action: ShortcutAction::MoveCueUp,
+        action: ShortcutAction::SelectPrevious,
         key: Some(Key::ArrowUp),
         modifiers: mods(true, false, false),
-        label: "Move Cue Up",
+        label: "Select Previous Cue",
+    },
+    Shortcut {
+        group: "Navigation",
+        action: ShortcutAction::PlayheadUp,
+        key: Some(Key::ArrowUp),
+        modifiers: mods(true, false, true),
+        label: "Playhead Up",
     },
     Shortcut {
         group: "Navigation",
@@ -174,10 +189,17 @@ pub const ALL: &[Shortcut] = &[
     },
     Shortcut {
         group: "Navigation",
-        action: ShortcutAction::MoveCueDown,
+        action: ShortcutAction::SelectNext,
         key: Some(Key::ArrowDown),
         modifiers: mods(true, false, false),
-        label: "Move Cue Down",
+        label: "Select Next Cue",
+    },
+    Shortcut {
+        group: "Navigation",
+        action: ShortcutAction::PlayheadDown,
+        key: Some(Key::ArrowDown),
+        modifiers: mods(true, false, true),
+        label: "Playhead Down",
     },
     Shortcut {
         group: "Navigation",
@@ -291,8 +313,22 @@ pub const ALL: &[Shortcut] = &[
         group: "Edit",
         action: ShortcutAction::DuplicateCues,
         key: Some(Key::D),
-        modifiers: mods(true, false, false),
+        modifiers: mods(true, false, true),
         label: "Duplicate",
+    },
+    Shortcut {
+        group: "Edit",
+        action: ShortcutAction::DeleteCueNumbers,
+        key: Some(Key::D),
+        modifiers: mods(true, false, false),
+        label: "Delete Cue Numbers",
+    },
+    Shortcut {
+        group: "Edit",
+        action: ShortcutAction::ToggleFlag,
+        key: Some(Key::F),
+        modifiers: mods(false, false, false),
+        label: "Flag Cue",
     },
     Shortcut {
         group: "Edit",
@@ -319,58 +355,86 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Video),
-        key: Some(Key::Num2),
+        key: Some(Key::Num3),
         modifiers: mods(true, false, false),
         label: "New Video Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Fade),
-        key: Some(Key::Num3),
+        key: Some(Key::Num7),
         modifiers: mods(true, false, false),
         label: "New Fade Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Stop),
-        key: Some(Key::Num4),
+        key: None,
         modifiers: mods(true, false, false),
         label: "New Stop Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Script),
-        key: Some(Key::Num5),
+        key: None,
         modifiers: mods(true, false, false),
         label: "New Script Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Control),
-        key: Some(Key::Num6),
+        key: None,
         modifiers: mods(true, false, false),
         label: "New Control Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::Html),
-        key: Some(Key::Num7),
+        key: None,
         modifiers: mods(true, false, false),
         label: "New HTML5 Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::SlideShow),
-        key: Some(Key::Num8),
+        key: None,
         modifiers: mods(true, false, false),
         label: "New Slideshow Cue",
     },
     Shortcut {
         group: "Cues",
         action: ShortcutAction::NewCue(CueType::HtmlData),
-        key: Some(Key::Num9),
+        key: None,
         modifiers: mods(true, false, false),
         label: "New HTML Data Cue",
+    },
+    Shortcut {
+        group: "Cues",
+        action: ShortcutAction::NewCue(CueType::Text),
+        key: Some(Key::Num5),
+        modifiers: mods(true, false, false),
+        label: "New Text Cue",
+    },
+    Shortcut {
+        group: "Cues",
+        action: ShortcutAction::NewCue(CueType::Light),
+        key: Some(Key::Num6),
+        modifiers: mods(true, false, false),
+        label: "New Light Cue",
+    },
+    Shortcut {
+        group: "Cues",
+        action: ShortcutAction::NewCue(CueType::Network),
+        key: Some(Key::Num8),
+        modifiers: mods(true, false, false),
+        label: "New Network Cue",
+    },
+    Shortcut {
+        group: "Cues",
+        action: ShortcutAction::NewCue(CueType::Midi),
+        key: Some(Key::Num9),
+        modifiers: mods(true, false, false),
+        label: "New MIDI Cue",
     },
 ];
 
@@ -659,27 +723,24 @@ mod tests {
         ] {
             assert!(ALL.iter().any(|s| s.action == action), "fehlt: {action:?}");
         }
-        // ⌘0–⌘9 belegen exakt die zehn Standard-Cue-Typen (jede Ziffer genau
-        // einmal). Weitere Cue-Typen (Wait/Memo/Text) haben
-        // kein Standard-Kürzel – sie kommen über Toolbox/Menü.
+        // ⌘0, ⌘1, ⌘3 und ⌘5–⌘9 legen je einen festen Cue-Typ an, ⌘2 und ⌘4 bleiben
+        // frei. Weitere Cue-Typen kommen über Toolbox und Menü.
         let mut digits: Vec<Key> = ALL
             .iter()
             .filter(|s| matches!(s.action, ShortcutAction::NewCue(_)))
             .filter_map(|s| s.key)
             .collect();
         digits.sort_by_key(|k| format!("{k:?}"));
-        assert_eq!(digits.len(), 10, "genau zehn ⌘-Ziffern für NewCue");
+        assert_eq!(digits.len(), 8, "genau acht ⌘-Ziffern für NewCue");
         assert!(
             digits.windows(2).all(|w| w[0] != w[1]),
             "jede ⌘-Ziffer nur einmal vergeben: {digits:?}"
         );
-        for n in 0..=9 {
+        for n in [0, 1, 3, 5, 6, 7, 8, 9] {
             let key = match n {
                 0 => Key::Num0,
                 1 => Key::Num1,
-                2 => Key::Num2,
                 3 => Key::Num3,
-                4 => Key::Num4,
                 5 => Key::Num5,
                 6 => Key::Num6,
                 7 => Key::Num7,

@@ -25,8 +25,10 @@ use super::icons::{self, Icon};
 use super::theme::{self, palette, size};
 
 /// Zeichnet die Sidebar (rechtes SidePanel): Tab-Leiste + Inhalt
-/// (docs/UI.md §5.4). Der globale Transport sitzt im Masthead.
+/// (docs/UI.md §5.4). Der globale Transport sitzt ganz oben.
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
+    draw_transport(ui, app);
+    ui.add_space(size::SPACE_MEDIUM);
     let running = app.carts.running_count();
     theme::tab_bar(
         ui,
@@ -40,6 +42,70 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         SidebarTab::ListsCarts => draw_lists_carts(ui, app),
         SidebarTab::ActiveCues => draw_active_cues(ui, app),
     }
+}
+
+/// Globaler Transport: Pause All, Resume All, Reset und Panic.
+fn draw_transport(ui: &mut egui::Ui, app: &mut ShowApp) {
+    let any_with = |app: &ShowApp, status: CueStatus| {
+        app.carts.active().cues().iter().any(|c| c.status == status)
+    };
+    let (any_running, any_paused) = (
+        any_with(app, CueStatus::Playing),
+        any_with(app, CueStatus::Paused),
+    );
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = size::SPACE_SMALL;
+        if icons::button(
+            ui,
+            Icon::Pause,
+            if any_running {
+                palette::PAUSED
+            } else {
+                palette::TEXT
+            },
+            size::MASTHEAD_ICON_BUTTON,
+            true,
+        )
+        .on_hover_text("Pause All – pause all running cues")
+        .clicked()
+        {
+            app.pause_all();
+        }
+        if icons::button(
+            ui,
+            Icon::Resume,
+            if any_paused {
+                palette::PLAYING
+            } else {
+                palette::TEXT
+            },
+            size::MASTHEAD_ICON_BUTTON,
+            true,
+        )
+        .on_hover_text("Resume All – resume all paused cues")
+        .clicked()
+        {
+            app.resume_all();
+        }
+        if icons::button(
+            ui,
+            Icon::Reset,
+            palette::TEXT,
+            size::MASTHEAD_ICON_BUTTON,
+            true,
+        )
+        .on_hover_text("Reset All – stop all cues, playhead to start")
+        .clicked()
+        {
+            app.reset_all();
+        }
+        if panic_button(ui)
+            .on_hover_text("Panic – fade out and stop everything (Esc, twice: stop now)")
+            .clicked()
+        {
+            app.panic();
+        }
+    });
 }
 
 /// Tab „Lists & Carts": Listenzeilen „Name … Anzahl" + „New Cart".
@@ -281,4 +347,30 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         response.on_hover_text("Drag to scrub / click to jump to this position");
     }
     ui.add_space(size::SPACE_SMALL);
+}
+
+/// Panic-Button: Icon + „Panic", roter Rahmen, keine rote Fläche
+/// (docs/UI.md §6.1 – Primär-Buttons sind umrandet).
+fn panic_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 40.0), egui::Sense::click());
+    let fill = if response.hovered() {
+        palette::PANIC.gamma_multiply(0.18)
+    } else {
+        palette::RAISED
+    };
+    ui.painter()
+        .rect(rect, 8.0, fill, egui::Stroke::new(2.0_f32, palette::PANIC));
+    let icon_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 14.0, rect.center().y - 8.0),
+        egui::vec2(16.0, 16.0),
+    );
+    icons::paint_at(ui, Icon::Panic, icon_rect, palette::PANIC);
+    ui.painter().text(
+        egui::pos2(icon_rect.right() + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Panic",
+        egui::FontId::proportional(15.0),
+        palette::TEXT,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

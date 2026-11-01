@@ -50,6 +50,16 @@ pub struct ShowDocument {
     /// Zuordnung der Audio-Kanäle zu Geräte-Ausgängen.
     #[serde(default)]
     pub audio_patch: AudioPatch,
+    /// Ausblendzeit von Panic in Millisekunden (0 = sofort stoppen).
+    #[serde(default = "default_panic_duration_ms")]
+    pub panic_duration_ms: u64,
+}
+
+/// Standard-Ausblendzeit von Panic.
+pub const DEFAULT_PANIC_DURATION_MS: u64 = 1000;
+
+fn default_panic_duration_ms() -> u64 {
+    DEFAULT_PANIC_DURATION_MS
 }
 
 impl ShowDocument {
@@ -63,6 +73,7 @@ impl ShowDocument {
             screens: ScreenManager::new(),
             audio_output: None,
             audio_patch: AudioPatch::default(),
+            panic_duration_ms: DEFAULT_PANIC_DURATION_MS,
         }
     }
 

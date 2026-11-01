@@ -127,6 +127,26 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             if ui
                 .add_enabled(
                     editable && has_selection,
+                    egui::Button::new(sc("Delete Cue Numbers", ShortcutAction::DeleteCueNumbers)),
+                )
+                .clicked()
+            {
+                app.delete_selected_numbers();
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(
+                    editable && has_selection,
+                    egui::Button::new(sc("Flag Cue", ShortcutAction::ToggleFlag)),
+                )
+                .clicked()
+            {
+                app.toggle_selected_flags();
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(
+                    editable && has_selection,
                     egui::Button::new("Copy Cue Properties"),
                 )
                 .clicked()

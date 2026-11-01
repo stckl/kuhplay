@@ -5,11 +5,9 @@
 //! * GO-Button LINKS (132×64; grün umrandet, sobald ein Cue bereitsteht;
 //!   Space = GO).
 //! * Daneben: Label „STANDBY", darunter „Q#  Name" groß, darunter das
-//!   Notes-Feld des Standby-Cues bis zum Transport-Block.
-//! * RECHTS: Pause All / Resume All / Reset (neutrale Icon-Buttons) und
-//!   Panic (beschriftet, roter Rahmen; Esc). GO und Panic sind die einzigen
-//!   „lauten" Buttons im Fenster.
-//! * Die Toolbox (linke Leiste) ist die einzige Button-Quelle für neue Cues.
+//!   Notes-Feld des Standby-Cues.
+//! * Darunter die Toolbar: je ein Icon-Button pro Cue-Typ, ausblendbar im Footer.
+//! * Die Transport-Buttons liegen oben in der Sidebar.
 
 use egui::RichText;
 
@@ -17,12 +15,43 @@ use super::app::ShowApp;
 use super::icons::{self, Icon};
 use super::theme::{self, palette, size};
 
-/// Breite des Transport-Blocks rechts (3 Icon-Buttons + Panic).
-const TRANSPORT_WIDTH: f32 = 3.0 * 32.0 + 96.0 + 4.0 * size::SPACE_SMALL;
-
 /// Zeichnet den Masthead (oberer Bereich unter der Menüleiste).
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     let editable = !app.show_mode;
+    draw_go_row(ui, app, editable);
+    if app.ui.toolbar_visible {
+        ui.add_space(size::SPACE_SMALL);
+        draw_toolbar(ui, app, editable);
+    }
+}
+
+/// Toolbar: je ein Icon-Button pro Cue-Typ, in der Reihenfolge der Toolbox.
+fn draw_toolbar(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (_, types) in super::toolbox::ordered_groups(&app.ui.toolbox_order) {
+            for cue_type in types {
+                let response = ui
+                    .add_enabled_ui(editable, |ui| {
+                        icons::button(
+                            ui,
+                            Icon::for_cue_type(cue_type),
+                            palette::TEXT_DIM,
+                            egui::vec2(24.0, 24.0),
+                            editable,
+                        )
+                    })
+                    .inner
+                    .on_hover_text(format!("New {} Cue", cue_type.label()));
+                if response.clicked() {
+                    app.add_cue(cue_type);
+                }
+            }
+        }
+    });
+}
+
+fn draw_go_row(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {
     ui.horizontal(|ui| {
         // GO-Button (groß, dunkel, grün umrandet wenn ein Cue bereitsteht).
         // F1.3: roter Rahmen, solange der Doppel-GO-Schutz aktiv ist (pending_go);
@@ -55,7 +84,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         }
         ui.add_space(size::SPACE_LARGE);
 
-        let middle_width = (ui.available_width() - TRANSPORT_WIDTH - size::SPACE_LARGE).max(120.0);
+        let middle_width = (ui.available_width() - size::SPACE_LARGE).max(120.0);
         ui.allocate_ui_with_layout(
             egui::vec2(middle_width, size::GO_BUTTON.y),
             egui::Layout::top_down(egui::Align::Min),
@@ -128,100 +157,5 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 }
             },
         );
-
-        // Transport rechts (right_to_left: das Erste steht ganz rechts).
-        // F1.2: Pause All gelb, solange Cues laufen; Resume All grün, solange pausiert.
-        let any_running = app
-            .carts
-            .active()
-            .cues()
-            .iter()
-            .any(|c| c.status == crate::core::CueStatus::Playing);
-        let any_paused = app
-            .carts
-            .active()
-            .cues()
-            .iter()
-            .any(|c| c.status == crate::core::CueStatus::Paused);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = size::SPACE_SMALL;
-            if panic_button(ui)
-                .on_hover_text("Panic – stop everything immediately (Esc)")
-                .clicked()
-            {
-                app.panic();
-            }
-            ui.add_space(size::SPACE_SMALL);
-            if icons::button(
-                ui,
-                Icon::Reset,
-                palette::TEXT,
-                size::MASTHEAD_ICON_BUTTON,
-                true,
-            )
-            .on_hover_text("Reset All – stop all cues, playhead to start")
-            .clicked()
-            {
-                app.reset_all();
-            }
-            if icons::button(
-                ui,
-                Icon::Resume,
-                if any_paused {
-                    palette::PLAYING
-                } else {
-                    palette::TEXT
-                },
-                size::MASTHEAD_ICON_BUTTON,
-                true,
-            )
-            .on_hover_text("Resume All – resume all paused cues")
-            .clicked()
-            {
-                app.resume_all();
-            }
-            if icons::button(
-                ui,
-                Icon::Pause,
-                if any_running {
-                    palette::PAUSED
-                } else {
-                    palette::TEXT
-                },
-                size::MASTHEAD_ICON_BUTTON,
-                true,
-            )
-            .on_hover_text("Pause All – pause all running cues")
-            .clicked()
-            {
-                app.pause_all();
-            }
-        });
     });
-}
-
-/// Panic-Button: Icon + „Panic", roter Rahmen, keine rote Fläche
-/// (docs/UI.md §6.1 – Primär-Buttons sind umrandet).
-fn panic_button(ui: &mut egui::Ui) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 40.0), egui::Sense::click());
-    let fill = if response.hovered() {
-        palette::PANIC.gamma_multiply(0.18)
-    } else {
-        palette::RAISED
-    };
-    ui.painter()
-        .rect(rect, 8.0, fill, egui::Stroke::new(2.0_f32, palette::PANIC));
-    let icon_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + 14.0, rect.center().y - 8.0),
-        egui::vec2(16.0, 16.0),
-    );
-    icons::paint_at(ui, Icon::Panic, icon_rect, palette::PANIC);
-    ui.painter().text(
-        egui::pos2(icon_rect.right() + 8.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        "Panic",
-        egui::FontId::proportional(15.0),
-        palette::TEXT,
-    );
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

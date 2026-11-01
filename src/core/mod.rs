@@ -80,7 +80,7 @@ pub use screen::{
     screen_color_for_index, DisplayGeometry, Screen, ScreenManager, ScreenRotation,
     TestPatternKind, TestPatternSpec, SCREEN_COLOR_PALETTE,
 };
-pub use show::ShowDocument;
+pub use show::{ShowDocument, DEFAULT_PANIC_DURATION_MS};
 pub use slideshow::{Slide, SlideNav, SlideShow, SlideTransition};
 pub use stage::{
     BlendCurve, BlendMode, Crop, EdgeSide, GeometryMode, HardEdge, KeyFillRoutes, Stage,

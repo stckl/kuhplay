@@ -43,7 +43,14 @@ enum Command {
 fn reserved_for_text_fields(action: ShortcutAction) -> bool {
     matches!(
         action,
-        ShortcutAction::DeleteCue | ShortcutAction::MoveCueUp | ShortcutAction::MoveCueDown
+        ShortcutAction::DeleteCue
+            | ShortcutAction::MoveCueUp
+            | ShortcutAction::MoveCueDown
+            | ShortcutAction::PlayheadUp
+            | ShortcutAction::PlayheadDown
+            | ShortcutAction::SelectPrevious
+            | ShortcutAction::SelectNext
+            | ShortcutAction::ToggleFlag
     )
 }
 
@@ -180,6 +187,8 @@ impl NativeMenu {
         let armed = b.plain("Disarm Cue", Command::ToggleArmed);
         let duplicate = b.action("Duplicate", A::DuplicateCues);
         let group = b.action("Group Cues", A::GroupCues);
+        let delete_numbers = b.action("Delete Cue Numbers", A::DeleteCueNumbers);
+        let flag = b.action("Flag Cue", A::ToggleFlag);
         let edit = Submenu::with_items(
             "Edit",
             true,
@@ -193,6 +202,8 @@ impl NativeMenu {
                 &armed,
                 &duplicate,
                 &group,
+                &delete_numbers,
+                &flag,
                 &separator(),
                 &b.action("Find…", A::Find),
                 &b.action("Find Next", A::FindNext),
@@ -401,6 +412,8 @@ impl ShowApp {
                     let ids = self.carts.active().selection().to_vec();
                     self.duplicate_cues(&ids);
                 }
+                A::DeleteCueNumbers if editable => self.delete_selected_numbers(),
+                A::ToggleFlag if editable => self.toggle_selected_flags(),
                 A::GroupCues if editable => {
                     let ids = self.carts.active().selection().to_vec();
                     self.group_cues(&ids);

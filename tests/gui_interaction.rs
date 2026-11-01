@@ -1573,6 +1573,36 @@ fn hotkey_app() -> (
 }
 
 /// Key-Event (gedrückt) mit optionalem ⌘-Modifier.
+/// Key-Event mit ⌥⌘.
+fn alt_cmd_key_event(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers {
+            command: true,
+            alt: true,
+            ..Default::default()
+        },
+    }
+}
+
+/// Key-Event mit ⇧⌘.
+fn shift_cmd_key_event(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        },
+    }
+}
+
 fn key_event(key: egui::Key, command: bool) -> egui::Event {
     egui::Event::Key {
         key,
@@ -1969,34 +1999,30 @@ fn cmd_arrows_move_selected_cue_plain_arrows_move_playhead() {
     app.carts_mut().set_cursor(2);
     assert_eq!(app.carts().cursor(), 2);
 
-    // ⌘↑ → selektierter Cue rutscht nach oben (Menü „Move Up ⌘↑").
+    // ⌥⌘↑ → selektierter Cue rutscht nach oben.
     run_hotkeys(
         &mut app,
         &ctx,
-        vec![key_event(egui::Key::ArrowUp, true)],
+        vec![alt_cmd_key_event(egui::Key::ArrowUp)],
         1.0,
     );
     assert_eq!(
         app.carts().active().cues()[0].number,
         "2",
-        "⌘↑ verschiebt den selektierten Cue nach oben"
+        "⌥⌘↑ verschiebt den selektierten Cue nach oben"
     );
     assert_eq!(
         app.carts().selected_index(),
         Some(0),
         "Selektion folgt dem Cue"
     );
-    assert_eq!(
-        app.carts().cursor(),
-        2,
-        "Playhead bleibt (⌘↑ ist kein Playhead-Schritt wie ein nackter Pfeil)"
-    );
+    assert_eq!(app.carts().cursor(), 2, "Playhead bleibt beim Verschieben");
 
-    // ⌘↓ → zurück.
+    // ⌥⌘↓ → zurück.
     run_hotkeys(
         &mut app,
         &ctx,
-        vec![key_event(egui::Key::ArrowDown, true)],
+        vec![alt_cmd_key_event(egui::Key::ArrowDown)],
         1.1,
     );
     assert_eq!(app.carts().active().cues()[1].number, "2");
@@ -2617,7 +2643,7 @@ fn delete_key_removes_selected_cue_only_in_edit_mode() {
     app.set_show_mode(false);
 }
 
-/// ⌘D dupliziert die Selektion; ⌘0–⌘9 legen Cues des Typs an (Cues-Menü).
+/// ⇧⌘D dupliziert die Selektion; ⌘0–⌘9 legen Cues des Typs an (Cues-Menü).
 #[test]
 fn cmd_d_duplicates_selection_and_cmd_digits_add_typed_cues() {
     let (mut app, _cmd_rx, _evt) = hotkey_app();
@@ -2625,11 +2651,11 @@ fn cmd_d_duplicates_selection_and_cmd_digits_add_typed_cues() {
     let before = app.carts().active().len();
 
     app.carts_mut().select(Some(0));
-    run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::D, true)], 1.0);
+    run_hotkeys(&mut app, &ctx, vec![shift_cmd_key_event(egui::Key::D)], 1.0);
     assert_eq!(
         app.carts().active().len(),
         before + 1,
-        "⌘D dupliziert den selektierten Cue"
+        "⇧⌘D dupliziert den selektierten Cue"
     );
 
     run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::Num1, true)], 1.1);
@@ -2858,4 +2884,116 @@ fn ctrl_click_becomes_right_click() {
         !is_secondary(&events[2]) && !is_secondary(&events[3]),
         "normaler Klick bleibt"
     );
+}
+
+/// ⌘↑/⌘↓ wählen Cues aus, ⇧⌘↑/⇧⌘↓ bewegen den Playhead, ⌘D löscht Nummern, F setzt das Flag.
+#[test]
+fn selection_playhead_number_and_flag_keys() {
+    let (mut app, _cmd_rx, _evt) = hotkey_app();
+    let ctx = egui::Context::default();
+    app.carts_mut().select(Some(1));
+    let cursor = app.carts().cursor();
+    let order: Vec<String> = app
+        .carts()
+        .active()
+        .cues()
+        .iter()
+        .map(|c| c.number.clone())
+        .collect();
+
+    run_hotkeys(
+        &mut app,
+        &ctx,
+        vec![key_event(egui::Key::ArrowUp, true)],
+        1.0,
+    );
+    assert_eq!(
+        app.carts().selected_index(),
+        Some(0),
+        "⌘↑ wählt den vorherigen Cue"
+    );
+    run_hotkeys(
+        &mut app,
+        &ctx,
+        vec![key_event(egui::Key::ArrowDown, true)],
+        1.1,
+    );
+    assert_eq!(
+        app.carts().selected_index(),
+        Some(1),
+        "⌘↓ wählt den nächsten Cue"
+    );
+    let after: Vec<String> = app
+        .carts()
+        .active()
+        .cues()
+        .iter()
+        .map(|c| c.number.clone())
+        .collect();
+    assert_eq!(order, after, "⌘↑/⌘↓ verschieben nichts");
+    assert_eq!(
+        app.carts().cursor(),
+        cursor,
+        "⌘↑/⌘↓ bewegen den Playhead nicht"
+    );
+
+    run_hotkeys(
+        &mut app,
+        &ctx,
+        vec![shift_cmd_key_event(egui::Key::ArrowDown)],
+        1.2,
+    );
+    assert_eq!(app.carts().cursor(), cursor + 1, "⇧⌘↓ bewegt den Playhead");
+    assert_eq!(
+        app.carts().selected_index(),
+        Some(1),
+        "⇧⌘↓ ändert die Auswahl nicht"
+    );
+
+    run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::F, false)], 1.3);
+    assert!(app.carts().active().cues()[1].flagged, "F setzt das Flag");
+    run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::D, true)], 1.4);
+    assert_eq!(
+        app.carts().active().cues()[1].number,
+        "",
+        "⌘D löscht die Nummer"
+    );
+    assert_eq!(
+        app.carts().active().len(),
+        order.len(),
+        "⌘D legt keinen Cue an"
+    );
+}
+
+/// ⌘3 ist Video, ⌘7 Fade, ⌘9 MIDI; ⌘2 und ⌘4 bleiben frei.
+#[test]
+fn digit_keys_create_the_agreed_cue_types() {
+    let (mut app, _cmd_rx, _evt) = hotkey_app();
+    let ctx = egui::Context::default();
+    for (i, (key, cue_type)) in [
+        (egui::Key::Num3, CueType::Video),
+        (egui::Key::Num5, CueType::Text),
+        (egui::Key::Num6, CueType::Light),
+        (egui::Key::Num7, CueType::Fade),
+        (egui::Key::Num8, CueType::Network),
+        (egui::Key::Num9, CueType::Midi),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        run_hotkeys(
+            &mut app,
+            &ctx,
+            vec![key_event(key, true)],
+            1.0 + i as f64 / 10.0,
+        );
+        assert_eq!(
+            app.carts().active().selected().map(|c| c.cue_type),
+            Some(cue_type)
+        );
+    }
+    let count = app.carts().active().len();
+    run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::Num2, true)], 2.0);
+    run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::Num4, true)], 2.1);
+    assert_eq!(app.carts().active().len(), count, "⌘2 und ⌘4 sind frei");
 }

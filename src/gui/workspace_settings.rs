@@ -152,6 +152,22 @@ fn draw_general(ui: &mut egui::Ui, app: &mut ShowApp) {
         app.text_field_ids.insert(r.id);
         ui.end_row();
 
+        theme::field_label(ui, "Panic Fade");
+        let mut seconds = app.panic_duration.as_secs_f32();
+        if ui
+            .add(
+                egui::DragValue::new(&mut seconds)
+                    .speed(0.05)
+                    .range(0.0..=30.0)
+                    .suffix(" s"),
+            )
+            .on_hover_text("Esc fades out over this time and stops. Esc twice stops at once.")
+            .changed()
+        {
+            app.panic_duration = std::time::Duration::from_secs_f32(seconds);
+        }
+        ui.end_row();
+
         theme::field_label(ui, "Show Mode");
         let mut show_mode = app.show_mode;
         if ui.checkbox(&mut show_mode, "Editing disabled").changed() {

@@ -914,7 +914,9 @@ impl CueList {
 
     /// Sucht einen Top-Level-Cue anhand seiner Nummer.
     fn find_index_by_number(&self, number: Option<&str>) -> Option<usize> {
-        number.and_then(|n| self.cues.iter().position(|c| c.number == n))
+        number
+            .filter(|n| !n.is_empty())
+            .and_then(|n| self.cues.iter().position(|c| c.number == n))
     }
 
     // ------------------------------------------------------------------

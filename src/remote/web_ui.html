@@ -780,6 +780,7 @@ function pageGeneral() {
     field('Save As', fileAction('Save', path => send('save_show_as', { path }))),
     field('Show Mode', check(S && S.show_mode, 'Editing disabled', v => send('set_show_mode', { enabled: v }))),
     field('Audition Mode', check(W.audition_mode, 'Video cues play without a stage target', v => send('set_audition', { enabled: v }))),
+    field('Panic Fade (s)', number(W.panic_duration_ms / 1000, v => send('set_panic_duration', { ms: Math.round(Math.max(0, v) * 1000) }))),
     field('New Show', h('div', {}, h('button', { onclick: () => ask('Discard the current show and start a new one?', 'New Show', () => send('new_show')) }, 'New Show'))));
 }
 function pageAudio() {

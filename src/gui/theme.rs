@@ -90,7 +90,7 @@ pub mod size {
     /// Kleine Labels: Spaltenköpfe, Gruppen-Labels, „STANDBY".
     pub const LABEL_TEXT: f32 = 11.0;
     /// Masthead-Höhe (fest).
-    pub const MASTHEAD_HEIGHT: f32 = 108.0;
+    pub const MASTHEAD_HEIGHT: f32 = 140.0;
     /// Footer-Höhe (fest).
     pub const FOOTER_HEIGHT: f32 = 28.0;
     /// Inspector-Default-Höhe (ziehbar).

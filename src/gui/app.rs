@@ -13,7 +13,7 @@
 //!
 //! ```text
 //! Menüleiste
-//! Masthead:  [GO]  STANDBY / Q# • Name / Notes        [⏸][▶][↺][Panic]
+//! Masthead:  [GO]  STANDBY / Q# • Name / Notes / Toolbar
 //! Toolbox | Cue-Liste                                  | Sidebar
 //! Inspector (volle Breite)
 //! Footer (unterste Zeile)
@@ -237,6 +237,14 @@ pub struct ShowApp {
     audio_output: Option<String>,
     /// Zuordnung der Audio-Kanäle zu Geräte-Ausgängen.
     pub audio_patch: crate::core::AudioPatch,
+    /// Ausblendzeit von Panic (0 = sofort stoppen), wird mit der Show gespeichert.
+    pub panic_duration: Duration,
+    /// Solange gesetzt, blendet Panic gerade aus.
+    panic_deadline: Option<std::time::Instant>,
+    /// Eigene Fade-IDs von Panic; ihre Engine-Events betreffen keinen Cue.
+    panic_fade_ids: std::collections::HashSet<Uuid>,
+    /// Cues, die die Engine als geladen gemeldet hat.
+    loaded_cues: std::collections::HashSet<Uuid>,
     /// Geräteliste der Audio-Seite; `None` = beim nächsten Öffnen neu abfragen.
     pub(super) audio_devices: Option<AudioDeviceList>,
     /// Remote-Konfiguration aus der Umgebung (Anzeige in den Settings).
@@ -586,6 +594,10 @@ impl ShowApp {
             native_menu: None,
             audio_output: None,
             audio_patch: crate::core::AudioPatch::default(),
+            panic_duration: Duration::from_millis(crate::core::DEFAULT_PANIC_DURATION_MS),
+            panic_deadline: None,
+            panic_fade_ids: Default::default(),
+            loaded_cues: Default::default(),
             audio_devices: None,
             remote_config: RemoteConfig::default(),
             remote_dirty: false,
@@ -978,6 +990,10 @@ impl ShowApp {
     /// GO: nächsten armed Cue des aktiven Carts triggern, inkl.
     /// Auto-Continue-Ketten („Cue Sequences").
     pub fn go_now(&mut self) {
+        // Während Panic ausblendet, startet nichts Neues.
+        if self.panic_deadline.is_some() {
+            return;
+        }
         match self.carts.go_chained() {
             Some(outcome) => {
                 let mut commands = outcome.commands;
@@ -1045,8 +1061,72 @@ impl ShowApp {
         self.remote_dirty = true;
     }
 
-    /// Panic: alles sofort stoppen (workspace-weit, Sidebar).
+    /// Panic: blendet alles über [`Self::panic_duration`] aus und stoppt dann.
+    /// Ein weiteres Panic während des Ausblendens stoppt sofort hart.
     pub fn panic(&mut self) {
+        if self.panic_deadline.is_some() || self.panic_duration.is_zero() {
+            self.panic_now();
+            return;
+        }
+        let commands = self.panic_fade_commands();
+        if commands.is_empty() {
+            self.panic_now();
+            return;
+        }
+        self.dispatch(commands);
+        self.panic_deadline = Some(std::time::Instant::now() + self.panic_duration);
+        self.remote_dirty = true;
+    }
+
+    /// Fade-Befehle für alle aktiven Cues aller Carts. Die Fades laufen unter
+    /// eigenen IDs, damit ihr Ende keinen Cue-Status ändert.
+    fn panic_fade_commands(&mut self) -> Vec<EngineCommand> {
+        use crate::core::{FadeCurve, FadeParam};
+        fn collect(cues: &[Cue], out: &mut Vec<(Uuid, CueType, f32)>) {
+            for cue in cues {
+                if cue.status.is_active() {
+                    out.push((cue.id, cue.cue_type, cue.volume));
+                }
+                collect(&cue.children, out);
+            }
+        }
+        let mut active = Vec::new();
+        for index in 0..self.carts.cart_count() {
+            collect(self.carts.cart(index).cues(), &mut active);
+        }
+        self.panic_fade_ids.clear();
+        let mut commands = Vec::new();
+        for (id, cue_type, volume) in active {
+            let params: &[FadeParam] = match cue_type {
+                CueType::Audio => &[FadeParam::Volume],
+                CueType::Video => &[FadeParam::Volume, FadeParam::Opacity],
+                CueType::SlideShow | CueType::Html | CueType::Text => &[FadeParam::Opacity],
+                _ => &[],
+            };
+            for param in params {
+                let fade_id = Uuid::new_v4();
+                self.panic_fade_ids.insert(fade_id);
+                let (from, curve) = match param {
+                    FadeParam::Volume => (volume, FadeCurve::Decibel),
+                    _ => (1.0, FadeCurve::Linear),
+                };
+                commands.push(EngineCommand::Fade {
+                    cue_id: fade_id,
+                    target_cue: Some(id),
+                    param: *param,
+                    from,
+                    target: 0.0,
+                    duration: self.panic_duration,
+                    curve,
+                });
+            }
+        }
+        commands
+    }
+
+    /// Stoppt sofort hart alle Cues (zweites Panic, Ende des Ausblendens).
+    pub fn panic_now(&mut self) {
+        self.panic_deadline = None;
         self.dispatch(vec![EngineCommand::StopAll]);
         self.carts.stop_all_running_all();
         self.clear_timing();
@@ -1056,6 +1136,7 @@ impl ShowApp {
     /// Reset: alle Cues stoppen + Playhead aller Carts an den Anfang
     /// (Sidebar: Reset wirkt workspace-weit).
     pub fn reset_all(&mut self) {
+        self.panic_deadline = None;
         self.dispatch(vec![EngineCommand::StopAll]);
         self.carts.reset_all();
         self.clear_timing();
@@ -1552,6 +1633,8 @@ impl ShowApp {
                 cue.id,
                 cue_table::CueRowMeta {
                     problems: self.problems_of(cue),
+                    warnings: super::problems::cue_warnings(cue, self),
+                    loaded: self.loaded_cues.contains(&cue.id),
                     elapsed: self.phase_elapsed_of(cue),
                     pre_wait_remaining: self.pre_wait_remaining(cue),
                     media_duration: self.media_durations.get(&cue.id).copied(),
@@ -1562,6 +1645,8 @@ impl ShowApp {
                     child.id,
                     cue_table::CueRowMeta {
                         problems: self.problems_of(child),
+                        warnings: super::problems::cue_warnings(child, self),
+                        loaded: self.loaded_cues.contains(&child.id),
                         elapsed: self.phase_elapsed_of(child),
                         pre_wait_remaining: self.pre_wait_remaining(child),
                         media_duration: self.media_durations.get(&child.id).copied(),
@@ -1798,6 +1883,9 @@ impl ShowApp {
                     return Err(err.clone());
                 }
             }
+            RemoteCommand::SetPanicDuration { ms } => {
+                self.panic_duration = Duration::from_millis(ms.min(30_000));
+            }
             RemoteCommand::SetAudition { enabled } => self.set_audition_mode(enabled),
             RemoteCommand::SetAudioOutput { device } => self.set_audio_output(device),
             RemoteCommand::SetAudioPatch { patch } => self.set_audio_patch(*patch), // migriert in set_audio_patch
@@ -1984,6 +2072,7 @@ impl ShowApp {
             decklink_hint: dl_hint,
             show_name: self.show_name.clone(),
             file: self.current_file.as_ref().map(|p| p.display().to_string()),
+            panic_duration_ms: self.panic_duration.as_millis() as u64,
             audition_mode: self.audition_mode,
             output_mode: match self.output_mode {
                 OutputMode::Off => "off",
@@ -2371,6 +2460,7 @@ impl ShowApp {
             screens: self.screens.clone(),
             audio_output: self.audio_output.clone(),
             audio_patch: self.audio_patch.clone(),
+            panic_duration_ms: self.panic_duration.as_millis() as u64,
         };
         let result = doc
             .to_json()
@@ -2415,6 +2505,7 @@ impl ShowApp {
         };
         self.set_audio_output(doc.audio_output);
         self.set_audio_patch(doc.audio_patch);
+        self.panic_duration = Duration::from_millis(doc.panic_duration_ms);
         self.stage_windows.clear();
         // Alle Stages an die Engine melden.
         for stage in self.stages.stages().to_vec() {
@@ -2429,6 +2520,7 @@ impl ShowApp {
 
     /// Neue leere Show (File → New Show).
     pub fn new_show(&mut self) {
+        self.panic_duration = Duration::from_millis(crate::core::DEFAULT_PANIC_DURATION_MS);
         self.set_audio_output(None);
         self.set_audio_patch(crate::core::AudioPatch::default());
         self.carts = CartManager::new();
@@ -2645,7 +2737,25 @@ impl ShowApp {
     /// da Engine-Events auch Cues in nicht-aktiven Carts betreffen).
     /// Public für headless GUI-Tests (tests/gui_interaction.rs).
     pub fn poll_engine_events(&mut self) {
+        if self
+            .panic_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            self.panic_now();
+        }
         while let Some(event) = self.engine.try_recv_event() {
+            if let EngineEvent::Started { cue_id, .. }
+            | EngineEvent::Finished { cue_id }
+            | EngineEvent::PostWaitElapsed { cue_id } = &event
+            {
+                if self.panic_fade_ids.contains(cue_id) {
+                    continue;
+                }
+                self.loaded_cues.remove(cue_id);
+            }
+            if let EngineEvent::Loaded { cue_id } = &event {
+                self.loaded_cues.insert(*cue_id);
+            }
             match event {
                 EngineEvent::Started { cue_id, duration } => {
                     // Auto-Follow feuert beim Start.
@@ -2778,10 +2888,44 @@ impl ShowApp {
         self.dispatch(follow_commands);
     }
 
+    /// Wählt den vorherigen oder nächsten Top-Level-Cue aus.
+    pub fn select_relative(&mut self, delta: i32) {
+        let cues = self.carts.active().cues();
+        let Some(last) = cues.len().checked_sub(1) else {
+            return;
+        };
+        let index = match self.carts.selected_index() {
+            Some(index) => (index as i64 + i64::from(delta)).clamp(0, last as i64) as usize,
+            None => 0,
+        };
+        let id = cues[index].id;
+        self.carts.select_id(Some(id));
+    }
+
+    /// Löscht die Nummern der ausgewählten Cues.
+    pub fn delete_selected_numbers(&mut self) {
+        for id in self.carts.active().selection().to_vec() {
+            if let Some(cue) = self.carts.find_cue_any_mut(id) {
+                cue.number.clear();
+            }
+        }
+        self.remote_dirty = true;
+    }
+
+    /// Schaltet das Flag der ausgewählten Cues um.
+    pub fn toggle_selected_flags(&mut self) {
+        for id in self.carts.active().selection().to_vec() {
+            if let Some(cue) = self.carts.find_cue_any_mut(id) {
+                cue.flagged = !cue.flagged;
+            }
+        }
+        self.remote_dirty = true;
+    }
+
     /// Globale Hotkeys (TODO.md Phase 5): liest die zentrale
     /// Tabelle [`shortcuts::ALL`] – Space = GO, Esc = Panic, ↑/↓ = Playhead,
-    /// ⌘/⌥⌘+↑/↓ = Cue verschieben, ⌘0–9 = neue Cues, ⌘F/⌘G = Find,
-    /// ⌘D/⌘G = Duplicate/Find Next, ⌘I/L/K = Panels, ⌘N/O/S/⇧⌘S/Q = Datei.
+    /// ⌘+↑/↓ = Cue auswählen, ⇧⌘+↑/↓ = Playhead, ⌥⌘+↑/↓ = Cue verschieben,
+    /// ⌘+Ziffer = neue Cues, ⌘F/⌘G = Find, ⇧⌘D = Duplicate, ⌘D = Nummern löschen, ⌘I/L/K = Panels, ⌘N/O/S/⇧⌘S/Q = Datei.
     /// Public für headless GUI-Tests (tests/gui_interaction.rs).
     ///
     /// Gate: Nur ein fokussiertes **Textfeld** blockiert Space/Esc (dort
@@ -2885,6 +3029,30 @@ impl ShowApp {
                         continue;
                     }
                     self.carts.set_cursor(self.carts.cursor() + 1);
+                }
+                ShortcutAction::SelectPrevious => {
+                    if any_focus {
+                        continue;
+                    }
+                    self.select_relative(-1);
+                }
+                ShortcutAction::SelectNext => {
+                    if any_focus {
+                        continue;
+                    }
+                    self.select_relative(1);
+                }
+                ShortcutAction::DeleteCueNumbers => {
+                    if !editable || text_input {
+                        continue;
+                    }
+                    self.delete_selected_numbers();
+                }
+                ShortcutAction::ToggleFlag => {
+                    if !editable || text_input {
+                        continue;
+                    }
+                    self.toggle_selected_flags();
                 }
                 ShortcutAction::MoveCueUp => {
                     if any_focus || !editable {
@@ -3065,11 +3233,18 @@ impl ShowApp {
                     .fill(palette::SHOW_MODE_BG);
             }
             // F1.5: Masthead-Höhe per Drag am unteren Rand änderbar (persistiert).
+            // Die Toolbar braucht ihre Zeile, auch mit einer alten gespeicherten Höhe.
+            let masthead_min = if self.ui.toolbar_visible {
+                size::MASTHEAD_HEIGHT
+            } else {
+                48.0
+            };
+            let masthead_height = self.ui.masthead_height.clamp(masthead_min, 320.0);
             let inner = egui::TopBottomPanel::top("masthead")
                 .frame(masthead_frame)
-                .exact_height(self.ui.masthead_height.clamp(48.0, 320.0))
+                .exact_height(masthead_height)
                 .resizable(true)
-                .min_height(48.0)
+                .min_height(masthead_min)
                 .max_height(320.0)
                 .show(ctx, |ui| {
                     masthead::draw(ui, self);
