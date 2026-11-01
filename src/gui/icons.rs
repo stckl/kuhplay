@@ -98,13 +98,16 @@ mod glyphs {
     pub const GRID_NINE: &str = "\u{EC8C}"; // grid-nine
     pub const HAND: &str = "\u{E298}"; // hand
     pub const HAND_POINTING: &str = "\u{E29A}"; // hand-pointing
-    pub const HOURGLASS: &str = "\u{E1B8}"; // hourglass
-    pub const NOTE: &str = "\u{E5A2}"; // note
-    pub const MUSIC_NOTES: &str = "\u{E5BE}"; // music-notes
-    pub const LIGHTBULB: &str = "\u{E524}"; // lightbulb
-    pub const GAME_CONTROLLER: &str = "\u{E7B0}"; // game-controller
-    pub const CLOCK: &str = "\u{E1F0}"; // clock
-    pub const PAPER_PLANE_TILT: &str = "\u{E6D0}"; // paper-plane-tilt
+    pub const HOURGLASS: &str = "\u{E2B2}"; // hourglass
+    pub const TOOLBOX: &str = "\u{ECA0}"; // toolbox
+    pub const BROWSER: &str = "\u{E0F4}"; // browser
+    pub const SQUARES_FOUR: &str = "\u{E464}"; // squares-four
+    pub const NOTE: &str = "\u{E348}"; // note
+    pub const MUSIC_NOTES: &str = "\u{E340}"; // music-notes
+    pub const LIGHTBULB: &str = "\u{E2DC}"; // lightbulb
+    pub const GAME_CONTROLLER: &str = "\u{E26E}"; // game-controller
+    pub const CLOCK: &str = "\u{E19A}"; // clock
+    pub const PAPER_PLANE_TILT: &str = "\u{E398}"; // paper-plane-tilt
     pub const IMAGE: &str = "\u{E2CA}"; // image
     pub const IMAGES: &str = "\u{E836}"; // images
     pub const LAYOUT: &str = "\u{E6D6}"; // layout
@@ -132,7 +135,7 @@ mod glyphs {
     pub const STACK: &str = "\u{E466}"; // stack
     pub const STOP: &str = "\u{E46C}"; // stop
     pub const TARGET: &str = "\u{E47C}"; // target
-    pub const TEXT_T: &str = "\u{E7C0}"; // text-t
+    pub const TEXT_T: &str = "\u{E48A}"; // text-t
     pub const TRASH: &str = "\u{E4A6}"; // trash
     pub const VIDEO_CAMERA: &str = "\u{E4DA}"; // video-camera
     pub const WARNING: &str = "\u{E4E0}"; // warning
@@ -162,6 +165,10 @@ pub enum Icon {
     Light,
     Companion,
     Timecode,
+    // Footer: Toolbox, Masthead, Toolbar
+    PanelToolbox,
+    PanelMasthead,
+    PanelToolbar,
     // Status
     Playing,
     Paused,
@@ -259,6 +266,9 @@ impl Icon {
         Icon::Timecode,
         // Status
         Icon::Playing,
+        Icon::PanelToolbox,
+        Icon::PanelMasthead,
+        Icon::PanelToolbar,
         Icon::Paused,
         Icon::Error,
         Icon::Broken,
@@ -388,6 +398,9 @@ impl Icon {
             Icon::SlideShow => glyphs::IMAGES,
             Icon::HtmlData => glyphs::DATABASE,
             Icon::Wait => glyphs::HOURGLASS,
+            Icon::PanelToolbox => glyphs::TOOLBOX,
+            Icon::PanelMasthead => glyphs::BROWSER,
+            Icon::PanelToolbar => glyphs::SQUARES_FOUR,
             Icon::Memo => glyphs::NOTE,
             Icon::Text => glyphs::TEXT_T,
             Icon::Network => glyphs::PAPER_PLANE_TILT,

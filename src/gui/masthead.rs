@@ -36,8 +36,8 @@ fn draw_toolbar(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {
                         icons::button(
                             ui,
                             Icon::for_cue_type(cue_type),
-                            palette::TEXT_DIM,
-                            egui::vec2(24.0, 24.0),
+                            palette::TEXT,
+                            egui::vec2(32.0, 32.0),
                             editable,
                         )
                     })

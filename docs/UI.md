@@ -62,8 +62,7 @@ Zeile „Menüleiste" unten entfällt dort. Echte Menü-Kürzel gibt es nur für
 
 * Der **Footer ist immer die unterste Zeile** des Fensters – unter dem
   Inspector, nie dazwischen.
-* Der **Inspector** sitzt unter Toolbox/Liste/Sidebar und geht über die
-  volle Breite.
+* Der **Inspector** sitzt unter Liste und Sidebar, rechts neben der Toolbox.
 * Toolbox (links) und Sidebar (rechts) sind optional (⌘K / ⌘L).
 * Masthead und Footer haben eine **feste Höhe** – der Masthead ist zusätzlich
   per Drag am unteren Rand in der Höhe änderbar (48–320 px, persistiert,
@@ -71,8 +70,9 @@ Zeile „Menüleiste" unten entfällt dort. Echte Menü-Kürzel gibt es nur für
 
 ### Panel-Reihenfolge (egui)
 
-`menu_bar (top) → masthead (top) → footer (bottom) → inspector (bottom)
-→ toolbox (left) → sidebar (right) → cue list (central)`.
+`menu_bar (top) → masthead (top) → footer (bottom) → toolbox (left)
+→ inspector (bottom) → sidebar (right) → cue list (central)`. Die Toolbox läuft bis zum
+Footer, damit alle Cue-Typen auch auf kleinen Displays Platz haben.
 Bei egui ist das zuerst hinzugefügte Bottom-Panel das unterste – deshalb
 **Footer vor Inspector**. Die Reihenfolge steht genau einmal im Code:
 `ShowApp::draw_workspace`.
@@ -144,7 +144,7 @@ Zeiten sind immer Monospace, damit herunterzählende Werte nicht springen.
 
 ## 5. Bereiche im Detail
 
-### 5.1 Masthead (Höhe ziehbar, Standard 140 px, Fläche `PANEL`)
+### 5.1 Masthead (Höhe ziehbar, Standard 148 px, Fläche `PANEL`)
 
 * **GO** links: 132 × 64 px, Radius 8. Grüner 3-px-Rahmen, wenn ein Cue
   bereitsteht, sonst 1 px grau; **roter Rahmen, solange der Doppel-GO-Schutz
@@ -169,7 +169,7 @@ Post-wait · Continue**.
 * **Keine sichtbaren Spaltentrenner** im Ruhezustand – nur beim Hover über
   der Grenze erscheint die Resize-Linie.
 * Kopfzeile: 11 px, `TEXT_DIM`, darunter eine 1-px-Linie `BORDER`.
-* **Status-Spalte**: Playhead-Pfeil (weiß) auf der Standby-Zeile;
+* **Status-Spalte**: gefülltes Dreieck in Akzentfarbe am Anfang der Playhead-Zeile;
   Status-Icon in Statusfarbe bei aktiven Cues; **kaputt = rotes ✕ ohne
   Hintergrund-Kasten** (Tooltip nennt den Grund).
 * **Type**: Icon 16 px, `TEXT_DIM`. Gruppen mit Aufklapp-Dreieck.
@@ -207,7 +207,7 @@ Post-wait · Continue**.
   Restzeit „−MM:SS.mmm" in Monospace.
 * Leer: „No active cues" gedimmt, zentriert.
 
-### 5.5 Inspector (unten, volle Breite, Fläche `PANEL`)
+### 5.5 Inspector (unten, rechts neben der Toolbox, Fläche `PANEL`)
 
 * **Ohne Selektion:** nur der zentrierte Hinweis „No cue selected".
   Keine Kopfzeile, keine Tabs.
@@ -225,7 +225,7 @@ Post-wait · Continue**.
   oder Tab bleibt die Cue-Liste stehen; langer Inhalt scrollt im Inspector.
 * Show-Mode: sichtbar, aber read-only.
 
-### 5.6 Footer (unterste Zeile, 28 px, Fläche `PANEL`)
+### 5.6 Footer (unterste Zeile, 38 px, Fläche `PANEL`)
 
 * Links: Segment „Edit | Show", daneben der Toggle für die Toolbar.
 * Daneben: rotes Warn-Icon + „N broken" nur wenn Cues kaputt sind – Klick springt zum

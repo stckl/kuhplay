@@ -80,13 +80,15 @@ fn moved_order(order: &[CueType], cue_type: CueType, delta: isize) -> Vec<CueTyp
 /// Label daneben, Hover hellt die Zeile auf (docs/UI.md §5.3).
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     let editable = !app.show_mode;
+    // Sichtbarer Balken: Auf kleinen Displays muss klar sein, dass mehr da ist.
+    ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
     egui::ScrollArea::vertical().show(ui, |ui| {
         for (gi, (group, types)) in ordered_groups(&app.ui.toolbox_order)
             .into_iter()
             .enumerate()
         {
             if gi > 0 {
-                ui.add_space(size::SPACE_MEDIUM_LARGE);
+                ui.add_space(size::SPACE_MEDIUM);
             }
             ui.horizontal(|ui| {
                 ui.add_space(size::SPACE_SMALL);

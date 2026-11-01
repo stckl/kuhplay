@@ -34,7 +34,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.separator();
         if panel_toggle(
             ui,
-            Icon::Layout,
+            Icon::PanelToolbox,
             if app.ui.toolbox_visible {
                 "Hide Toolbox"
             } else {
@@ -46,7 +46,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         }
         if panel_toggle(
             ui,
-            Icon::ArrowsOut,
+            Icon::PanelMasthead,
             if app.ui.masthead_visible {
                 "Hide Masthead"
             } else {
@@ -61,7 +61,12 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         } else {
             "Show Toolbar"
         };
-        if panel_toggle(ui, Icon::Group, toolbar_tooltip, app.ui.toolbar_visible) {
+        if panel_toggle(
+            ui,
+            Icon::PanelToolbar,
+            toolbar_tooltip,
+            app.ui.toolbar_visible,
+        ) {
             app.ui.toolbar_visible = !app.ui.toolbar_visible;
         }
         // Warnungs-Indikator (Anzahl kaputter Cues) – F1.4: rechts im Footer.

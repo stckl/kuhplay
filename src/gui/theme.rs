@@ -90,15 +90,15 @@ pub mod size {
     /// Kleine Labels: Spaltenköpfe, Gruppen-Labels, „STANDBY".
     pub const LABEL_TEXT: f32 = 11.0;
     /// Masthead-Höhe (fest).
-    pub const MASTHEAD_HEIGHT: f32 = 140.0;
+    pub const MASTHEAD_HEIGHT: f32 = 148.0;
     /// Footer-Höhe (fest).
-    pub const FOOTER_HEIGHT: f32 = 28.0;
+    pub const FOOTER_HEIGHT: f32 = 38.0;
     /// Inspector-Default-Höhe (ziehbar).
     pub const INSPECTOR_HEIGHT: f32 = 260.0;
     /// Toolbox-Breite (linke Leiste, schmal, einklappbar).
     pub const TOOLBOX_WIDTH: f32 = 136.0;
     /// Toolbox-Zeile (Icon + Label).
-    pub const TOOLBOX_ROW_HEIGHT: f32 = 26.0;
+    pub const TOOLBOX_ROW_HEIGHT: f32 = 24.0;
     /// Label-Spalte in Formularen (rechtsbündig, docs/UI.md §6.4).
     pub const FORM_LABEL_WIDTH: f32 = 96.0;
     /// Einheitliche Breite von Zeit- und Zahlenfeldern in Formularen.
@@ -108,7 +108,7 @@ pub mod size {
     /// Transport-Buttons im Masthead (Pause/Resume/Reset).
     pub const MASTHEAD_ICON_BUTTON: Vec2 = Vec2::new(32.0, 32.0);
     /// Icon-Button im Footer (Panel-Toggles, Workspace Settings).
-    pub const FOOTER_ICON_BUTTON: Vec2 = Vec2::new(24.0, 24.0);
+    pub const FOOTER_ICON_BUTTON: Vec2 = Vec2::new(32.0, 32.0);
     /// Transport-Icon-Buttons (Sidebar: Reset/Pause/Resume/Panic).
     pub const TRANSPORT_ICON_BUTTON: Vec2 = Vec2::new(26.0, 26.0);
     /// Farbiger Streifen am linken Rand einer Cue-Zeile („Cue Color").

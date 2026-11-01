@@ -3267,6 +3267,18 @@ impl ShowApp {
             .show(ctx, |ui| {
                 footer::draw(ui, self);
             });
+        // Toolbox vor dem Inspector: Sie läuft bis zum Footer, damit alle Cue-Typen
+        // auch auf kleinen Displays Platz haben.
+        if self.ui.toolbox_visible {
+            egui::SidePanel::left("toolbox")
+                .frame(theme::panel_frame(size::SPACE_SMALL, size::SPACE_MEDIUM))
+                .resizable(true)
+                .default_width(size::TOOLBOX_WIDTH)
+                .width_range(110.0..=220.0)
+                .show(ctx, |ui| {
+                    toolbox::draw(ui, self);
+                });
+        }
         if self.ui.inspector_visible {
             egui::TopBottomPanel::bottom("inspector")
                 .frame(theme::panel_frame(
@@ -3278,16 +3290,6 @@ impl ShowApp {
                 .default_height(size::INSPECTOR_HEIGHT)
                 .show(ctx, |ui| {
                     inspector::draw(ui, self);
-                });
-        }
-        if self.ui.toolbox_visible {
-            egui::SidePanel::left("toolbox")
-                .frame(theme::panel_frame(size::SPACE_SMALL, size::SPACE_MEDIUM))
-                .resizable(true)
-                .default_width(size::TOOLBOX_WIDTH)
-                .width_range(110.0..=220.0)
-                .show(ctx, |ui| {
-                    toolbox::draw(ui, self);
                 });
         }
         if self.ui.sidebar_visible {
