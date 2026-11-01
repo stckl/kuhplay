@@ -13,6 +13,7 @@
 #include "DeckLinkAPI.h"
 
 #include <cstdio>
+#include <deque>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -145,6 +146,10 @@ extern "C" int kp_dl_device_name(int index, char *out, int outlen) {
     return ok;
 }
 
+// Frames, die vor dem Start bei der Karte liegen, und Gesamtzahl eigener Frames.
+static const int KP_PREROLL_FRAMES = 3;
+static const int KP_POOL_FRAMES = 6;
+
 struct KpDecklink {
     IDeckLink *device = nullptr;
     IDeckLinkOutput *output = nullptr;
@@ -156,17 +161,21 @@ struct KpDecklink {
     // Scheduled Playback (G4): die Karte ist Taktgeber, wir reihen Frames ein.
     struct KpCallback *callback = nullptr;
     std::mutex queue_mtx;
-    std::vector<std::vector<uint8_t>> queue;
+    // Eigene Frames für die geplante Ausgabe; in_flight liegt bei der Karte.
+    std::vector<IDeckLinkMutableVideoFrame *> pool_frames;
+    std::vector<IDeckLinkVideoBuffer *> pool_buffers;
+    std::vector<int> free_frames;
+    std::deque<int> in_flight;
+    bool started = false;
     BMDTimeValue next_time = 0;   // nächste Frame-Zeit (timeScale-Einheiten)
     BMDTimeScale time_scale = 0;  // Einheiten pro Sekunde
     BMDTimeValue frame_dur = 0;   // Frame-Dauer in timeScale-Einheiten
     bool scheduled = false;
-    bool in_flight = false;
     long late = 0, dropped = 0, scheduled_count = 0;
 };
 
-// IDeckLinkVideoOutputCallback: bei jedem fertigen Frame das nächste aus der
-// Queue einreihen; verspätete/verlorene zählen (G4).
+// IDeckLinkVideoOutputCallback: fertige Frames wieder freigeben, verspätete und
+// verlorene zählen (G4). Treiberaufrufe laufen außerhalb dieses Callbacks.
 struct KpCallback : public IDeckLinkVideoOutputCallback {
 public:
     KpDecklink *owner;
@@ -176,53 +185,17 @@ public:
                                                       BMDOutputFrameCompletionResult result) override {
         (void)completedFrame;
         std::lock_guard<std::mutex> lock(owner->queue_mtx);
-        owner->in_flight = false;
+        if (!owner->in_flight.empty()) {
+            owner->free_frames.push_back(owner->in_flight.front());
+            owner->in_flight.pop_front();
+        }
         if (result == bmdOutputFrameDropped)
             owner->dropped++;
-        else if (result != bmdOutputFrameCompleted)
+        else if (result == bmdOutputFrameDisplayedLate)
             owner->late++;
-        schedule_next_locked();
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE ScheduledPlaybackHasStopped() override { return S_OK; }
-
-    // requisitiere nächstes Frame, falls vorhanden
-    void schedule_next_locked() {
-        if (owner->queue.empty()) {
-            // nichts eingereiht → Bild verloren (zählen, G4)
-            if (owner->scheduled && !owner->in_flight)
-                owner->dropped++;
-            return;
-        }
-        if (owner->in_flight)
-            return;
-        auto data = std::move(owner->queue.front());
-        owner->queue.erase(owner->queue.begin());
-        void *buf = nullptr;
-        if (owner->buffer->StartAccess(bmdBufferAccessWrite) == S_OK &&
-            owner->buffer->GetBytes(&buf) == S_OK && buf) {
-            memcpy(buf, data.data(), data.size());
-            owner->buffer->EndAccess(bmdBufferAccessWrite);
-        }
-        owner->in_flight = true;
-        owner->scheduled_count++;
-        // Immer in der Zukunft der Karten-Uhr einreihen, sonst „late“ (G4).
-        BMDTimeValue now_stream = 0;
-        double speed = 1.0;
-        if (owner->output->GetScheduledStreamTime(owner->time_scale, &now_stream, &speed) == S_OK
-            && owner->next_time <= now_stream)
-            owner->next_time = now_stream + owner->frame_dur;
-        HRESULT hr = owner->output->ScheduleVideoFrame(owner->frame, owner->next_time, owner->frame_dur,
-                                                       owner->time_scale);
-        owner->next_time += owner->frame_dur;
-        if (hr != S_OK) {
-            owner->in_flight = false;
-            owner->late++;
-            char e[64];
-            snprintf(e, sizeof(e), "ScheduleVideoFrame hr=0x%lx", (unsigned long)hr);
-            set_err(e);
-        }
-    }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
         if (!out)
@@ -395,18 +368,23 @@ extern "C" int kp_dl_start_scheduled(void *handle) {
     auto *h = (KpDecklink *)handle;
     if (!h || !h->output || !h->callback)
         return -1;
+    for (int i = 0; i < KP_POOL_FRAMES; i++) {
+        IDeckLinkMutableVideoFrame *frame = nullptr;
+        IDeckLinkVideoBuffer *buffer = nullptr;
+        if (h->output->CreateVideoFrame(h->width, h->height, h->rowBytes, bmdFormat8BitYUV,
+                                        bmdFrameFlagDefault, &frame) != S_OK || !frame)
+            return -4;
+        if (frame->QueryInterface(IID_IDeckLinkVideoBuffer, (void **)&buffer) != S_OK || !buffer) {
+            frame->Release();
+            return -5;
+        }
+        h->pool_frames.push_back(frame);
+        h->pool_buffers.push_back(buffer);
+        h->free_frames.push_back(i);
+    }
     if (h->output->SetScheduledFrameCompletionCallback(h->callback) != S_OK)
         return -2;
-    if (h->output->StartScheduledPlayback(0, h->time_scale, 1.0) != S_OK)
-        return -3;
-    // Nächste Frame-Zeit an die aktuelle Stream-Zeit der Karte koppeln,
-    // sonst wären alle ersten Frames sofort „late“ (G4).
-    BMDTimeValue stream_time = 0;
-    double speed = 1.0;
-    if (h->output->GetScheduledStreamTime(h->time_scale, &stream_time, &speed) == S_OK)
-        h->next_time = stream_time + h->frame_dur;
-    else
-        h->next_time = h->frame_dur;
+    h->next_time = 0;
     h->scheduled = true;
     return 0;
 }
@@ -418,8 +396,70 @@ extern "C" void kp_dl_stats(void *handle, long *late, long *dropped, long *queue
     std::lock_guard<std::mutex> lock(h->queue_mtx);
     if (late) *late = h->late;
     if (dropped) *dropped = h->dropped;
-    if (queued) *queued = (long)h->queue.size();
+    if (queued) *queued = (long)h->in_flight.size();
     if (scheduled_count) *scheduled_count = h->scheduled_count;
+}
+
+static int kp_schedule(KpDecklink *h, const unsigned char *uyvy, int len) {
+    int index;
+    BMDTimeValue time;
+    bool started;
+    {
+        std::lock_guard<std::mutex> lock(h->queue_mtx);
+        h->frames_pushed++;
+        if (h->free_frames.empty()) {
+            h->dropped++;
+            return 0;
+        }
+        index = h->free_frames.back();
+        h->free_frames.pop_back();
+        h->in_flight.push_back(index);
+        time = h->next_time;
+        started = h->started;
+    }
+    void *buf = nullptr;
+    IDeckLinkVideoBuffer *buffer = h->pool_buffers[index];
+    if (buffer->StartAccess(bmdBufferAccessWrite) != S_OK || buffer->GetBytes(&buf) != S_OK || !buf) {
+        set_err("video buffer access failed");
+        return -3;
+    }
+    memcpy(buf, uyvy, (size_t)len);
+    buffer->EndAccess(bmdBufferAccessWrite);
+    // Frame käme zu spät: hinter die aktuelle Karten-Uhr legen und zählen.
+    bool underrun = false;
+    if (started) {
+        BMDTimeValue now = 0;
+        double speed = 1.0;
+        if (h->output->GetScheduledStreamTime(h->time_scale, &now, &speed) == S_OK && time <= now) {
+            time = now + h->frame_dur;
+            underrun = true;
+        }
+    }
+    HRESULT hr = h->output->ScheduleVideoFrame(h->pool_frames[index], time, h->frame_dur, h->time_scale);
+    bool start_now = false;
+    {
+        std::lock_guard<std::mutex> lock(h->queue_mtx);
+        if (underrun)
+            h->late++;
+        if (hr != S_OK) {
+            h->in_flight.pop_back();
+            h->free_frames.push_back(index);
+            h->late++;
+            char e[64];
+            snprintf(e, sizeof(e), "ScheduleVideoFrame hr=0x%lx", (unsigned long)hr);
+            set_err(e);
+            return -6;
+        }
+        h->scheduled_count++;
+        h->next_time = time + h->frame_dur;
+        start_now = !h->started && (int)h->in_flight.size() >= KP_PREROLL_FRAMES;
+        h->started = h->started || start_now;
+    }
+    if (start_now && h->output->StartScheduledPlayback(0, h->time_scale, 1.0) != S_OK) {
+        set_err("StartScheduledPlayback failed");
+        return -7;
+    }
+    return 0;
 }
 
 extern "C" int kp_dl_push(void *handle, const unsigned char *uyvy, int len) {
@@ -430,14 +470,9 @@ extern "C" int kp_dl_push(void *handle, const unsigned char *uyvy, int len) {
         set_err("frame size mismatch");
         return -2;
     }
-    // Scheduled Playback (G4): Frame einreihen; die Karte holt es im Takt.
-    if (h->scheduled) {
-        std::lock_guard<std::mutex> lock(h->queue_mtx);
-        h->queue.emplace_back(uyvy, uyvy + len);
-        h->callback->schedule_next_locked();
-        h->frames_pushed++;
-        return 0;
-    }
+    // Scheduled Playback (G4): Frame einplanen; nach dem Preroll startet die Karte.
+    if (h->scheduled)
+        return kp_schedule(h, uyvy, len);
     void *buf = nullptr;
     if (h->buffer->StartAccess(bmdBufferAccessWrite) != S_OK ||
         h->buffer->GetBytes(&buf) != S_OK || !buf) {
@@ -464,7 +499,7 @@ extern "C" void kp_dl_close(void *handle) {
     if (!h)
         return;
     if (h->output) {
-        if (h->scheduled)
+        if (h->started)
             h->output->StopScheduledPlayback(0, nullptr, h->time_scale);
         h->output->SetScheduledFrameCompletionCallback(nullptr);
         h->output->DisableVideoOutput();
@@ -472,6 +507,10 @@ extern "C" void kp_dl_close(void *handle) {
     }
     if (h->callback)
         h->callback->Release();
+    for (auto *buffer : h->pool_buffers)
+        buffer->Release();
+    for (auto *frame : h->pool_frames)
+        frame->Release();
     if (h->buffer)
         h->buffer->Release();
     if (h->frame)

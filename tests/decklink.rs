@@ -186,7 +186,6 @@ fn live_native_output_test_pattern() {
     out.start_scheduled().expect("start_scheduled");
     let frames = 125; // 5 s @ 25 fps
     for i in 0..frames {
-        let t0 = std::time::Instant::now();
         let mut rgba = vec![0u8; (1920 * 1080 * 4) as usize];
         let bar_x = (i * 16) % 1920;
         for y in 0..1080 {
@@ -200,11 +199,15 @@ fn live_native_output_test_pattern() {
         }
         out.push_frame(&VideoFrame::new(1920, 1080, rgba))
             .expect("push");
-        pace_frame(t0, 40);
+        pace_frame(&out);
     }
     std::thread::sleep(Duration::from_millis(500)); // auslaufen lassen
     assert_eq!(out.frames_pushed(), frames as u64);
     let (late, dropped, queued) = out.stats();
+    assert!(
+        queued <= 8,
+        "Frames erreichen die Karte nicht: {queued} warten"
+    );
     println!("stats: late={late} dropped={dropped} queued={queued}");
     assert_eq!(dropped, 0, "keine verlorenen Frames erwartet");
     println!(
@@ -236,7 +239,6 @@ fn live_com_output_test_pattern() {
     out.start_scheduled().expect("start_scheduled");
     let frames = 125;
     for i in 0..frames {
-        let t0 = std::time::Instant::now();
         let mut rgba = vec![0u8; (1920 * 1080 * 4) as usize];
         let bar_x = (i * 16) % 1920;
         for y in 0..1080 {
@@ -250,11 +252,15 @@ fn live_com_output_test_pattern() {
         }
         out.push_frame(&VideoFrame::new(1920, 1080, rgba))
             .expect("push");
-        pace_frame(t0, 40);
+        pace_frame(&out);
     }
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(out.frames_pushed(), frames as u64);
     let (late, dropped, queued) = out.stats();
+    assert!(
+        queued <= 8,
+        "Frames erreichen die Karte nicht: {queued} warten"
+    );
     println!("stats: late={late} dropped={dropped} queued={queued}");
     println!(
         "OK: {frames} Frames auf {} ausgegeben (scheduled)",
@@ -264,11 +270,11 @@ fn live_com_output_test_pattern() {
 
 /// H5: Schlaft nur die Restzeit des Frame-Intervalls (statt festem Sleep), damit
 /// das Schieben der Frames das Bild-Taktbudget nicht reißt (sonst late/dropped).
-fn pace_frame(t0: std::time::Instant, frame_ms: u64) {
-    let el = t0.elapsed();
-    let budget = Duration::from_millis(frame_ms);
-    if el < budget {
-        std::thread::sleep(budget - el);
+fn pace_frame(out: &kuhplay::engine::decklink_native::NativeOutput) {
+    // Die Karte taktet: warten, bis ihr Vorlauf wieder Platz hat.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while out.stats().2 >= 3 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -381,9 +387,7 @@ fn live_native_soak_color_bars() {
     out.start_scheduled().expect("scheduled");
     let frames = secs * u64::from(fps);
     let bars = color_bars_rgba();
-    let frame_ms = 1000 / u64::from(fps);
     for i in 0..frames {
-        let t0 = std::time::Instant::now();
         let mut rgba = bars.clone();
         // bewegter Marker (1 s wandert über das Bild) gegen Einfrieren
         let mx = ((i * 8) % 1920) as usize;
@@ -398,10 +402,14 @@ fn live_native_soak_color_bars() {
         }
         out.push_frame(&VideoFrame::new(1920, 1080, rgba))
             .expect("push");
-        pace_frame(t0, frame_ms);
+        pace_frame(&out);
     }
     std::thread::sleep(Duration::from_secs(2)); // Queue auslaufen lassen
     let (late, dropped, queued) = out.stats();
+    assert!(
+        queued <= 8,
+        "Frames erreichen die Karte nicht: {queued} warten"
+    );
     println!(
         "soak: secs={secs} frames={} late={late} dropped={dropped} queued={queued}",
         out.frames_pushed()
@@ -452,15 +460,17 @@ fn live_native_modes_2997_50() {
         }
         out.start_scheduled().expect("scheduled");
         let frames = 10 * u64::from(num) / u64::from(den); // 10 s
-        let frame_ms = 1000 * u64::from(den) / u64::from(num);
         for _ in 0..frames {
-            let t0 = std::time::Instant::now();
             out.push_frame(&VideoFrame::new(1920, 1080, bars.clone()))
                 .expect("push");
-            pace_frame(t0, frame_ms);
+            pace_frame(&out);
         }
         std::thread::sleep(Duration::from_secs(2));
         let (late, dropped, queued) = out.stats();
+        assert!(
+            queued <= 8,
+            "Frames erreichen die Karte nicht: {queued} warten"
+        );
         println!(
             "1080p{fps}: frames={} late={late} dropped={dropped} queued={queued}",
             out.frames_pushed()

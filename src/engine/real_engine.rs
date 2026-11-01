@@ -502,12 +502,28 @@ impl RealMediaEngine {
     /// fehlgeschlagener Push (z. B. Größen-Mismatch oder ffmpeg gestorben)
     /// deaktiviert die Ausgabe (kein Spam, kein Panic).
     fn tick_decklink(&mut self, now: Duration) {
-        if self.decklink.is_none() || now < self.decklink_next_push {
+        let Some(sink) = &self.decklink else {
             return;
+        };
+        // Die Karte ist der Taktgeber: Liefern, sobald ihr Vorlauf sinkt. So kann
+        // die Engine-Uhr nicht von der Karte wegdriften.
+        match sink.needs_frame() {
+            Some(false) => return,
+            Some(true) => {}
+            None => {
+                if now < self.decklink_next_push {
+                    return;
+                }
+                // Review G2: Bruch-Bildraten (29,97/59,94) korrekt takten. Fester
+                // Abstand, damit der grobe Engine-Takt die Bildrate nicht senkt.
+                let interval = super::decklink::fps_frame_interval(self.decklink_fps);
+                self.decklink_next_push = if now > self.decklink_next_push + interval * 2 {
+                    now + interval
+                } else {
+                    self.decklink_next_push + interval
+                };
+            }
         }
-        // Review G2: Bruch-Bildraten (29,97/59,94) korrekt takten.
-        let frame_interval = super::decklink::fps_frame_interval(self.decklink_fps);
-        self.decklink_next_push = now + frame_interval;
 
         let (width, height) = match &self.decklink {
             Some(out) => (out.width(), out.height()),

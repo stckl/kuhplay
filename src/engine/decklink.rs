@@ -216,45 +216,64 @@ pub fn rgba_to_uyvy422_cs(src: &VideoFrame, dst: &mut [u8], cs: ColorSpace) {
     let w = src.width as usize;
     let h = src.height as usize;
     assert!(dst.len() >= w * h * 2, "UYVY-Zielpuffer zu klein");
-    for y in 0..h {
-        for x in (0..w).step_by(2) {
-            let i0 = (y * w + x) * 4;
-            let i1 = (y * w + x + 1) * 4;
-            let (r0, g0, b0) = (
-                f32::from(src.rgba[i0]),
-                f32::from(src.rgba[i0 + 1]),
-                f32::from(src.rgba[i0 + 2]),
-            );
-            let (r1, g1, b1) = (
-                f32::from(src.rgba[i1]),
-                f32::from(src.rgba[i1 + 1]),
-                f32::from(src.rgba[i1 + 2]),
-            );
-            // Studio-Range: Y in [16,235], U/V in [16,240]; U/V gemittelt über
-            // das Pixelpaar (4:2:2), Y pro Pixel. Eingaben normiert 0..1,
-            // Koeffizienten je Farbraum (Review G1): BT.601 (SD) vs. BT.709 (HD/UHD).
-            let (kr, kg, kb) = match cs {
-                ColorSpace::Bt601 => (0.299, 0.587, 0.114),
-                ColorSpace::Bt709 => (0.2126, 0.7152, 0.0722),
-            };
-            let lum = |r: f32, g: f32, b: f32| {
-                let (rn, gn, bn) = (r / 255.0, g / 255.0, b / 255.0);
-                16.0 + 219.0 * (kr * rn + kg * gn + kb * bn)
-            };
-            let lum0 = lum(r0, g0, b0);
-            let lum1 = lum(r1, g1, b1);
-            let (rn, gn, bn) = ((r0 + r1) / 510.0, (g0 + g1) / 510.0, (b0 + b1) / 510.0);
-            let u = 128.0
-                + 224.0 * (-kr / (2.0 * (1.0 - kb)) * rn - kg / (2.0 * (1.0 - kb)) * gn + 0.5 * bn);
-            let v = 128.0
-                + 224.0 * (0.5 * rn - kg / (2.0 * (1.0 - kr)) * gn - kb / (2.0 * (1.0 - kr)) * bn);
-            let o = (y * w + x) * 2;
-            dst[o] = u.clamp(16.0, 240.0) as u8;
-            dst[o + 1] = lum0.clamp(16.0, 235.0) as u8;
-            dst[o + 2] = v.clamp(16.0, 240.0) as u8;
-            dst[o + 3] = lum1.clamp(16.0, 235.0) as u8;
-        }
+    if w == 0 || h == 0 {
+        return;
     }
+    // Studio-Range: Y in [16,235], U/V in [16,240]; U/V gemittelt über das
+    // Pixelpaar (4:2:2), Y pro Pixel. Festkomma (16 Bit), die Koeffizienten
+    // hängen vom Farbraum ab (Review G1): BT.601 (SD) vs. BT.709 (HD/UHD).
+    let (kr, kg, kb): (f64, f64, f64) = match cs {
+        ColorSpace::Bt601 => (0.299, 0.587, 0.114),
+        ColorSpace::Bt709 => (0.2126, 0.7152, 0.0722),
+    };
+    let fixed = |value: f64| (value * 65536.0).round() as i32;
+    let luma = [kr, kg, kb].map(|k| fixed(k * 219.0 / 255.0));
+    let (cb, cr) = (2.0 * (1.0 - kb), 2.0 * (1.0 - kr));
+    let u_coef = [-kr / cb, -kg / cb, 0.5].map(|k| fixed(k * 224.0 / 510.0));
+    let v_coef = [0.5, -kg / cr, -kb / cr].map(|k| fixed(k * 224.0 / 510.0));
+    const ROUND: i32 = 1 << 15;
+    let convert_row = |row: usize, out: &mut [u8]| {
+        let line = &src.rgba[row * w * 4..(row + 1) * w * 4];
+        for (pair, o) in line.chunks_exact(8).zip(out.chunks_exact_mut(4)) {
+            let [r0, g0, b0] = [pair[0], pair[1], pair[2]].map(i32::from);
+            let [r1, g1, b1] = [pair[4], pair[5], pair[6]].map(i32::from);
+            let y = |r: i32, g: i32, b: i32| {
+                (((16 << 16) + ROUND + luma[0] * r + luma[1] * g + luma[2] * b) >> 16)
+                    .clamp(16, 235) as u8
+            };
+            let (r, g, b) = (r0 + r1, g0 + g1, b0 + b1);
+            let c = |k: [i32; 3]| {
+                (((128 << 16) + ROUND + k[0] * r + k[1] * g + k[2] * b) >> 16).clamp(16, 240) as u8
+            };
+            o[0] = c(u_coef);
+            o[1] = y(r0, g0, b0);
+            o[2] = c(v_coef);
+            o[3] = y(r1, g1, b1);
+        }
+    };
+    // Großflächige Bilder auf mehrere Kerne verteilen.
+    let workers = if w * h < 500_000 {
+        1
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
+    };
+    let rows_per_worker = h.div_ceil(workers);
+    let dst = &mut dst[..w * h * 2];
+    std::thread::scope(|scope| {
+        for (worker, chunk) in dst.chunks_mut(rows_per_worker * w * 2).enumerate() {
+            let convert_row = &convert_row;
+            let mut run = move || {
+                for (i, out) in chunk.chunks_exact_mut(w * 2).enumerate() {
+                    convert_row(worker * rows_per_worker + i, out);
+                }
+            };
+            if workers == 1 {
+                run();
+            } else {
+                scope.spawn(run);
+            }
+        }
+    });
 }
 
 /// Geteilte DeckLink-Statistik (Engine → GUI/Remote), siehe EngineHandle.
@@ -286,6 +305,17 @@ impl DecklinkSink {
     pub fn capture() -> (Self, std::sync::Arc<std::sync::Mutex<u64>>) {
         let counter = std::sync::Arc::new(std::sync::Mutex::new(0u64));
         (Self::Capture(counter.clone()), counter)
+    }
+
+    /// Liegen bei der Karte zu wenige Frames? `None`: Die Senke hat keinen eigenen
+    /// Takt, dann gilt die Bildrate der Engine.
+    pub fn needs_frame(&self) -> Option<bool> {
+        /// Vorlauf bei der Karte, abgestimmt auf den Preroll der Plattform.
+        const TARGET_QUEUED: u64 = 3;
+        match self {
+            Self::Native(out) => Some(out.stats().2 < TARGET_QUEUED),
+            Self::Capture(_) => None,
+        }
     }
 
     /// Schreibt ein RGBA-Frame in die Senke.
