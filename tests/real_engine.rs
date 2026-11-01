@@ -214,6 +214,13 @@ fn collect_events(rx: &Receiver<EngineEvent>, timeout: Duration) -> Vec<EngineEv
 /// CI-Runner ohne Audio-Ausgabegerät: true = Tests mit Audio-Events überspringen.
 fn require_audio_output() -> bool {
     use kuhplay::engine::audio_backend::{default_output_name, output_devices};
+    // Linux-CI-Runner: ALSA meldet zwar „default“, aber ohne Soundkarte
+    // (/dev/snd fehlt) gibt es kein nutzbares Ausgabegerät.
+    #[cfg(target_os = "linux")]
+    if !std::path::Path::new("/dev/snd").exists() {
+        println!("SKIP: kein /dev/snd – CI-Runner ohne Soundkarte");
+        return false;
+    }
     let ok = !output_devices().is_empty() || default_output_name().is_some();
     if !ok {
         println!("SKIP: kein Audio-Ausgabegerät in dieser Umgebung (CI-Runner)");

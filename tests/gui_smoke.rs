@@ -1603,6 +1603,12 @@ fn audio_output_is_applied_and_saved_with_show() {
 fn default_output_is_listed() {
     use kuhplay::engine::audio_backend::{default_output_name, output_devices};
     let devices = output_devices();
+    #[cfg(target_os = "linux")]
+    if !std::path::Path::new("/dev/snd").exists() {
+        // Linux-CI-Runner: ALSA ohne Soundkarte – sauber überspringen.
+        println!("SKIP default_output_is_listed: kein /dev/snd (CI-Runner ohne Soundkarte)");
+        return;
+    }
     if devices.is_empty() {
         // CI-Runner ohne Audio-Ausgabegerät: sauber überspringen.
         println!("SKIP default_output_is_listed: kein Audio-Gerät in dieser Umgebung");
