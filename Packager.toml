@@ -1,0 +1,57 @@
+# Block U2: Pakete mit cargo-packager (CrabNebula, CLI + Library, MIT/Apache).
+# Bewusst gewählt: deckt NSIS (Windows x64), DMG (macOS) und .deb (Ubuntu)
+# ab, liest Version/Name aus Cargo.toml und hat mit `cargo packager signer`
+# einen Ed25519-Signer für die Update-Manifeste (cargo-packager-updater liest
+# signierte JSON-Manifeste von GitHub Releases – kompatibel zu unserem
+# latest.json/latest.json.sig, siehe scripts/release-manifest.sh).
+#
+# Aufruf (CI, siehe .github/workflows/release.yml):
+#   cargo packager --release -f nsis   # Windows
+#   cargo packager --release -f dmg    # macOS (arm64; x64 via zweiter Runner/UB)
+#   cargo packager --release -f deb    # Ubuntu
+#
+# Persistenz (U1): Shows sind user-Dateien (*.kuhplay), Einstellungen/PIN
+# liegen im eframe-Storage des User-Profils – Installer und Deinstallation
+# fassen beides nicht an (NSIS currentUser, deb ohne Purge der User-Daten).
+
+name = "kuhplay"
+product_name = "KuhPlay"
+identifier = "com.kuhplay.app"
+description = "Show control & cue playback. Optional: Blackmagic Desktop Video 16.0+ for DeckLink output (not bundled, see https://www.blackmagicdesign.com/de/support/download)."
+homepage = "https://github.com/stckl/kuhplay"
+out_dir = "dist/packager"
+binaries_dir = "target/release"
+
+# Baut Release-Binaries und vendored ffmpeg/ffprobe (LGPL, H3) neben die Binaries –
+# die Engine sucht sie dort. Schlägt Vendoring fehl, bricht der Build ab (H3).
+before_packaging_command = "cargo build --release --locked --features webview,decklink && bash scripts/vendor-ffmpeg.sh target/release"
+
+binaries = [
+  { path = "kuhplay", main = true },
+  { path = "kuhplay-webview" },
+]
+
+# ffmpeg/ffprobe + Lizenzdateien landen neben dem Haupt-Binary im Paket.
+external_binaries = ["ffmpeg", "ffprobe", "LICENSE-ffmpeg.txt", "BUILD-ffmpeg.txt"]
+
+resources = ["LICENSE", "LICENSES.md", "README.md", "icon.png"]
+
+icons = ["icon.png"]
+
+[nsis]
+# currentUser: kein Admin nötig, User-Daten bleiben bei Deinstallation.
+installer_mode = "currentUser"
+languages = ["English"]
+# U3: Hinweis auf den optionalen Blackmagic-Treiber direkt im Installer.
+# (Desktop Video wird nicht mitgeliefert – Weitergabe nicht geklärt.)
+[deb]
+# U2: Abhängigkeiten, die apt automatisch installiert (ffmpeg als LGPL-Quelle
+# siehe H3; zusätzlich wird ffmpeg gebündelt, siehe external_binaries).
+depends = ["ffmpeg", "libgtk-3-0", "libwebkit2gtk-4.1-0", "libasound2"]
+section = "video"
+priority = "optional"
+
+[macos]
+# Signierung/Notarisierung kommt in CI aus Secrets (CARGO_PACKAGER_* bzw.
+# APPLE_SIGNING_IDENTITY/TEAM + Notarization-Credentials), nie aus dem Repo.
+minimum_system_version = "11.0"

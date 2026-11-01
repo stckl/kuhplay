@@ -2387,10 +2387,20 @@ fn stage_editor_shows_display_placements_section() {
         output_has_text(&out, "DISPLAYS (STAGE 1:1"),
         "Placement-Section fehlt im Stage-Editor"
     );
-    assert!(
-        output_has_text(&out, "No displays detected") || output_has_text(&out, "Place stage"),
-        "Display-Hinweis/Button fehlt"
-    );
+    if app.displays.is_empty() {
+        // CI/Runner ohne Display: Hinweis-Zeile.
+        assert!(
+            output_has_text(&out, "No displays detected"),
+            "Display-Hinweis fehlt (keine Displays in dieser Umgebung)"
+        );
+    } else {
+        // Mit Displays: Combo mit Pixelmaßen oder „Place stage“-Button.
+        let combo_or_button = out.shapes.iter().any(|shape| {
+            matches!(shape.shape, egui::Shape::Text(ref t)
+                if t.galley.job.text.contains("px)") || t.galley.job.text.contains("Place stage"))
+        });
+        assert!(combo_or_button, "Display-Combo/Place-Button fehlt");
+    }
 }
 
 #[test]

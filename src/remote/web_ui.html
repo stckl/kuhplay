@@ -169,7 +169,7 @@ body.show #foot { background: var(--showbg); }
   <div id="list"><div id="actions"></div><div id="cues"></div></div>
   <div id="side"></div>
   <div id="insp"></div>
-  <div id="foot"></div>
+  <div id="foot"><span id="ver" class="dim" title="{{KUHPLAY_BUILD}}">KuhPlay v{{KUHPLAY_VERSION}}</span></div>
 </div>
 <div id="login"><form id="loginform"><h1>KuhPlay Remote</h1><label for="pin">Enter the PIN from Settings → Network in the app.</label><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8"><div id="loginmsg" role="alert"></div><button type="submit">Connect</button></form></div>
 <div id="ask"><div><div id="asktext" role="alertdialog"></div><div class="row"><button id="askno">Cancel</button><button id="askyes" class="danger">OK</button></div></div></div>
@@ -199,6 +199,7 @@ async function start() {
   } catch (e) { setTimeout(start, 2000); return; }
   $('login').classList.remove('open');
   connect();
+  pollUpdate();
 }
 function showLogin(text = '') {
   $('login').classList.add('open');
@@ -457,11 +458,19 @@ function renderSide() {
   }
   $('side').replaceChildren(tabs, ...body);
 }
+let updateInfo = null;
+async function pollUpdate() {
+  try { const r = await fetch('/api/update'); if (r.ok) { updateInfo = await r.json(); renderFoot(); } } catch (e) { /* offline: kein Update-Hinweis */ }
+}
+setInterval(pollUpdate, 60000);
 function renderFoot() {
   if (!S) { $('foot').replaceChildren(h('span', { id: 'conn', class: ws && ws.readyState === 1 ? '' : 'off' }, ws && ws.readyState === 1 ? 'Waiting for KuhPlay…' : 'Disconnected')); return; }
   const total = S.carts.reduce((sum, c) => sum + c.cue_count, 0), brokenIds = W ? Object.keys(W.problems) : [], live = ws && ws.readyState === 1;
   const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+  const ver = $('ver');
   $('foot').replaceChildren(
+    ver,
+    updateInfo && updateInfo.update_available ? h('span', { id: 'upd', title: 'New version available – update in the app (Help → Check for Updates…)' }, '⇪ v' + updateInfo.latest + (updateInfo.verified ? '' : ' (unsigned)')) : null,
     h('button', { class: 'seg' + (S.show_mode ? '' : ' on'), onclick: () => send('set_show_mode', { enabled: false }) }, 'Edit'),
     h('button', { class: 'seg' + (S.show_mode ? ' on' : ''), onclick: () => send('set_show_mode', { enabled: true }) }, 'Show'),
     brokenIds.length ? h('button', { id: 'broken', title: W.problems[brokenIds[0]].join('\n'), onclick: () => { selected = [brokenIds[0]]; render(); } }, '⚠ ' + brokenIds.length + ' broken') : null,

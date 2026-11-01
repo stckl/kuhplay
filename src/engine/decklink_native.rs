@@ -25,16 +25,23 @@ pub fn devices_with_hint() -> (bool, Vec<String>, Option<String>) {
         return (
             false,
             Vec::new(),
-            Some("DeckLink driver not found. Install Blackmagic Desktop Video (16.0 or newer) and restart the app.".to_string()),
+            Some("DeckLink driver not found. Install Blackmagic Desktop Video (16.0 or newer) and restart the app: https://www.blackmagicdesign.com/de/support/download".to_string()),
         );
     }
     let devices = platform::list_devices();
-    let hint = if devices.is_empty() {
-        Some("DeckLink driver is present but no device was found. After a macOS update, reinstall/register Desktop Video (the setup may look active).".to_string())
-    } else {
-        None
-    };
+    // U3: Treiberversion < 16.0 klar benennen (SDK-16.0-Layout wird gebraucht).
+    let mut hint = driver_version()
+        .as_deref()
+        .and_then(crate::engine::decklink::driver_version_warning);
+    if hint.is_none() && devices.is_empty() {
+        hint = Some("DeckLink driver is present but no device was found. After a macOS update, reinstall/register Desktop Video (the setup may look active).".to_string());
+    }
     (true, devices, hint)
+}
+
+/// U3: Treiberversion (Desktop Video) der Plattform-SDK, falls ermittelbar.
+pub fn driver_version() -> Option<String> {
+    platform::driver_version()
 }
 
 /// Ein unterstützter Display-Mode der Karte (G5: von der Karte abgefragt).
@@ -155,6 +162,10 @@ mod platform {
         com_list().map(|d| !d.is_empty()).unwrap_or(false) || com_list().is_ok()
     }
 
+    pub fn driver_version() -> Option<String> {
+        crate::engine::decklink_com::driver_version()
+    }
+
     pub fn list_devices() -> Vec<String> {
         com_list().unwrap_or_default()
     }
@@ -198,6 +209,7 @@ mod platform {
         fn kp_dl_device_count() -> i32;
         fn kp_dl_device_name(index: i32, out: *mut c_char, outlen: i32) -> i32;
         fn kp_dl_last_error(out: *mut c_char, outlen: i32) -> i32;
+        fn kp_dl_driver_version() -> *const c_char;
         fn kp_dl_open(name: *const c_char, mode: u32, width: i32, height: i32) -> *mut c_void;
 
         fn kp_dl_mode_count(h: *mut c_void) -> i32;
@@ -242,6 +254,21 @@ mod platform {
 
     pub fn available() -> bool {
         unsafe { kp_dl_available() == 1 }
+    }
+
+    pub fn driver_version() -> Option<String> {
+        let p = unsafe { kp_dl_driver_version() };
+        if p.is_null() {
+            return None;
+        }
+        let s = unsafe { std::ffi::CStr::from_ptr(p) }
+            .to_string_lossy()
+            .into_owned();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     }
 
     pub fn list_devices() -> Vec<String> {
@@ -354,6 +381,10 @@ mod platform {
 
     pub fn available() -> bool {
         false
+    }
+
+    pub fn driver_version() -> Option<String> {
+        None
     }
 
     pub fn list_devices() -> Vec<String> {

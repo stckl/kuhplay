@@ -303,6 +303,11 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.close_menu();
             }
             ui.separator();
+            if ui.button("Check for Updates…").clicked() {
+                app.start_update_check();
+                app.ui.update_dialog_open = true;
+                ui.close_menu();
+            }
             if ui.button("About KuhPlay").clicked() {
                 app.ui.about_open = true;
                 ui.close_menu();

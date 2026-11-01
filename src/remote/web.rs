@@ -276,6 +276,7 @@ pub fn start_web_remote_with_auth(
         .route("/api/command", post(handle_command))
         .route("/api/status", get(handle_status))
         .route("/api/workspace", get(handle_workspace))
+        .route("/api/update", get(handle_update))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -312,8 +313,31 @@ pub fn broadcast_event(state: &WebRemoteState, event: RemoteEvent) {
 // HTTP-Handler
 // ---------------------------------------------------------------------
 
-async fn index_html() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index_html() -> Html<String> {
+    // U1: Version + Build-Info in die Web-Remote injizieren.
+    Html(
+        INDEX_HTML
+            .replace("{{KUHPLAY_VERSION}}", crate::update::current_version())
+            .replace("{{KUHPLAY_BUILD}}", &crate::update::build_info()),
+    )
+}
+
+/// U4: Update-Status für die Web-Remote – nur Hinweis, nie Installation.
+async fn handle_update() -> axum::Json<serde_json::Value> {
+    let mut info = serde_json::json!({
+        "current": crate::update::current_version(),
+        "build": crate::update::build_info(),
+    });
+    if let Some(last) = crate::gui::update_ui::last_update_info() {
+        if let Some(obj) = info.as_object_mut() {
+            if let Some(lastobj) = last.as_object() {
+                for (k, v) in lastobj {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    axum::Json(info)
 }
 
 /// `false`, wenn die Anfrage aus einer fremden Webseite stammt: Der Browser
@@ -517,6 +541,17 @@ const INDEX_HTML: &str = include_str!("web_ui.html");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_html_version_wird_injiiziert() {
+        // U1: Platzhalter in der eingebetteten UI werden serverseitig ersetzt.
+        assert!(INDEX_HTML.contains("{{KUHPLAY_VERSION}}"));
+        let served = INDEX_HTML
+            .replace("{{KUHPLAY_VERSION}}", crate::update::current_version())
+            .replace("{{KUHPLAY_BUILD}}", &crate::update::build_info());
+        assert!(served.contains(&format!("v{}", crate::update::current_version())));
+        assert!(!served.contains("{{KUHPLAY_VERSION}}"));
+    }
 
     #[test]
     fn index_html_contains_ui_elements() {

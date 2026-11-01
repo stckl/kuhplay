@@ -243,6 +243,12 @@ pub struct ShowApp {
     pub(super) remote_config: RemoteConfig,
     /// Seit dem letzten Push relevante Änderung → Remote-Status broadcasten.
     remote_dirty: bool,
+    /// Update-Zustand (Block U4) + Kanäle der Hintergrund-Threads.
+    pub update_state: super::update_ui::UpdateUiState,
+    pub update_rx: Option<crossbeam_channel::Receiver<super::update_ui::UpdateCheckResult>>,
+    pub update_dl_rx: Option<crossbeam_channel::Receiver<Result<std::path::PathBuf, String>>>,
+    /// Auto-Update-Check beim Start schon gelaufen (einmalig pro Sitzung).
+    auto_update_checked: bool,
     /// Zeitpunkt des letzten Remote-Status-Push (sonst periodisch 1×/s).
     last_status_push: Instant,
     /// Broken-Cue-Cache (inkl. Gruppen-Kinder für das ✕ in der Cue-Liste;
@@ -583,6 +589,10 @@ impl ShowApp {
             audio_devices: None,
             remote_config: RemoteConfig::default(),
             remote_dirty: false,
+            update_state: super::update_ui::UpdateUiState::Idle,
+            update_rx: None,
+            update_dl_rx: None,
+            auto_update_checked: false,
             last_status_push: Instant::now(),
             problems: Vec::new(),
             problems_at: None,
@@ -3189,7 +3199,14 @@ impl ShowApp {
                     ui.label(RichText::new("KuhPlay").size(24.0).strong());
                     ui.label("Show control & cue playback – Rust/egui.");
                     ui.separator();
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.label(crate::update::build_info());
+                    ui.label(format!(
+                        "Kanal: GitHub Releases ({})",
+                        crate::update::REPO_OWNER
+                    ));
+                    ui.separator();
+                    ui.label("Lizenzen: KuhPlay, egui/eframe und Phosphor-Icons: MIT;");
+                    ui.label("ffmpeg/ffprobe (im Paket): LGPL v2.1+ – siehe LICENSE-ffmpeg.txt / LICENSES.md.");
                     if ui.button("Close").clicked() {
                         app.ui.about_open = false;
                     }
@@ -3268,6 +3285,27 @@ impl eframe::App for ShowApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Block U4: Update-Check (Auto-Check einmalig, dann manuelle Checks).
+        self.poll_update_results();
+        self.poll_update_download();
+        if !self.auto_update_checked {
+            self.auto_update_checked = true;
+            if self.ui.auto_check_updates {
+                self.start_update_check();
+            }
+        }
+        if self.ui.update_dialog_open
+            || matches!(
+                self.update_state,
+                super::update_ui::UpdateUiState::Available(_)
+                    | super::update_ui::UpdateUiState::Failed(_)
+                    | super::update_ui::UpdateUiState::Downloading
+                    | super::update_ui::UpdateUiState::ReadyToInstall(_)
+            )
+        {
+            self.ui.update_dialog_open = true;
+            self.draw_update_window(ctx);
+        }
         // Theme wird einmalig in `main` (CreationContext) gesetzt – nicht
         // jeden Frame (TODO.md Phase 0b).
         self.swap_text_field_registry();

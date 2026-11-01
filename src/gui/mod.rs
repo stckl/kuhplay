@@ -46,6 +46,7 @@ pub mod status_window;
 pub mod target_search;
 pub mod theme;
 pub mod toolbox;
+pub mod update_ui;
 pub mod viewport_window;
 pub mod workspace_settings;
 

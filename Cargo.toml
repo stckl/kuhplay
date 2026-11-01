@@ -41,6 +41,13 @@ rosc = "0.10"
 # MIDI-Steuerung: Controller-Input (midir; macOS CoreMIDI, Linux ALSA)
 midir = "0.11"
 
+# Update-Funktion (Block U): Ed25519-Signaturprüfung des Release-Manifests
+# (nie unsignierte Updates installieren) + SHA-256. HTTP läuft über das
+# systemeigene `curl` (ab Win10 immer vorhanden) – bewusst keine TLS-Crate,
+# damit der Windows-Cross-Check ohne C-Toolchain grün bleibt.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = "0.10"
+
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -128,6 +135,8 @@ windows-core = "0.62"
 cc = "1"
 
 [dev-dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }
+
 hound = "3.5.1"
 # Test-Suite: echte Temp-Dateien für Resilienz-Tests
 tempfile = "3"

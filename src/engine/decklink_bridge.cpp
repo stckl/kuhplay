@@ -49,6 +49,38 @@ static void set_err(const char *msg) {
     snprintf(g_last_error, sizeof(g_last_error), "%s", msg ? msg : "");
 }
 
+// U3: Treiberversion (Desktop Video) als std::string (macOS: CFStringRef, Linux: const char*).
+static std::string api_version_string(IDeckLinkAPIInformation *info) {
+#if defined(__APPLE__)
+    CFStringRef v = nullptr;
+    if (info->GetString(BMDDeckLinkAPIVersion, &v) != S_OK || !v)
+        return "";
+    char buf[64];
+    bool ok = CFStringGetCString(v, buf, sizeof(buf), kCFStringEncodingUTF8);
+    CFRelease(v);
+    return ok ? buf : "";
+#else
+    const char *v = nullptr;
+    if (info->GetString(BMDDeckLinkAPIVersion, &v) != S_OK || !v)
+        return "";
+    return v;
+#endif
+}
+
+// U3: Treiberversion (Desktop Video) über IDeckLinkAPIInformation::GetString('vers').
+extern "C" const char *kp_dl_driver_version(void) {
+    static std::string version;
+    static bool done = false;
+    if (!done) {
+        done = true;
+        if (auto *info = CreateDeckLinkAPIInformationInstance()) {
+            version = api_version_string(info);
+            info->Release();
+        }
+    }
+    return version.c_str();
+}
+
 extern "C" int kp_dl_last_error(char *out, int outlen) {
     if (!out || outlen <= 0)
         return 0;
@@ -97,14 +129,10 @@ extern "C" int kp_dl_device_name(int index, char *out, int outlen) {
     IDeckLink *dev = nullptr;
     while (it->Next(&dev) == S_OK && dev) {
         if (n == index) {
-            CFStringRef name = nullptr;
-            if (dev->GetDisplayName(&name) == S_OK && name) {
-                char buf[256];
-                if (CFStringGetCString(name, buf, sizeof(buf), kCFStringEncodingUTF8)) {
-                    snprintf(out, (size_t)outlen, "%s", buf);
-                    ok = (int)strlen(out);
-                }
-                CFRelease(name);
+            std::string name = device_display_name(dev);
+            if (!name.empty()) {
+                snprintf(out, (size_t)outlen, "%s", name.c_str());
+                ok = (int)strlen(out);
             }
             dev->Release();
             break;

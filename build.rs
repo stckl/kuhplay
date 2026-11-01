@@ -7,6 +7,24 @@ use std::path::Path;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // U1: Build-Info für About/Web-Remote (nie Secrets, nur öffentlicher Commit).
+    let sha = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=KUH_GIT_SHA={sha}");
+    let date = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%d"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unbekannt".to_string());
+    println!("cargo:rustc-env=KUH_BUILD_DATE={date}");
     println!("cargo:rerun-if-changed=src/engine/decklink_bridge.cpp");
 
     let decklink = std::env::var_os("CARGO_FEATURE_DECKLINK").is_some();

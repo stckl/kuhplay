@@ -1,6 +1,6 @@
 //! Integrationstests für die DeckLink-Ausgabe (`src/engine/decklink.rs` +
 // Ohne decklink-Feature sind die Live-Tests cfg-entfernt → Imports ungenutzt.
-#![cfg_attr(not(feature = "decklink"), allow(unused_imports))]
+#![cfg_attr(not(feature = "decklink"), allow(unused_imports, dead_code))]
 //! `decklink_native.rs`): Engine-Anbindung über die Capture-Senke (G6: kein
 //! ffmpeg-Ausgabepfad mehr), Config-from-env, plus Live-Hardware-Test
 //! (nur mit KUHPLAY_DECKLINK_LIVE=1 und --ignored, siehe G8).

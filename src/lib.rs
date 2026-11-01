@@ -97,3 +97,4 @@ pub mod core;
 pub mod engine;
 pub mod gui;
 pub mod remote;
+pub mod update;

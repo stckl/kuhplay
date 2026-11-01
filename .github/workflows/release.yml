@@ -11,6 +11,54 @@ permissions:
   contents: read
 
 jobs:
+  # U2/U5: Installer-Pakete (NSIS/DMG/DEB) mit cargo-packager, plus signiertes
+  # Update-Manifest (latest.json + latest.json.sig, Ed25519/minisign).
+  packager:
+    name: Installer ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { artifact: windows-x64, os: windows-2022, format: nsis }
+          - { artifact: macos-arm64, os: macos-15, format: dmg }
+          - { artifact: linux-x64, os: ubuntu-24.04, format: deb }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo-packager installieren
+        run: cargo install cargo-packager --locked
+      - name: System-Setup
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential pkg-config libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+          fi
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            brew install create-dmg || true
+          fi
+      - name: Build + ffmpeg vendoren (H3, LGPL) + Installer
+        run: |
+          cargo build --release --locked --features webview,decklink
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            powershell -ExecutionPolicy Bypass -File scripts\vendor-ffmpeg.ps1 target\release
+          else
+            bash scripts/vendor-ffmpeg.sh target/release
+          fi
+          cargo packager --release -f ${{ matrix.format }} -o dist/packager
+      - name: Update-Manifest erzeugen + signieren (Ed25519)
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: scripts/release-manifest.sh dist/packager "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.artifact }}
+          if-no-files-found: error
+          path: dist/packager/*
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -62,7 +110,7 @@ jobs:
   draft:
     name: Release-Entwurf
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, packager]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -72,9 +120,29 @@ jobs:
           path: pakete
           merge-multiple: true
 
-      - name: Entwurf anlegen
+      # U5: signiertes Manifest aus den Paketen; ohne Secret -> TEST-UNSIGNED.
+      - name: Manifest + Signatur
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          cargo install cargo-packager --locked
+          scripts/release-manifest.sh pakete "${GITHUB_REF_NAME#v}"
+          if [ -n "${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}" ]; then
+            echo "SIGNED=1" >> "$GITHUB_ENV"
+          else
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+          fi
+
+      - name: Entwurf anlegen (nie veröffentlichen – Freigabe erforderlich)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" pakete/* --draft --verify-tag --generate-notes --title "KuhPlay $TAG"
+        run: |
+          if [ "$SIGNED" = "1" ]; then
+            title="KuhPlay $TAG"
+          else
+            title="TEST-UNSIGNED KuhPlay $TAG (kein Signaturschlüssel in Secrets – Installation in der App gesperrt)"
+          fi
+          gh release create "$TAG" pakete/* --draft --verify-tag --generate-notes --title "$title"

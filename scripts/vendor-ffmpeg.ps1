@@ -6,8 +6,9 @@
 # Decode-Smoke-Test. Schlägt etwas fehl, bricht das Skript ab (ErrorActionPreference
 # Stop) – der Release-Build muss dann abbrechen.
 # Aufruf: scripts\vendor-ffmpeg.ps1 <Zielverzeichnis>
-$ErrorActionPreference = 'Stop'
+# H6: param() muss die erste ausführbare Anweisung sein (sonst „param not found“).
 param([Parameter(Mandatory = $true)][string]$Dest)
+$ErrorActionPreference = 'Stop'
 
 $BtbnTag  = 'autobuild-2026-10-31-12-59'
 $BtbnVer  = 'n9.0.2-39-g7adfbe40dc'   # ffmpeg 9.0.2, LGPL-Variante

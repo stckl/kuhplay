@@ -377,9 +377,12 @@ fn engine_webview_snapshot_backoff_bei_fehlern() {
         })
         .unwrap();
 
-    // ~1 s ticken: ohne Backoff wären es ~10 Snapshot-Requests (100 ms Raster).
+    // ~1 s ticken (Zeitfenster statt fester Tickzahl, damit ausgelastete
+    // CI-Runner nicht mehr Requests produzieren): ohne Backoff wären es
+    // ~10 Snapshot-Requests (100 ms Raster).
     let mut snapshot_errors = 0;
-    for _ in 0..50 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
         engine.tick();
         while let Ok(event) = evt_rx.try_recv() {
             if matches!(event, EngineEvent::Error { message, .. } if message.starts_with("snapshot:"))
@@ -387,7 +390,7 @@ fn engine_webview_snapshot_backoff_bei_fehlern() {
                 snapshot_errors += 1;
             }
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(5));
     }
 
     // Backoff: nach Fehlschlägen wird nur noch alle 500 ms retried (statt

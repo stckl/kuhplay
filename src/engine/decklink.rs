@@ -131,6 +131,22 @@ pub fn scheduled_time_params(fps: u32) -> (i64, i64) {
     }
 }
 
+/// U3: Warnung, wenn die Treiberversion (Desktop Video) unter 16.0 liegt –
+/// dann fehlt u. a. das SDK-16.0-Interface-Layout, das KuhPlay nutzt.
+pub fn driver_version_warning(version: &str) -> Option<String> {
+    let major = version
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|p| !p.is_empty())
+        .and_then(|p| p.parse::<u32>().ok())?;
+    if major < 16 {
+        Some(format!(
+            "Blackmagic Desktop Video {version} ist älter als 16.0 – bitte aktualisieren: https://www.blackmagicdesign.com/de/support/download"
+        ))
+    } else {
+        None
+    }
+}
+
 /// Wandelt ein RGBA-Frame in ein Key-Signal (Luma = Alpha): RGB = Alpha-Wert.
 /// Für den Key-SDI-Ausgang beim 2-Kabel-Key/Fill.
 pub fn alpha_to_luma(src: &VideoFrame) -> VideoFrame {
@@ -340,6 +356,15 @@ mod tests {
     fn default_config_ist_1080p25() {
         let config = DecklinkConfig::default();
         assert_eq!((config.width, config.height, config.fps), (1920, 1080, 25));
+    }
+
+    #[test]
+    fn driver_version_warnung_ab_16() {
+        assert!(driver_version_warning("16.5.1").is_none());
+        assert!(driver_version_warning("17.0").is_none());
+        let w = driver_version_warning("12.7.2").unwrap();
+        assert!(w.contains("16.0") && w.contains("blackmagicdesign.com"));
+        assert!(driver_version_warning("kaputt").is_none());
     }
 
     #[test]

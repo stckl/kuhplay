@@ -580,6 +580,18 @@ fn draw_output_mode(ui: &mut egui::Ui, app: &mut ShowApp) {
 
 /// PIN der Web-Remote: anzeigen, ändern, neu würfeln.
 fn draw_web_pin(ui: &mut egui::Ui, app: &mut ShowApp) {
+    // Block U4: Auto-Update-Check beim Start (abschaltbar für Offline-Shows).
+    ui.add_space(theme::size::SPACE_MEDIUM_LARGE);
+    theme::section_label(ui, "Updates");
+    ui.checkbox(
+        &mut app.ui.auto_check_updates,
+        "Automatisch beim Start nach Updates suchen (GitHub Releases, signiert)",
+    );
+    if ui.button("Jetzt auf Updates prüfen…").clicked() {
+        app.start_update_check();
+        app.ui.update_dialog_open = true;
+    }
+    ui.add_space(theme::size::SPACE_MEDIUM_LARGE);
     use crate::remote::web::{generate_pin, valid_pin};
     ui.add_space(theme::size::SPACE_MEDIUM_LARGE);
     theme::section_label(ui, "Web Remote Access");

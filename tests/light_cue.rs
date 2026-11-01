@@ -200,6 +200,15 @@ fn real_engine_sacn_sequence_cid_source_name() {
 
 #[test]
 fn real_engine_broadcast_host_erlaubt() {
+    // CI/Runner ohne Broadcast-Route (ENETUNREACH/EACCES) sauber überspringen.
+    let probe = std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| {
+        s.set_broadcast(true)?;
+        s.send_to(&[0u8; 1], "255.255.255.255:9930")
+    });
+    if let Err(e) = probe {
+        println!("SKIP real_engine_broadcast_host_erlaubt: Broadcast in dieser Umgebung nicht routbar ({e})");
+        return;
+    }
     // Regression Review A3: 255.255.255.255 ohne SO_BROADCAST → Permission denied.
     let (mut engine, rx_events) = direct_engine();
     let msg = LightMessage {

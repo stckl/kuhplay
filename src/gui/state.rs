@@ -123,6 +123,17 @@ pub struct UiState {
     /// Unterseite von Settings → Video.
     #[serde(skip)]
     pub video_tab: super::workspace_settings::VideoTab,
+    /// Update-Dialog geöffnet (Block U4).
+    #[serde(default)]
+    pub update_dialog_open: bool,
+    /// Automatische Update-Prüfung beim Start (Block U4; für Offline-Shows
+    /// abschaltbar). Persistiert im eframe-Storage.
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Laufzeit-Zustand der Find-Leiste über der Cue-Liste (Phase 5).
@@ -162,6 +173,8 @@ impl Default for UiState {
             target_search_open: false,
             audition_window_open: false,
             status_window_open: false,
+            update_dialog_open: false,
+            auto_check_updates: true,
             target_search_query: String::new(),
             test_grid: false,
             find: FindState::default(),

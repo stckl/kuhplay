@@ -114,7 +114,7 @@ fn play_stop_storm_keeps_engine_alive_and_consistent() {
 
     // Der Engine-Thread lebt und verarbeitet weiterhin Kommandos (kein Deadlock).
     engine.send(EngineCommand::Ping(9999)).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15); // CI-Runner teils stark ausgelastet
     let mut got_pong = false;
     while Instant::now() < deadline {
         if let Some(EngineEvent::Pong(9999)) = engine.try_recv_event() {

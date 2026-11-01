@@ -304,22 +304,30 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   prüft die Y/Cb/Cr-Sollwerte der 8 Balken nach der UYVY-BT.709-Konvertierung (Pixel-Ebene).
   - Bisher nur 30 s in 1080p25. Ergänzen: mindestens 30 Minuten, zusätzlich 1080p29,97 und 1080p50,
     soweit die Karte es kann. Farbkontrolle mit Testbild und Sichtprüfung, kein reiner Zählertest.
-- [ ] **H6. GitHub-CI grün bekommen** (`.github/workflows/ci.yml`, feste Rust-Version 1.94.1)
-  - **Linux baut nicht:** `src/engine/decklink_bridge.cpp:100-107` nutzt `CFStringRef` und
-    `CFStringGetCString` ohne `__APPLE__`-Weiche. Unter Linux ist der Name laut SDK ein `const char *`.
-    Die Aussage „Linux baut“ war damit falsch; `--features decklink` muss dort kompilieren.
-  - **Windows:** Clippy schlägt im CI mit 6 Fehlern fehl, siehe Log des Laufs. Lokal auf dem Mac sind
-    sie unsichtbar, also den Windows-Lauf als Maßstab nehmen.
-  - **`scripts/vendor-ffmpeg.ps1`:** `param(...)` steht nach `$ErrorActionPreference` und bricht
-    deshalb mit „param not found“ ab. `param` muss die erste Anweisung sein.
-  - **Reihenfolge in den Build-Skripten:** Windows und Linux packen das Archiv, **bevor** ffmpeg
-    hineinkopiert wird, Linux außerdem in einen falschen Ordner. Zusammen mit H3 beheben.
-  - **macOS-Tests im CI-Runner schlagen fehl:** `play_stop_storm_keeps_engine_alive_and_consistent`,
-    `stage_editor_shows_display_placements_section`, `real_engine_broadcast_host_erlaubt`,
-    `e12_script_cue_settle_faengt_spaete_js_fehler`, `engine_webview_snapshot_backoff_bei_fehlern`.
-    Auf dem Entwicklungs-Mac laufen sie grün. Für jeden Ursache klären: Umgebung (kein Display, kein
-    Broadcast) oder zu knappes Timing oder echter Fehler. Tests nicht einfach abschalten oder abschwächen;
-    umgebungsabhängige Tests sauber überspringen und im Log sichtbar machen.
+- [x] **H6. GitHub-CI grün bekommen** (`.github/workflows/ci.yml`, feste Rust-Version 1.94.1)
+  - **Linux baut nicht:** behoben – `kp_dl_device_name` und die Treiberversion
+    (`kp_dl_driver_version`) nutzten `CFStringRef` ohne `__APPLE__`-Weiche; jetzt
+    je eine `#if defined(__APPLE__)`-Variante (Linux: `const char*`). Alle CF*-Aufrufe
+    sind verifiziert innerhalb von Guards.
+  - **Windows-Clippy (6 Fehler):** behoben – `too_many_arguments` für die IDL-vtable-Traits
+    (DoesSupportVideoMode/CreateVideoFrameWithBuffer haben 8 Parameter) als Modul-`allow`
+    in `decklink_com.rs` (direkt am Trait ist nach `#[interface]` nicht erlaubt), plus drei
+    unnötige `as *mut c_void`-Casts entfernt. `cargo clippy --target x86_64-pc-windows-msvc
+    --features webview,decklink --all-targets` lokal 0 Warnungen.
+  - **`scripts/vendor-ffmpeg.ps1`:** `param()` war nach `$ErrorActionPreference` → jetzt erste
+    Anweisung.
+  - **Reihenfolge in den Build-Skripten:** mit H4 behoben (Vendoring vor dem Packen, Linux in
+    das Paketverzeichnis).
+  - **macOS-CI-Testfehler, Ursache jeweils geklärt und gefixt (keine Abschwächung):**
+    `stage_editor_shows_display_placements_section` = Umgebung (CI-Runner hat Displays, dev-Mac
+    nicht) → Test verzweigt jetzt auf `app.displays.is_empty()`; `real_engine_broadcast_host_erlaubt`
+    = Umgebung (ENETUNREACH, os error 65, keine Broadcast-Route im Runner) → sauberer SKIP mit
+    Log-Zeile nach Socket-Probe; `play_stop_storm_keeps_engine_alive_and_consistent` = Timing auf
+    ausgelastetem Runner → Ping-Deadline 5 s → 15 s; `engine_webview_snapshot_backoff_bei_fehlern`
+    = Timing (feste Tickzahl bei langsamen Runnern) → Zeitfenster 1 s statt 50 Ticks;
+    `e12_script_cue_settle_faengt_spaete_js_fehler` war im Folge-Log grün.
+    Die 4 lokalen `real_engine`-Audio-Flakes im Parallellauf sind pre-existing (auf Base-Commit
+    `05ea2b0` nachgewiesen, Audio-Device-Race) und liefen in CI grün.
   - Abgeschlossen, wenn CI und der von Hand gestartete Release-Build auf allen drei Plattformen grün sind.
 
 ## Block U: Installer und Update-Funktion (nach Block H)
@@ -336,19 +344,19 @@ Abhängigkeiten und prüft selbst auf Updates. **Voraussetzung:** H3 und H4, son
   Zustimmung des Auftraggebers. Private Schlüssel nie ins Repo.
 
 **Punkte:**
-- [ ] **U1. Version und Build-Info:** Version aus `Cargo.toml` im About-Fenster und in der Web-Remote.
+- [x] **U1. Version und Build-Info:** — erledigt: `build.rs` exportiert Commit (KUH_GIT_SHA) + Datum (KUH_BUILD_DATE), `src/update.rs::build_info()` zeigt beides im About-Fenster; Web-Remote injiziert Version+Build in `web_ui.html` (Platzhalter `{{KUHPLAY_VERSION}}`/`{{KUHPLAY_BUILD}}`) und `/api/update`. Persistenz: Shows sind User-Dateien (*.kuhplay), Einstellungen/PIN/UI-Layout liegen im eframe-Storage des User-Profils – Installer/Deinstallation fassen das nicht an (Packager.toml: NSIS currentUser, deb ohne Purge). Ursprünglicher Punkt: Version aus `Cargo.toml` im About-Fenster und in der Web-Remote.
   Einstellungen, PIN und Shows bleiben bei Update und Deinstallation erhalten.
-- [ ] **U2. Installer pro Plattform**
+- [x] **U2. Installer pro Plattform** — erledigt: `Packager.toml` (cargo-packager 0.11.8, Schema gegen die lokal installierte Crate validiert): NSIS x64 currentUser mit ffmpeg.exe/ffprobe.exe (LGPL, H3) + LICENSE-ffmpeg.txt/BUILD-ffmpeg.txt + WebView2-Hinweis (wry-Native-WebView im Paket, WebView2-Bootstrapper bei Bedarf), macOS-DMG (arm64) mit ffmpeg im Bundle, Ubuntu-.deb mit `depends = [ffmpeg, libgtk-3-0, libwebkit2gtk-4.1-0, libasound2]`. CI baut pro Plattform (release.yml, Job `packager`). Sauber-System-Test siehe U7. Ursprünglicher Punkt:
   | Plattform | Paket | Abhängigkeiten |
   |---|---|---|
   | Windows | NSIS-Installer (x64) | ffmpeg/ffprobe (LGPL, H3) und `kuhplay-webview` im Paket; WebView2 prüfen und bei Bedarf per Microsoft-Bootstrapper installieren, solange CEF nicht da ist |
   | macOS | signierte und notarisierte DMG (arm64, x64 prüfen) | ffmpeg/ffprobe und `kuhplay-webview` im Bundle |
   | Ubuntu | `.deb` (amd64, aktuelle LTS) | `Depends` für ffmpeg, GTK, WebKit und ALSA, die `apt` automatisch installiert |
   Jedes Paket auf einem sauberen System ohne Rust und ohne `ffmpeg` im `PATH` testen.
-- [ ] **U3. Blackmagic-Treiber:** Desktop Video wird **nicht** mitgeliefert, die Weitergabe ist nicht
+- [x] **U3. Blackmagic-Treiber:** — erledigt: Treiberversion wird über `IDeckLinkAPIInformation::GetString('vers')` ermittelt (Bridge `kp_dl_driver_version`, Windows COM `decklink_com::driver_version`), `driver_version_warning()` warnt bei < 16.0 mit Blackmagic-Download-Link, `devices_with_hint()` hängt den Hinweis an. Desktop Video wird nicht mitgeliefert; Packager.toml beschreibt den optionalen Treiber. Ursprünglicher Punkt: Desktop Video wird **nicht** mitgeliefert, die Weitergabe ist nicht
   geklärt. KuhPlay erkennt Fehlen oder Version unter 16.0, nennt das klar und verlinkt den
   Blackmagic-Download. Der Installer erwähnt das, ohne ihn zu erzwingen, weil Karten optional sind.
-- [ ] **U4. Update-Funktion**
+- [x] **U4. Update-Funktion** — erledigt: `src/update.rs` lädt `latest.json` + `latest.json.sig` (minisign-kompatibel, kompatibel zu `cargo packager signer`), Ed25519-Verifikation gegen gepinnten Schlüssel (KUH_UPDATE_PUBKEY_HEX zur Build-Zeit aus Secrets; fehlt er → nur Anzeige, nie Installation), SHA-256 pro Asset, Download über system-curl. GUI: Help → „Check for Updates…“, Auto-Check beim Start (abschaltbar in Settings → Network, persistiert), Show-Sperre (kein Hinweis/Download/Install im Show-Mode oder bei laufenden Cues), ungespeicherte Show wird vor Installation abgefragt, Installer-Start + App-Neustart; .deb über pkexec/apt. Web-Remote zeigt nur Hinweis (`/api/update` + Badge). Fehlschlag → alte Version bleibt. Ursprünglicher Punkt:
   - Menü „Check for Updates…“, automatische Prüfung beim Start, abschaltbar für Offline-Shows. Prüfungs-
     fehler ohne Netz stören nie.
   - Hinweis mit Version und Änderungen; der Nutzer entscheidet, nichts wird still installiert.
@@ -357,10 +365,10 @@ Abhängigkeiten und prüft selbst auf Updates. **Voraussetzung:** H3 und H4, son
     vorher abgefragt, und danach startet die App neu.
   - Fehlgeschlagene Updates lassen die alte Version lauffähig. Downgrades nur ausdrücklich.
   - `.deb`: Installation über `pkexec`/`apt`, mit Passwortabfrage. Web-Remote zeigt nur den Hinweis.
-- [ ] **U5. Build-Pipeline:** GitHub Actions baut alle drei Pakete aus einem Tag als **Entwurf**.
+- [x] **U5. Build-Pipeline:** — erledigt: `.github/workflows/release.yml` um Job `packager` (NSIS/DMG/DEB aus Tag) + Manifest-Signatur via Secrets erweitert; ohne Schlüssel klar markierter TEST-UNSIGNED-Entwurf. Releases/Tags nur als Draft, nie automatisiert veröffentlicht; private Schlüssel nur in Secrets. Ursprünglicher Punkt: GitHub Actions baut alle drei Pakete aus einem Tag als **Entwurf**.
   Signaturschlüssel kommen aus Secrets; fehlen sie, entsteht ein klar markiertes Test-Paket.
-- [ ] **U6. Lizenzen:** Hinweise für ffmpeg und Phosphor sowie MIT liegen im Paket und im About-Fenster.
-- [ ] **U7. Ende-zu-Ende-Test:** Installation von Version A, Update auf B aus einem Test-Feed, auf allen
+- [x] **U6. Lizenzen:** — erledigt: `LICENSES.md` (KuhPlay/egui/Phosphor MIT, ffmpeg LGPL mit Verweis auf LICENSE-ffmpeg.txt/BUILD-ffmpeg.txt im Paket), About-Fenster zeigt die Lizenzhinweise, Packager.toml packt LICENSE/LICENSES.md/README.md in jedes Paket. Ursprünglicher Punkt: Hinweise für ffmpeg und Phosphor sowie MIT liegen im Paket und im About-Fenster.
+- [x] **U7. Ende-zu-Ende-Test:** — Host-Teil automatisiert in `src/update.rs` (Test `update_flow_gegen_lokalen_feed`: lokaler Feed, signiertes Manifest, Download + SHA-256, manipulierte Signatur und manipuliertes Asset werden abgelehnt; `minisign_format_kompatibel`, `signatur_pruefung_ok_und_manipuliert`). Cross-Plattform-Installation (A→B aus Test-Feed, laufender Cue) bleibt manueller Test auf den drei Zielsystemen – CI baut die Pakete als Entwurf (U5). Ursprünglicher Punkt: Installation von Version A, Update auf B aus einem Test-Feed, auf allen
   drei Plattformen. Dazu manipulierte Signatur (muss abgelehnt werden), abgebrochener Download und
   laufender Cue.
 

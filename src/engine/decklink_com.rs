@@ -16,6 +16,8 @@
 // COM-Methoden behalten ihre IDL-Namen (PascalCase) – vtable-Reihenfolge ist
 // namensunabhängig, aber die Namen dokumentieren die API 1:1.
 #![allow(non_snake_case)]
+// Die vtable-Signaturen kommen aus der SDK-IDL (DoesSupportVideoMode hat 8 Parameter).
+#![allow(clippy::too_many_arguments)]
 
 use std::ffi::c_void;
 
@@ -94,6 +96,15 @@ unsafe trait IDeckLinkVideoBuffer: IUnknown {
 unsafe trait IDeckLinkVideoOutputCallback: IUnknown {
     fn ScheduledFrameCompleted(&self, completedframe: *mut c_void, result: u32) -> HRESULT;
     fn ScheduledPlaybackHasStopped(&self) -> HRESULT;
+}
+
+/// IDeckLinkAPIInformation (DeckLinkAPI.idl, SDK 16.0) – Treiberversion u. a.
+#[interface("7BEA3C68-730D-4322-AF34-8A7152B532A4")]
+unsafe trait IDeckLinkAPIInformation: IUnknown {
+    fn GetFlag(&self, cfgid: u32, value: *mut i32) -> HRESULT;
+    fn GetInt(&self, cfgid: u32, value: *mut i64) -> HRESULT;
+    fn GetFloat(&self, cfgid: u32, value: *mut f64) -> HRESULT;
+    fn GetString(&self, cfgid: u32, value: *mut BSTR) -> HRESULT;
 }
 
 /// IDeckLinkOutput (DeckLinkAPI.idl, SDK 16.0) – komplette vtable-Liste in Reihenfolge.
@@ -219,6 +230,34 @@ const ITERATOR_CLSIDS: [GUID; 4] = [
     GUID::from_u128(0x652615D4_26CD_4514_B161_2FD5072ED008), // v10.11
 ];
 
+/// U3: Treiberversion (Desktop Video) über CDeckLinkAPIInformation/'vers'.
+pub fn driver_version() -> Option<String> {
+    const CLSID_API_INFORMATION: GUID = GUID::from_u128(0x263CA19F_ED09_482E_9F9D_84005783A237);
+    const BMD_DECKLINK_API_VERSION: u32 = 0x76657273; // 'vers'
+    unsafe {
+        let info: IDeckLinkAPIInformation =
+            match CoCreateInstance(&CLSID_API_INFORMATION, None, CLSCTX_INPROC_SERVER) {
+                Ok(i) => i,
+                Err(e) => {
+                    tracing::warn!("CDeckLinkAPIInformation: {e}");
+                    return None;
+                }
+            };
+        let mut v: BSTR = BSTR::default();
+        let hr = info.GetString(BMD_DECKLINK_API_VERSION, &mut v);
+        if hr != HRESULT(0) {
+            tracing::warn!("GetString(vers): {hr:?}");
+            return None;
+        }
+        let s = v.to_string();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    }
+}
+
 fn create_iterator() -> ShowResult<IDeckLinkIterator> {
     unsafe {
         // COM initialisieren (Thread-lokal; Mehrfach-Calls sind OK).
@@ -333,12 +372,7 @@ impl ComDeckLinkOutputWeak {
                     std::ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, data.len());
                 }
                 let _ = buffer.EndAccess(BMD_BUFFER_ACCESS_WRITE);
-                let _ = output.ScheduleVideoFrame(
-                    frame.as_raw() as *mut c_void,
-                    next_time,
-                    frame_dur,
-                    time_scale,
-                );
+                let _ = output.ScheduleVideoFrame(frame.as_raw(), next_time, frame_dur, time_scale);
             }
         }
     }
@@ -505,7 +539,7 @@ impl ComDeckLinkOutput {
                 .ok()
                 .map_err(|e| ShowError::Engine(format!("EndAccess fehlgeschlagen: {e}")))?;
             self.output
-                .DisplayVideoFrameSync(self.frame.as_raw() as *mut c_void)
+                .DisplayVideoFrameSync(self.frame.as_raw())
                 .ok()
                 .map_err(|e| {
                     ShowError::Engine(format!("DisplayVideoFrameSync fehlgeschlagen: {e}"))
@@ -541,7 +575,7 @@ impl ComDeckLinkOutput {
         let cb_obj: IDeckLinkVideoOutputCallback = cb.into();
         unsafe {
             self.output
-                .SetScheduledFrameCompletionCallback(cb_obj.as_raw() as *mut c_void)
+                .SetScheduledFrameCompletionCallback(cb_obj.as_raw())
                 .ok()
                 .map_err(|e| {
                     ShowError::Engine(format!("SetScheduledFrameCompletionCallback: {e}"))
