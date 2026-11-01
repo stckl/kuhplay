@@ -324,10 +324,15 @@ fn workspace_settings_video_page_renders_and_edits_stages_and_routes() {
     }
     // Default-Setup: pro Display eine Route, Stage 1 mit Region.
     assert_eq!(app.routes.len(), app.displays.len());
-    assert!(app.stages.stages()[0]
-        .regions
-        .iter()
-        .any(|r| r.route.is_some()));
+    if app.displays.is_empty() {
+        // CI-Runner ohne Display: keine Default-Route möglich.
+        println!("SKIP Route-Assert: keine Displays in dieser Umgebung");
+    } else {
+        assert!(app.stages.stages()[0]
+            .regions
+            .iter()
+            .any(|r| r.route.is_some()));
+    }
 
     // Leere Stage anlegen (wie das „New Stage“-Menü).
     let before = app.stages.len();
@@ -1597,8 +1602,14 @@ fn audio_output_is_applied_and_saved_with_show() {
 #[test]
 fn default_output_is_listed() {
     use kuhplay::engine::audio_backend::{default_output_name, output_devices};
+    let devices = output_devices();
+    if devices.is_empty() {
+        // CI-Runner ohne Audio-Ausgabegerät: sauber überspringen.
+        println!("SKIP default_output_is_listed: kein Audio-Gerät in dieser Umgebung");
+        return;
+    }
     if let Some(name) = default_output_name() {
-        assert!(output_devices().iter().any(|d| d.name == name));
+        assert!(devices.iter().any(|d| d.name == name));
     }
 }
 

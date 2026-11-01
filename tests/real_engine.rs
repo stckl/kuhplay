@@ -211,6 +211,16 @@ fn collect_events(rx: &Receiver<EngineEvent>, timeout: Duration) -> Vec<EngineEv
 // Tests (ohne Hardware-Abhängigkeit)
 // ---------------------------------------------------------------------
 
+/// CI-Runner ohne Audio-Ausgabegerät: true = Tests mit Audio-Events überspringen.
+fn require_audio_output() -> bool {
+    use kuhplay::engine::audio_backend::{default_output_name, output_devices};
+    let ok = !output_devices().is_empty() || default_output_name().is_some();
+    if !ok {
+        println!("SKIP: kein Audio-Ausgabegerät in dieser Umgebung (CI-Runner)");
+    }
+    ok
+}
+
 #[test]
 fn ping_is_answered_with_pong() {
     let engine = spawn_real_engine();
@@ -317,6 +327,9 @@ fn slideshow_with_missing_image_reports_error() {
 
 #[test]
 fn audio_play_started_then_finished_at_eof() {
+    if !require_audio_output() {
+        return;
+    }
     if !audio_device_available() {
         eprintln!("SKIP: no audio output device");
         return;
@@ -352,6 +365,9 @@ fn audio_play_started_then_finished_at_eof() {
 
 #[test]
 fn audio_pause_resume_stop_events() {
+    if !require_audio_output() {
+        return;
+    }
     if !audio_device_available() {
         eprintln!("SKIP: no audio output device");
         return;
@@ -852,6 +868,9 @@ fn unknown_audio_output_reports_error() {
 /// eine Audio-Voice an (gleiche Datei, gleicher Seek) → `audio_voices`.
 #[test]
 fn video_cue_with_audio_track_registers_audio_voice() {
+    if !require_audio_output() {
+        return;
+    }
     if !ffmpeg_available() {
         eprintln!("SKIP: ffmpeg not available");
         return;

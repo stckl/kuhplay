@@ -327,7 +327,12 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     = Timing (feste Tickzahl bei langsamen Runnern) → Zeitfenster 1 s statt 50 Ticks;
     `e12_script_cue_settle_faengt_spaete_js_fehler` war im Folge-Log grün.
     Die 4 lokalen `real_engine`-Audio-Flakes im Parallellauf sind pre-existing (auf Base-Commit
-    `05ea2b0` nachgewiesen, Audio-Device-Race) und liefen in CI grün.
+    `05ea2b0` nachgewiesen, Audio-Device-Race). Lauf 41326507402 zeigte zusätzlich Runner ohne
+    Audio-Gerät/Display: `audio_play_started_then_finished_at_eof`, `audio_pause_resume_stop_events`,
+    `video_cue_with_audio_track_registers_audio_voice` (kein Audio-Device → SKIP via
+    `require_audio_output()` mit Log-Zeile), `default_output_is_listed` und
+    `workspace_settings_video_page_renders_and_edits_stages_and_routes` (keine Displays/Devices
+    → SKIP bzw. Assert nur bei vorhandenen Displays). Windows-Job in Lauf 41326507402 grün.
   - Abgeschlossen, wenn CI und der von Hand gestartete Release-Build auf allen drei Plattformen grün sind.
 
 ## Block U: Installer und Update-Funktion (nach Block H)
