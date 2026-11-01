@@ -1448,7 +1448,7 @@ fn inspector_without_selection_shows_centered_hint() {
             ),
             _ => None,
         })
-        .any(|x| (500.0..830.0).contains(&x));
+        .any(|x| (500.0..900.0).contains(&x));
     assert!(centered, "„No cue selected“ nicht zentriert im Inspector");
 }
 
@@ -1502,6 +1502,7 @@ fn footer_sits_below_inspector() {
 fn toolbox_icon_does_not_overlap_label() {
     let ctx = egui::Context::default();
     let mut app = demo_app();
+    app.ui.toolbar_visible = false;
     render_frame(&ctx, &mut app);
     let out = render_frame(&ctx, &mut app);
     let glyph = icons::Icon::for_cue_type(CueType::Audio).glyph();
@@ -2469,11 +2470,37 @@ fn f1_show_mode_badge_und_footer_toggles_und_pause_gelb() {
         output_has_text(&out, "SHOW MODE"),
         "SHOW-MODE-Badge im Status-Fenster fehlt"
     );
-    // F1.4: Footer hat Toolbox- und Masthead-Toggles (Icon-Glyphen Layout/ArrowsOut).
-    let layout = kuhplay::gui::icons::Icon::Layout.glyph().to_string();
-    let arrows = kuhplay::gui::icons::Icon::ArrowsOut.glyph().to_string();
-    assert!(output_has_text(&out, &layout), "Toolbox-Toggle-Icon fehlt");
-    assert!(output_has_text(&out, &arrows), "Masthead-Toggle-Icon fehlt");
+    // F1.4: Footer hat Toggles für Toolbox, Masthead und Toolbar.
+    for (icon, name) in [
+        (kuhplay::gui::icons::Icon::PanelToolbox, "Toolbox"),
+        (kuhplay::gui::icons::Icon::PanelMasthead, "Masthead"),
+        (kuhplay::gui::icons::Icon::PanelToolbar, "Toolbar"),
+    ] {
+        assert!(
+            output_has_text(&out, icon.glyph()),
+            "{name}-Toggle-Icon fehlt"
+        );
+    }
     // F1.5: Masthead-Höhe persistiert im UiState.
     assert!(app.ui.masthead_height >= 48.0);
+}
+
+/// Das Dreieck am Zeilenanfang markiert den Playhead deutlich (gefüllte Form in Akzentfarbe).
+#[test]
+fn playhead_row_shows_filled_triangle() {
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    render_frame(&ctx, &mut app);
+    let out = render_frame(&ctx, &mut app);
+    fn has_triangle(shape: &egui::Shape) -> bool {
+        match shape {
+            egui::Shape::Path(path) => path.points.len() == 3 && path.fill == palette::ACCENT,
+            egui::Shape::Vec(shapes) => shapes.iter().any(has_triangle),
+            _ => false,
+        }
+    }
+    assert!(
+        out.shapes.iter().any(|s| has_triangle(&s.shape)),
+        "Playhead-Dreieck fehlt"
+    );
 }

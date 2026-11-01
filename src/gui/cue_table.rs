@@ -499,13 +499,21 @@ pub fn draw(
                     };
                     draw_status_markers(ui, cue.flagged, row_meta);
                     if is_cursor_row {
-                        // Playhead = sehr hellgrauer Dreieck-Zeiger am
-                        // linken Rand (Klick setzt den Playhead, s. u.).
+                        // Playhead = gefülltes Dreieck am Zeilenanfang (Klick setzt
+                        // den Playhead, s. u.).
                         let icon_rect = egui::Rect::from_min_size(
-                            ui.max_rect().left_top() + egui::vec2(6.0, 7.0),
+                            ui.max_rect().left_top() + egui::vec2(4.0, 6.0),
                             egui::vec2(16.0, 16.0),
                         );
-                        icons::paint_at(ui, Icon::Playhead, icon_rect, palette::TEXT);
+                        ui.painter().add(egui::Shape::convex_polygon(
+                            vec![
+                                icon_rect.left_top(),
+                                icon_rect.right_center(),
+                                icon_rect.left_bottom(),
+                            ],
+                            palette::ACCENT,
+                            egui::Stroke::NONE,
+                        ));
                         ui.interact(icon_rect, ui.id().with("playhead_tip"), Sense::hover())
                             .on_hover_text("Playhead – click the status column to move it here");
                         if broken {
