@@ -22,7 +22,8 @@ pub fn draw(ctx: &Context, app: &mut ShowApp) {
             "Workspace Status",
             [380.0, 420.0],
             [300.0, 260.0],
-        ),
+        )
+        .show_mode_badge(app.show_mode),
         &mut open,
         app,
         |_ctx, ui, app| {

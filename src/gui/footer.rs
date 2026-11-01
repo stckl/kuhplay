@@ -30,27 +30,34 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         {
             app.set_show_mode(true);
         }
-        // Warnungs-Indikator (Anzahl kaputter Cues; Klick springt zum
-        // ersten kaputten Cue, Tooltip listet die Gründe).
-        let broken = app.broken_count();
-        if broken > 0 {
-            ui.separator();
-            let tooltip = app
-                .first_broken_problems()
-                .map(|problems| {
-                    format!(
-                        "{broken} broken cue(s) – click to jump to the first:\n{}",
-                        problems.join("\n")
-                    )
-                })
-                .unwrap_or_default();
-            if warning(ui, &format!("{broken} broken"))
-                .on_hover_text(tooltip)
-                .clicked()
-            {
-                app.jump_to_first_broken();
-            }
+        // F1.4: Toggles für Toolbox und Masthead links im Footer.
+        ui.separator();
+        if panel_toggle(
+            ui,
+            Icon::Layout,
+            if app.ui.toolbox_visible {
+                "Hide Toolbox"
+            } else {
+                "Show Toolbox"
+            },
+            app.ui.toolbox_visible,
+        ) {
+            app.ui.toolbox_visible = !app.ui.toolbox_visible;
         }
+        if panel_toggle(
+            ui,
+            Icon::ArrowsOut,
+            if app.ui.masthead_visible {
+                "Hide Masthead"
+            } else {
+                "Show Masthead"
+            },
+            app.ui.masthead_visible,
+        ) {
+            app.ui.masthead_visible = !app.ui.masthead_visible;
+        }
+        // Warnungs-Indikator (Anzahl kaputter Cues) – F1.4: rechts im Footer.
+        let broken = app.broken_count();
         // Fehleranzeige (nicht-blockierend): Warn-Icon + gekürzte Meldung +
         // Schließen-Button (zeigt Fehler im Footer-Bereich).
         if let Some(err) = app.last_error() {
@@ -90,6 +97,26 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         // Zahnrad Workspace Settings, dann Inspector- und Sidebar-Toggles
         // (Icon-Buttons, keine Text-Toggles).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // F1.4: Warn-Icon ganz rechts (vor dem Zahnrad in right_to_left …
+            // right_to_left rendert das Erste zuletzt rechts – Reihenfolge unten).
+            if broken > 0 {
+                let tooltip = app
+                    .first_broken_problems()
+                    .map(|problems| {
+                        format!(
+                            "{broken} broken cue(s) – click to jump to the first:\n{}",
+                            problems.join("\n")
+                        )
+                    })
+                    .unwrap_or_default();
+                if warning(ui, &format!("{broken} broken"))
+                    .on_hover_text(tooltip)
+                    .clicked()
+                {
+                    app.jump_to_first_broken();
+                }
+                ui.separator();
+            }
             let gear_tooltip = if app.ui.workspace_settings_open {
                 "Close Workspace Settings"
             } else {

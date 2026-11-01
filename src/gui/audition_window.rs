@@ -26,7 +26,8 @@ pub fn draw(ctx: &Context, app: &mut ShowApp) {
             "Audition",
             [480.0, 300.0],
             [240.0, 160.0],
-        ),
+        )
+        .show_mode_badge(app.show_mode),
         &mut open,
         app,
         |ctx, ui, app| {

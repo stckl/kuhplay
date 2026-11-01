@@ -2392,3 +2392,32 @@ fn stage_editor_shows_display_placements_section() {
         "Display-Hinweis/Button fehlt"
     );
 }
+
+#[test]
+fn f1_show_mode_badge_und_footer_toggles_und_pause_gelb() {
+    // F1.1: Pausiert ist gelb.
+    assert_eq!(
+        kuhplay::gui::theme::palette::PAUSED,
+        egui::Color32::from_rgb(255, 195, 0)
+    );
+    let ctx = egui::Context::default();
+    let mut app = demo_app();
+    app.show_mode = true;
+    app.ui.status_window_open = true;
+    let mut out = render_frame(&ctx, &mut app);
+    for _ in 0..2 {
+        out = render_frame(&ctx, &mut app);
+    }
+    // F1.6: Nebenfenster zeigen SHOW MODE im Footer.
+    assert!(
+        output_has_text(&out, "SHOW MODE"),
+        "SHOW-MODE-Badge im Status-Fenster fehlt"
+    );
+    // F1.4: Footer hat Toolbox- und Masthead-Toggles (Icon-Glyphen Layout/ArrowsOut).
+    let layout = kuhplay::gui::icons::Icon::Layout.glyph().to_string();
+    let arrows = kuhplay::gui::icons::Icon::ArrowsOut.glyph().to_string();
+    assert!(output_has_text(&out, &layout), "Toolbox-Toggle-Icon fehlt");
+    assert!(output_has_text(&out, &arrows), "Masthead-Toggle-Icon fehlt");
+    // F1.5: Masthead-Höhe persistiert im UiState.
+    assert!(app.ui.masthead_height >= 48.0);
+}

@@ -21,6 +21,8 @@ pub struct WindowSpec {
     pub default_size: [f32; 2],
     pub min_size: [f32; 2],
     pub resizable: bool,
+    /// Zeigt im Fenster-Footer ein „SHOW MODE“-Badge (F1.6).
+    pub show_mode_badge: bool,
 }
 
 impl WindowSpec {
@@ -36,6 +38,7 @@ impl WindowSpec {
             default_size,
             min_size,
             resizable: true,
+            show_mode_badge: false,
         }
     }
 
@@ -43,6 +46,23 @@ impl WindowSpec {
         self.resizable = resizable;
         self
     }
+
+    /// „SHOW MODE“-Badge im Footer des Nebenfensters (F1.6).
+    pub fn show_mode_badge(mut self, on: bool) -> Self {
+        self.show_mode_badge = on;
+        self
+    }
+}
+
+/// Footer-Badge „SHOW MODE“ für Nebenfenster im Show-Mode (F1.6).
+fn show_mode_footer(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("SHOW MODE")
+                .strong()
+                .color(crate::gui::theme::palette::PANIC),
+        );
+    });
 }
 
 /// Zeichnet `content` in einem eigenen OS-Fenster, solange `*open` true ist.
@@ -80,6 +100,9 @@ pub fn draw<A>(
                     .min_size(spec.min_size)
                     .constrain_to(ctx.screen_rect())
                     .show(ctx, |ui| {
+                        if spec.show_mode_badge {
+                            show_mode_footer(ui);
+                        }
                         if let Some(content) = content {
                             content(ctx, ui, app);
                         }
@@ -92,6 +115,11 @@ pub fn draw<A>(
                 if ctx.input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape))
                 {
                     close = true;
+                }
+                if spec.show_mode_badge {
+                    egui::TopBottomPanel::bottom("show-mode-badge").show(ctx, |ui| {
+                        show_mode_footer(ui);
+                    });
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     if let Some(content) = content {

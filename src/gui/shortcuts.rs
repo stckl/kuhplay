@@ -139,8 +139,8 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         group: "Playback",
         action: ShortcutAction::ResetAll,
-        key: None,
-        modifiers: mods(false, false, false),
+        key: Some(Key::R),
+        modifiers: mods(true, true, false),
         label: "Reset All",
     },
     // --- Navigation ---------------------------------------------------
@@ -297,8 +297,8 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         group: "Edit",
         action: ShortcutAction::GroupCues,
-        key: None,
-        modifiers: mods(false, false, false),
+        key: Some(Key::G),
+        modifiers: mods(true, true, false),
         label: "Group Cues",
     },
     // --- Cues (neue Cue-Typen; Cues-Menü: ⌘0–⌘9) ----------------
@@ -581,13 +581,13 @@ mod tests {
                 .display(),
             "⌘0"
         );
-        // Reset All hat kein Standard-Kürzel → „–“.
+        // Reset All: F1.7 ⇧⌘R (Opt+⌘R in der Anzeige).
         let reset = ALL
             .iter()
             .find(|s| s.action == ShortcutAction::ResetAll)
             .unwrap();
-        assert_eq!(reset.display(), "–");
-        assert!(shortcut_for(ShortcutAction::ResetAll).is_none());
+        assert_eq!(reset.display(), "Opt+⌘R");
+        assert!(shortcut_for(ShortcutAction::ResetAll).is_some());
     }
 
     #[test]
@@ -626,14 +626,14 @@ mod tests {
             menu_label("Open Show…", ShortcutAction::OpenShow),
             "Open Show…  ⌘O"
         );
-        // Ohne Standard-Kürzel bleibt das Label unverändert (kein „–“ im Menü).
+        // Mit Standard-Kürzel (F1.7 ⇧⌘R) wird es ans Menü angehängt.
         assert_eq!(
             menu_label("Reset All", ShortcutAction::ResetAll),
-            "Reset All"
+            "Reset All  Opt+⌘R"
         );
         assert_eq!(
             menu_label("Group Cues", ShortcutAction::GroupCues),
-            "Group Cues"
+            "Group Cues  Opt+⌘G"
         );
     }
 

@@ -91,7 +91,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
             "Workspace Settings",
             [820.0, 620.0],
             [560.0, 360.0],
-        ),
+        )
+        .show_mode_badge(app.show_mode),
         &mut open,
         app,
         |_ctx, ui, app| {
@@ -1274,7 +1275,8 @@ pub fn draw_route_editor(ctx: &egui::Context, app: &mut ShowApp) {
             &title,
             [420.0, 320.0],
             [320.0, 240.0],
-        ),
+        )
+        .show_mode_badge(app.show_mode),
         &mut open,
         app,
         |_ctx, ui, app| {
@@ -1481,6 +1483,7 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
             [380.0, 320.0],
             [300.0, 240.0],
         )
+        .show_mode_badge(app.show_mode)
         .resizable(false),
         &mut open,
         app,

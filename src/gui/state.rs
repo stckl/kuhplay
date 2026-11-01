@@ -82,6 +82,8 @@ impl CueColumnLayout {
 pub struct UiState {
     /// Sichtbarkeit Masthead (ein-/ausblendbar).
     pub masthead_visible: bool,
+    /// Höhe des Mastheads in px (F1.5: per Drag änderbar, persistiert).
+    pub masthead_height: f32,
     /// Sichtbarkeit Toolbox (linke Leiste, default: sichtbar).
     pub toolbox_visible: bool,
     /// Sichtbarkeit Sidebar (rechte Leiste).
@@ -147,6 +149,7 @@ impl Default for UiState {
         Self {
             video_tab: Default::default(),
             masthead_visible: true,
+            masthead_height: crate::gui::theme::size::MASTHEAD_HEIGHT,
             toolbox_visible: true,
             sidebar_visible: true,
             inspector_visible: true,

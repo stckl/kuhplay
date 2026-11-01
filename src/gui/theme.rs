@@ -51,7 +51,7 @@ pub mod palette {
     /// Playing: Grün.
     pub const PLAYING: Color32 = Color32::from_rgb(46, 204, 113);
     /// Paused: Blau.
-    pub const PAUSED: Color32 = Color32::from_rgb(52, 152, 219);
+    pub const PAUSED: Color32 = Color32::from_rgb(255, 195, 0); // gelb (F1.1)
     /// Post-Wait: Türkis (Playback vorbei, Cue noch offen).
     pub const POST_WAIT: Color32 = Color32::from_rgb(39, 174, 150);
     /// Completed / ausgegraut (Disarmed).

@@ -25,14 +25,19 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     let editable = !app.show_mode;
     ui.horizontal(|ui| {
         // GO-Button (groß, dunkel, grün umrandet wenn ein Cue bereitsteht).
+        // F1.3: roter Rahmen, solange der Doppel-GO-Schutz aktiv ist (pending_go);
+        // im Audition-Mode heißt der Button „AUDITION“.
         let ready = app.carts.standby().is_some();
-        let stroke = if ready {
+        let stroke = if app.pending_go {
+            egui::Stroke::new(3.0_f32, palette::PANIC)
+        } else if ready {
             egui::Stroke::new(3.0_f32, palette::PLAYING)
         } else {
             egui::Stroke::new(1.0_f32, palette::STOPPED)
         };
+        let go_label = if app.audition_mode { "AUDITION" } else { "GO" };
         let go = egui::Button::new(
-            RichText::new("GO")
+            RichText::new(go_label)
                 .size(30.0)
                 .strong()
                 .color(egui::Color32::WHITE),
@@ -125,6 +130,19 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         );
 
         // Transport rechts (right_to_left: das Erste steht ganz rechts).
+        // F1.2: Pause All gelb, solange Cues laufen; Resume All grün, solange pausiert.
+        let any_running = app
+            .carts
+            .active()
+            .cues()
+            .iter()
+            .any(|c| c.status == crate::core::CueStatus::Playing);
+        let any_paused = app
+            .carts
+            .active()
+            .cues()
+            .iter()
+            .any(|c| c.status == crate::core::CueStatus::Paused);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = size::SPACE_SMALL;
             if panic_button(ui)
@@ -149,7 +167,11 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             if icons::button(
                 ui,
                 Icon::Resume,
-                palette::TEXT,
+                if any_paused {
+                    palette::PLAYING
+                } else {
+                    palette::TEXT
+                },
                 size::MASTHEAD_ICON_BUTTON,
                 true,
             )
@@ -161,7 +183,11 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             if icons::button(
                 ui,
                 Icon::Pause,
-                palette::TEXT,
+                if any_running {
+                    palette::PAUSED
+                } else {
+                    palette::TEXT
+                },
                 size::MASTHEAD_ICON_BUTTON,
                 true,
             )

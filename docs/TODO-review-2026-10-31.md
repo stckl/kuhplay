@@ -255,20 +255,20 @@ aus Tabelle und Doku folgen, vor der Umsetzung kurz im Code bestätigen.
 
 ### F1: Direkt umsetzen
 
-- [ ] **F1.1 Pause-Farbe:** QLab zeigt Pausiert gelb (gelbe Doppelbalken, gelber
+- [x] **F1.1 Pause-Farbe:** QLab zeigt Pausiert gelb (gelbe Doppelbalken, gelber
   Fortschrittsbalken), KuhPlay blau (`palette::PAUSED`, dort als TODO vermerkt). Die Tabelle
   in `docs/UI.md` §3 mit anpassen.
-- [ ] **F1.2 Transport-Buttons:** Pause All gelb, solange Cues laufen; Resume All grün,
+- [x] **F1.2 Transport-Buttons:** Pause All gelb, solange Cues laufen; Resume All grün,
   solange Cues pausiert sind. Aktuell neutral weiß.
-- [ ] **F1.3 GO-Button:** Roter Rahmen bei aktivem Double-GO-Schutz, „Preview“ bei aktivem
+- [x] **F1.3 GO-Button:** Roter Rahmen bei aktivem Double-GO-Schutz, „Preview“ bei aktivem
   Cart, „Audition“ im Audition-Modus. Jeweils prüfen, ob vorhanden.
-- [ ] **F1.4 Footer:** QLab hat links Edit/Show und Toggles für Toolbox und Masthead, rechts
+- [x] **F1.4 Footer:** QLab hat links Edit/Show und Toggles für Toolbox und Masthead, rechts
   Settings, Sidebar, Inspector und das Warn-Icon. KuhPlay hat keine Toolbox-/Masthead-Toggles
   und das Warn-Icon links.
-- [ ] **F1.5 Masthead** per Ziehen in der Höhe änderbar und einklappbar (`docs/UI.md` §2
+- [x] **F1.5 Masthead** per Ziehen in der Höhe änderbar und einklappbar (`docs/UI.md` §2
   schreibt feste Höhe vor, also dort mit ändern).
-- [ ] **F1.6 Show-Mode:** Nebenfenster zeigen „SHOW MODE“ im Footer; Find ist gesperrt.
-- [ ] **F1.7 Fehlende Kürzel ergänzen**, sofern die Funktion existiert oder klein ist; alles
+- [x] **F1.6 Show-Mode:** Nebenfenster zeigen „SHOW MODE“ im Footer; Find ist gesperrt.
+- [x] **F1.7 Fehlende Kürzel ergänzen**, sofern die Funktion existiert oder klein ist; alles
   über die Tabelle `src/gui/shortcuts.rs`:
   - Wiedergabe: Esc doppelt = Hard Stop, `S` Panic Selected, `P` Pause/Resume Selected,
     `V` Preview, `L` Load, ⌥Space Audition GO.

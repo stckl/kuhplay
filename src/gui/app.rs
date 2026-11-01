@@ -164,7 +164,7 @@ pub struct ShowApp {
     current_file: Option<PathBuf>,
     /// Space-GO wurde gedrückt (Ausführung nach den Panels, damit Hotkeys
     /// nicht mit fokussierten Buttons kollidieren).
-    pending_go: bool,
+    pub(crate) pending_go: bool,
     /// Zuletzt aufgetretener Fehler (UI-Anzeige).
     last_error: Option<String>,
     /// Widget-IDs aller Textfelder des aktuellen Frames. Für das
@@ -2914,6 +2914,10 @@ impl ShowApp {
                 ShortcutAction::Quit => self.quit(ctx),
                 // ⌘F: Find-Leiste toggeln + Fokus; ⌘G: nächster Treffer.
                 ShortcutAction::Find => {
+                    // F1.6: Find ist im Show-Mode gesperrt.
+                    if self.show_mode {
+                        continue;
+                    }
                     self.ui.find.open = !self.ui.find.open;
                     if self.ui.find.open {
                         ctx.memory_mut(|m| m.request_focus(cue_table::find_bar_id()));
@@ -3050,13 +3054,21 @@ impl ShowApp {
                     .stroke(egui::Stroke::new(2.0_f32, palette::PANIC))
                     .fill(palette::SHOW_MODE_BG);
             }
-            egui::TopBottomPanel::top("masthead")
+            // F1.5: Masthead-Höhe per Drag am unteren Rand änderbar (persistiert).
+            let inner = egui::TopBottomPanel::top("masthead")
                 .frame(masthead_frame)
-                .exact_height(size::MASTHEAD_HEIGHT)
-                .resizable(false)
+                .exact_height(self.ui.masthead_height.clamp(48.0, 320.0))
+                .resizable(true)
+                .min_height(48.0)
+                .max_height(320.0)
                 .show(ctx, |ui| {
                     masthead::draw(ui, self);
                 });
+            // Tatsächliche Höhe persistieren (Drag des Panel-Rands).
+            let h = inner.response.rect.height();
+            if (h - self.ui.masthead_height).abs() > 0.5 {
+                self.ui.masthead_height = h.clamp(48.0, 320.0);
+            }
         }
         // Footer ZUERST unter den Bottom-Panels → unterste Zeile.
         let mut footer_frame = theme::panel_frame(size::SPACE_MEDIUM, 2.0);
@@ -3169,7 +3181,8 @@ impl ShowApp {
                     [360.0, 200.0],
                     [280.0, 150.0],
                 )
-                .resizable(false),
+                .resizable(false)
+                .show_mode_badge(self.show_mode),
                 &mut open,
                 self,
                 |_ctx, ui, app| {

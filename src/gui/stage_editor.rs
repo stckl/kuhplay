@@ -71,7 +71,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
             &title,
             [720.0, 580.0],
             [560.0, 420.0],
-        ),
+        )
+        .show_mode_badge(app.show_mode),
         &mut open,
         app,
         |_ctx, ui, app| {

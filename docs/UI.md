@@ -65,8 +65,9 @@ Zeile „Menüleiste" unten entfällt dort. Echte Menü-Kürzel gibt es nur für
 * Der **Inspector** sitzt unter Toolbox/Liste/Sidebar und geht über die
   volle Breite.
 * Toolbox (links) und Sidebar (rechts) sind optional (⌘K / ⌘L).
-* Masthead und Footer haben eine **feste Höhe**, Inspector ist in der
-  Höhe ziehbar (Default 260 px).
+* Masthead und Footer haben eine **feste Höhe** – der Masthead ist zusätzlich
+  per Drag am unteren Rand in der Höhe änderbar (48–320 px, persistiert,
+  F1.5); Inspector ist ziehbar (Default 260 px).
 
 ### Panel-Reihenfolge (egui)
 
@@ -113,7 +114,7 @@ in Panel-Modulen.
 |-----------|---------------------------------|------------------------------------|
 | Grün      | läuft / GO bereit               | GO-Rahmen, Status, Fortschritt     |
 | Amber     | Pre-Wait (wartet)               | Status, Countdown                  |
-| Blau      | pausiert                        | Status, Fortschritt                |
+| Gelb      | pausiert (F1.1)                 | Status, Fortschritt, Pause-Button  |
 | Türkis    | Post-Wait                       | Status, Countdown                  |
 | Rot       | **kaputt** oder **Panic** – sonst nie | ✕ in der Liste, Footer-⚠, Panic |
 | Blau      | Selektion                       | selektierte Zeile                  |
@@ -143,10 +144,14 @@ Zeiten sind immer Monospace, damit herunterzählende Werte nicht springen.
 
 ## 5. Bereiche im Detail
 
-### 5.1 Masthead (feste Höhe 108 px, Fläche `PANEL`)
+### 5.1 Masthead (Höhe per Drag änderbar, Default 108 px, Fläche `PANEL`)
 
 * **GO** links: 132 × 64 px, Radius 8. Grüner 3-px-Rahmen, wenn ein Cue
-  bereitsteht, sonst 1 px grau. Space = GO.
+  bereitsteht, sonst 1 px grau; **roter Rahmen, solange der Doppel-GO-Schutz
+  aktiv ist**, im Audition-Mode heißt der Button „AUDITION" (F1.3).
+  Space = GO.
+* **Transport rechts:** Pause All gelb, solange Cues laufen; Resume All grün,
+  solange Cues pausiert sind (F1.2).
 * Daneben **Standby**: kleines Label „STANDBY" (11, `TEXT_DIM`), darunter
   Nummer (Monospace, gedimmt) + Name groß. Ohne Standby: „No cue standing
   by" gedimmt.
