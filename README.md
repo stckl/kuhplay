@@ -108,6 +108,9 @@ zeigt die App eine klare Meldung; fehlt die Karte nach einem macOS-Update, Deskt
 Video neu installieren und registrieren. Kompatibilität: „KuhPlay compatible with
 Blackmagic Design DeckLink“. Ohne Treiber/Gerät: Meldung in GUI und Web-Remote.
 Build: `cargo build --release --features webview,decklink`.
+Hardware-Tests: macOS live gegen UltraStudio Monitor 3G bestanden (Dauerlauf
+30 s Farbalken, 0 Aussetzer; Key/Fill kann diese Karte nicht). Windows-Tests
+auf dem ZBOOK folgen, Linux ohne Karte ohne Hardware-Test.
 | `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
 | `KUHPLAY_HWACCEL` | `off` schaltet Hardware-Dekodierung ab (VideoToolbox/NVDEC/VAAPI/DXVA, auto mit Software-Fallback) | an |
 

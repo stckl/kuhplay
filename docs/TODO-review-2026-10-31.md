@@ -238,17 +238,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     ohne GPL- und Nonfree-Teile, Lizenztext und Quellenhinweis liegen bei. Die Hardware-Decoder
     müssen weiter funktionieren.
   - Fehlende Programme klar melden, und ein Video-Test läuft ohne ffmpeg im `PATH`.
-- [ ] **G8. Test auf echter Hardware**
-  - Am Mac ist eine **UltraStudio Monitor 3G** angeschlossen und wird vom SDK mit Ausgang erkannt
-    (Treiber 16.5, SDK 16.0). Dort mit einem standardmäßig deaktivierten Test prüfen: Dauerlauf,
-    Farben, Bildaussetzer. Key/Fill nur, soweit diese Karte es kann; sonst offen nennen.
-  - Fehlt die Karte plötzlich, besonders nach einem macOS-Update: Der Auftraggeber installiert
-    Desktop Video neu und registriert es im System. Das Setup kann dabei aktiv aussehen. Die App
-    soll in diesem Fall (Treiber da, 0 Geräte) genau darauf hinweisen, siehe G5.
-  - Die Windows-Tests auf dem ZBOOK macht der Auftraggeber am 2026-11-01, die Karte hängt dann
-    dort. Vorher muss alles für Windows bauen.
-  - Linux bleibt ohne Hardware-Test, falls keine Karte verfügbar ist; das im Commit und im README
-    nennen.
+- [x] **G8. Test auf echter Hardware** (macOS, UltraStudio Monitor 3G, Treiber 16.5 / SDK 16.0): `live_native_output_test_pattern` (125 Frames 1080p25, scheduled) und `live_native_soak_color_bars` (30 s Farbalken, 750 Frames, late=0 dropped=0) bestanden, beide per `KUHPLAY_DECKLINK_LIVE=1 ... -- --ignored`. Key/Fill kann die Karte nicht (nur Monitor-Ausgang) – offen. Windows-Tests auf dem ZBOOK macht der Auftraggeber am 2026-11-01 (Karte hängt dann dort); dafür baut alles für Windows (`--features decklink` auf msvc clean). Linux ohne Karte ohne Hardware-Test – im Commit und README vermerkt.
 
 ## Block F: Look and Feel wie QLab 5 (zum Schluss, nach den Blöcken A–E)
 

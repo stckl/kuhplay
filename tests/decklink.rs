@@ -257,3 +257,54 @@ fn live_com_output_test_pattern() {
         out.device_name()
     );
 }
+
+/// G8 Dauerlauf auf dem Mac (UltraStudio Monitor 3G): 30 s rotierende
+/// Farbalken, Scheduled Playback; danach dropped == 0 und alle Frames raus.
+/// Key/Fill kann diese Karte nicht (nur Monitor-Ausgang) – offen notiert.
+#[cfg(all(not(target_os = "windows"), feature = "decklink"))]
+#[test]
+#[ignore = "Dauerlauf: echte Hardware + KUHPLAY_DECKLINK_LIVE=1"]
+fn live_native_soak_color_bars() {
+    if std::env::var("KUHPLAY_DECKLINK_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    use kuhplay::engine::decklink_native::NativeOutput;
+    let config = DecklinkConfig {
+        device: std::env::var("KUHPLAY_DECKLINK_DEVICE").unwrap_or_default(),
+        width: 1920,
+        height: 1080,
+        fps: 25,
+    };
+    let mut out = NativeOutput::open(&config).expect("open");
+    out.start_scheduled().expect("scheduled");
+    let frames = 750; // 30 s @ 25 fps
+    let colors = [
+        [235u8, 235, 235], // weiß
+        [235, 235, 0],     // gelb
+        [0, 235, 235],     // cyan
+        [0, 235, 0],       // grün
+        [235, 0, 235],     // magenta
+        [235, 0, 0],       // rot
+        [0, 0, 235],       // blau
+        [0, 0, 0],         // schwarz
+    ];
+    for i in 0..frames {
+        let c = colors[(i / 25) % colors.len()]; // 1 s pro Farbe
+        let rgba = vec![c[0], c[1], c[2], 255].repeat(1920 * 1080);
+        out.push_frame(&VideoFrame::new(1920, 1080, rgba))
+            .expect("push");
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    std::thread::sleep(Duration::from_secs(2)); // Queue auslaufen lassen
+    let (late, dropped, queued) = out.stats();
+    println!(
+        "soak: frames={} late={late} dropped={dropped} queued={queued}",
+        out.frames_pushed()
+    );
+    assert_eq!(out.frames_pushed(), frames as u64);
+    assert_eq!(dropped, 0, "keine Bildaussetzer (dropped) erwartet");
+    println!(
+        "OK: Dauerlauf 30 s ohne Aussetzer auf {}",
+        out.device_name()
+    );
+}
