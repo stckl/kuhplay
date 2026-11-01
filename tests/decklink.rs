@@ -290,7 +290,7 @@ fn live_native_soak_color_bars() {
     ];
     for i in 0..frames {
         let c = colors[(i / 25) % colors.len()]; // 1 s pro Farbe
-        let rgba = vec![c[0], c[1], c[2], 255].repeat(1920 * 1080);
+        let rgba = [c[0], c[1], c[2], 255].repeat(1920 * 1080);
         out.push_frame(&VideoFrame::new(1920, 1080, rgba))
             .expect("push");
         std::thread::sleep(Duration::from_millis(40));
