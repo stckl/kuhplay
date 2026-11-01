@@ -1353,10 +1353,43 @@ pub fn draw_route_editor(ctx: &egui::Context, app: &mut ShowApp) {
                                     });
                                 }
                             }
-                            if ui.selectable_label(false, "Blackmagic…").clicked() {
-                                updated.device = Some(crate::core::DeviceRef::Blackmagic {
-                                    name: "DeckLink SDI".to_string(),
+                            // G5: erkannte Karten zur Auswahl (statt festem Namen).
+                            let (_avail, devices, hint) =
+                                crate::engine::decklink_native::devices_with_hint();
+                            let mut bm_name = match &updated.device {
+                                Some(crate::core::DeviceRef::Blackmagic { name }) => name.clone(),
+                                _ => String::new(),
+                            };
+                            let mut changed = false;
+                            egui::ComboBox::from_id_salt("route-device-bm")
+                                .selected_text(if bm_name.is_empty() {
+                                    "Blackmagic…".to_string()
+                                } else {
+                                    bm_name.clone()
+                                })
+                                .show_ui(ui, |ui| {
+                                    for dev in &devices {
+                                        if ui.selectable_label(bm_name == *dev, dev).clicked() {
+                                            bm_name = dev.clone();
+                                            changed = true;
+                                        }
+                                    }
+                                    if devices.is_empty() {
+                                        ui.label(egui::RichText::new("(no device)").weak());
+                                    }
                                 });
+                            if changed {
+                                updated.device = Some(crate::core::DeviceRef::Blackmagic {
+                                    name: bm_name.clone(),
+                                });
+                            }
+                            // G8: Treiber da, aber 0 Geräte → klarer Hinweis.
+                            if let Some(hint) = &hint {
+                                ui.label(
+                                    egui::RichText::new(hint)
+                                        .small()
+                                        .color(crate::gui::theme::palette::ERROR),
+                                );
                             }
                         });
                 });

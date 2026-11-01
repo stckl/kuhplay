@@ -1966,7 +1966,12 @@ impl ShowApp {
         } else {
             "No device connected"
         };
+        // G5/G8: Blackmagic-Geräte + Treiber-Hinweis für die Geräteauswahl.
+        let (dl_avail, dl_devices, dl_hint) = crate::engine::decklink_native::devices_with_hint();
+        let _ = dl_avail;
         RemoteWorkspace {
+            decklink_devices: dl_devices,
+            decklink_hint: dl_hint,
             show_name: self.show_name.clone(),
             file: self.current_file.as_ref().map(|p| p.display().to_string()),
             audition_mode: self.audition_mode,

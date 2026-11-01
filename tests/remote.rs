@@ -840,3 +840,28 @@ fn d11c_jeder_inspector_tab_aus_tabs_ist_in_der_content_map() {
         );
     }
 }
+
+#[test]
+fn g5_workspace_enthaelt_decklink_geraete_und_hint() {
+    let mut app = remote_app();
+    let w = app.build_remote_workspace();
+    // Felder existieren (leer ohne Treiber); auf dem Mac mit Karte gefüllt.
+    let _ = &w.decklink_devices;
+    if !w.decklink_devices.is_empty() {
+        assert!(w.decklink_hint.is_none(), "bei Geräten kein Hint");
+    }
+    // Web-UI nutzt die Felder im Route-Editor.
+    let html = include_str!("../src/remote/web_ui.html");
+    assert!(
+        html.contains("W.decklink_devices"),
+        "web_ui: decklink_devices fehlt"
+    );
+    assert!(
+        html.contains("W.decklink_hint"),
+        "web_ui: decklink_hint fehlt"
+    );
+    assert!(
+        html.contains("Blackmagic: { name:"),
+        "web_ui: Blackmagic-Device fehlt"
+    );
+}

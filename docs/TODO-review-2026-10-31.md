@@ -220,7 +220,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
 - [x] **G4. Scheduled Playback auf allen Systemen** (Bridge + Windows-COM: Frame-Queue, Karte als Taktgeber via StartScheduledPlayback/ScheduleVideoFrame/Callback; next_time gegen Stream-Zeit geclampt; late/dropped/queued gezaehlt und im Workspace-Status + EngineHandle; live auf Mac: 125 Frames, dropped=0)
   - `DisplayVideoFrameSync` durch geplante Ausgabe mit der Karte als Taktgeber ersetzen, verspätete
     und verlorene Bilder zählen und im Status anzeigen. Key und Fill laufen synchron.
-- [ ] **G5. Formate und Geräteauswahl**
+- [x] **G5. Formate und Geräteauswahl** (UHD 3840×2160 in bmd_display_mode; Geräte-Combo im GUI-Route-Editor mit erkannten Karten; Web-Remote-Routing bekommt decklink_devices/decklink_hint; Hint „Treiber da, 0 Geräte → Desktop Video neu installieren/registrieren“ in GUI + Web-Remote)
   - Fehlende Modi ergänzen, mindestens UHD (3840×2160); Modi und Geräte von der Karte abfragen
     statt nur fester Tabelle.
   - Karten im Route-Editor zur Auswahl anbieten statt festem Namen

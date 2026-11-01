@@ -299,6 +299,14 @@ pub struct RemoteWorkspace {
     pub stages: Vec<Stage>,
     pub routes: Vec<crate::core::OutputRoute>,
     pub devices: Vec<RemoteDevice>,
+    /// Erkannte Blackmagic-Ausgabegeräte (Namen), für die Geräteauswahl im
+    /// Route-Editor (G5). Leer + hint gesetzt = Treiber da, aber 0 Geräte.
+    #[serde(default)]
+    pub decklink_devices: Vec<String>,
+    /// Meldung für die UI: Treiber fehlt / 0 Geräte (z. B. nach macOS-Update:
+    /// Desktop Video neu installieren und registrieren, G8).
+    #[serde(default)]
+    pub decklink_hint: Option<String>,
     /// Auswahlwerte: Feldname → (JSON-Wert, Anzeigename).
     pub options: BTreeMap<String, Vec<RemoteOption>>,
     pub shortcuts: Vec<RemoteShortcut>,

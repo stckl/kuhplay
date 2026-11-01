@@ -271,6 +271,17 @@ pub fn bmd_display_mode(width: u32, height: u32, fps: u32) -> Option<u32> {
             5994 | 59 => 0x68703539, // 'hp59'
             _ => return None,
         },
+        (3840, 2160) => match fps {
+            2398 | 23 => 0x346B3233, // '4k23'
+            24 => 0x346B3234,        // '4k24'
+            25 => 0x346B3235,        // '4k25'
+            2997 | 29 => 0x346B3239, // '4k29'
+            30 => 0x346B3330,        // '4k30'
+            50 => 0x346B3530,        // '4k50'
+            5994 | 59 => 0x346B3539, // '4k59'
+            60 => 0x346B3630,        // '4k60'
+            _ => return None,
+        },
         _ => return None,
     };
     Some(m)
@@ -505,6 +516,11 @@ mod tests {
         assert_eq!(bmd_display_mode(1280, 720, 50), Some(0x68703530)); // 'hp50'
         assert_eq!(bmd_display_mode(640, 480, 25), None);
         assert_eq!(bmd_display_mode(1920, 1080, 100), None);
+        // G5: UHD 3840×2160 ergänzt.
+        assert_eq!(bmd_display_mode(3840, 2160, 25), Some(0x346B3235)); // '4k25'
+        assert_eq!(bmd_display_mode(3840, 2160, 50), Some(0x346B3530)); // '4k50'
+        assert_eq!(bmd_display_mode(3840, 2160, 2997), Some(0x346B3239)); // '4k29'
+        assert_eq!(bmd_display_mode(3840, 2160, 60), Some(0x346B3630)); // '4k60'
     }
 
     #[test]

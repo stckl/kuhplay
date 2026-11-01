@@ -918,20 +918,28 @@ function pageStages() {
     W.routes.length ? null : h('span', { class: 'dim' }, 'Create an output route first to give regions a target.'))];
 }
 function pageRouting() {
-  const deviceOptions = [{ value: null, label: 'None' }, ...W.devices.map(d => ({ value: d.id, label: d.name }))];
+  // G5: Blackmagic-Karten als Geräte-Auswahl (W.decklink_devices), plus Hint.
+  const deviceOptions = [
+    { value: null, label: 'None' },
+    ...W.devices.map(d => ({ value: 'disp:' + d.id, label: d.name })),
+    ...(W.decklink_devices || []).map(n => ({ value: 'bm:' + n, label: n + ' (Blackmagic)' })),
+  ];
   const routes = W.routes.map(route => {
     const set = changes => send('update_route', { id: route.id, changes });
     const deviceKind = route.device && Object.keys(route.device)[0];
-    const deviceId = deviceKind === 'Display' ? route.device.Display.id : null;
+    const deviceId = deviceKind === 'Display' ? 'disp:' + route.device.Display.id
+      : deviceKind === 'Blackmagic' ? 'bm:' + route.device.Blackmagic.name : null;
     const pickDevice = id => {
       if (id === null) return set({ device: null });
-      const device = W.devices.find(d => d.id === id);
+      if (id.startsWith('bm:')) return set({ device: { Blackmagic: { name: id.slice(3) } } });
+      const device = W.devices.find(d => d.id === Number(id.slice(5)));
       set({ device: { Display: { id: device.id, name: device.name, width: device.width, height: device.height } } });
     };
     return h('div', { class: 'card' }, h('div', { class: 'form' },
       field('Name', text(route.name, v => set({ name: v }))),
       field('Resolution', h('div', { class: 'inline' }, number(route.width, v => set({ width: Math.max(1, Math.round(v)) })), '×', number(route.height, v => set({ height: Math.max(1, Math.round(v)) })))),
       field('Device', select(deviceOptions, deviceId, pickDevice)),
+      W.decklink_hint ? field('', h('span', { class: 'bad' }, W.decklink_hint)) : null,
       field('Scaling', select(W.options.route_scaling, route.scaling, v => set({ scaling: v }))),
       field('Rotation', select(W.options.rotation, route.rotation, v => set({ rotation: v }))),
       field('Rear Projection', check(route.rear_projection, 'Mirror horizontally', v => set({ rear_projection: v }))),
