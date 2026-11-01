@@ -334,6 +334,9 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     `workspace_settings_video_page_renders_and_edits_stages_and_routes` (keine Displays/Devices
     → SKIP bzw. Assert nur bei vorhandenen Displays). Windows-Job in Lauf 41326507402 grün.
   - Abgeschlossen, wenn CI und der von Hand gestartete Release-Build auf allen drei Plattformen grün sind.
+  - **Ergebnis: CI grün auf allen drei Plattformen** (Lauf 41331234546, Commit d2eaf33:
+    Windows/Linux/macOS success). Release-Build (release.yml) läuft nur auf Tag-Push bzw.
+    workflow_dispatch – Tag-Push/Release bleibt auf Freigabe des Auftraggebers wartend.
 
 ## Block U: Installer und Update-Funktion (nach Block H)
 
