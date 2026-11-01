@@ -34,6 +34,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo-packager installieren
         run: cargo install cargo-packager --locked
+      - name: Versionen prüfen
+        shell: bash
+        run: |
+          cargo_v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          pack_v=$(sed -n 's/^version = "\(.*\)"/\1/p' Packager.toml | head -1)
+          [ "$cargo_v" = "$pack_v" ] || { echo "Cargo.toml $cargo_v, Packager.toml $pack_v"; exit 1; }
+          if [ "${{ github.ref_type }}" = "tag" ] && [ "${{ github.ref_name }}" != "v$cargo_v" ]; then
+            echo "Tag ${{ github.ref_name }} passt nicht zu Version $cargo_v"; exit 1
+          fi
+
       - name: System-Setup
         shell: bash
         run: |
