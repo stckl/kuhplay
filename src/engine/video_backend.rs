@@ -104,6 +104,31 @@ impl VideoBackend {
     /// 1. `KUHPLAY_FFMPEG` (voller Pfad),
     /// 2. `ffmpeg`/`ffmpeg.exe` **neben unserer eigenen exe** (gebundelt mit ausliefern),
     /// 3. `ffmpeg` aus dem PATH.
+    ///
+    /// ffprobe-Binary: env `KUHPLAY_FFPROBE`, sonst neben der App (gebundelt, G7), sonst PATH.
+    /// Gleiche Suchreihenfolge wie [`Self::ffmpeg_binary`].
+    pub fn ffprobe_binary() -> String {
+        if let Ok(path) = std::env::var("KUHPLAY_FFPROBE") {
+            if !path.trim().is_empty() {
+                return path;
+            }
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let name = if cfg!(windows) {
+                    "ffprobe.exe"
+                } else {
+                    "ffprobe"
+                };
+                let sibling = dir.join(name);
+                if sibling.is_file() {
+                    return sibling.display().to_string();
+                }
+            }
+        }
+        "ffprobe".to_string()
+    }
+
     pub fn ffmpeg_binary() -> String {
         if let Ok(path) = std::env::var("KUHPLAY_FFMPEG") {
             if !path.trim().is_empty() {
@@ -445,7 +470,7 @@ fn kill_child(child_slot: &Arc<Mutex<Option<Child>>>) {
 
 /// ffprobe: Auflösung, Framerate, Dauer des ersten Video-Streams.
 pub fn probe(path: &str) -> Result<VideoInfo, String> {
-    let out = Command::new("ffprobe")
+    let out = Command::new(VideoBackend::ffprobe_binary())
         .args([
             "-v",
             "error",
@@ -458,7 +483,12 @@ pub fn probe(path: &str) -> Result<VideoInfo, String> {
             path,
         ])
         .output()
-        .map_err(|e| format!("ffprobe spawn failed: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "ffprobe nicht gefunden/ ausführbar ({}): {e} – erwartet neben der App oder im PATH (G7)",
+                VideoBackend::ffprobe_binary()
+            )
+        })?;
     if !out.status.success() {
         return Err(format!(
             "ffprobe failed for {path}: {}",
@@ -530,6 +560,13 @@ mod hwaccel_tests {
 #[cfg(test)]
 mod ffmpeg_binary_tests {
     use super::VideoBackend;
+
+    #[test]
+    fn ffprobe_binary_env_override() {
+        std::env::set_var("KUHPLAY_FFPROBE", "/opt/custom/ffprobe");
+        assert_eq!(VideoBackend::ffprobe_binary(), "/opt/custom/ffprobe");
+        std::env::remove_var("KUHPLAY_FFPROBE");
+    }
 
     #[test]
     fn ffmpeg_binary_env_override() {

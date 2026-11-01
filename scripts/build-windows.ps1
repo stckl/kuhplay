@@ -29,7 +29,11 @@ $zip = "$out.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $out -DestinationPath $zip
 
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    Write-Warning 'ffmpeg fehlt im PATH, Video-Cues brauchen es zur Laufzeit.'
+# G7: ffmpeg/ffprobe gebündelt neben die exe (vor dem Zip).
+if (Test-Path "$PSScriptRoot\vendor-ffmpeg.ps1") {
+  & "$PSScriptRoot\vendor-ffmpeg.ps1" $out
+}
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $out 'ffmpeg.exe'))) {
+    Write-Warning 'ffmpeg/ffprobe weder gebündelt noch im PATH – Video-Cues brauchen eines davon.'
 }
 Write-Host "Fertig: $zip"

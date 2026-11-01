@@ -50,3 +50,8 @@ tar -czf "$out.tar.gz" -C dist "$name"
 
 command -v ffmpeg >/dev/null || echo "Hinweis: ffmpeg fehlt im PATH, Video-Cues brauchen es zur Laufzeit." >&2
 echo "Fertig: $out.tar.gz"
+
+# G7: ffmpeg/ffprobe gebündelt neben das Binary.
+if [ -x scripts/vendor-ffmpeg.sh ]; then
+  scripts/vendor-ffmpeg.sh dist/linux/ || echo "Hinweis: vendor-ffmpeg fehlgeschlagen – ffmpeg/ffprobe müssen im PATH liegen." >&2
+fi

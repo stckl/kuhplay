@@ -32,6 +32,10 @@ cp target/release/kuhplay "$app/Contents/MacOS/"
 if [ "$webview" = 1 ]; then
   cp target/release/kuhplay-webview "$app/Contents/MacOS/"
 fi
+# G7: ffmpeg/ffprobe gebündelt ins App-Bundle (falls vorhanden, sonst PATH-Hinweis).
+if [ -x scripts/vendor-ffmpeg.sh ]; then
+  scripts/vendor-ffmpeg.sh "$app/Contents/MacOS" || echo "Hinweis: vendor-ffmpeg fehlgeschlagen – ffmpeg/ffprobe müssen im PATH liegen." >&2
+fi
 
 # App-Icon: icon.png ist nicht quadratisch, iconutil braucht Quadrate.
 work=$(mktemp -d)
@@ -74,5 +78,5 @@ zip="dist/kuhplay-${version}-macos-${arch}.zip"
 rm -f "$zip"
 ditto -c -k --keepParent "$app" "$zip"
 
-command -v ffmpeg >/dev/null || echo "Hinweis: ffmpeg fehlt im PATH, Video-Cues brauchen es zur Laufzeit." >&2
+command -v ffmpeg >/dev/null || [ -x "$app/Contents/MacOS/ffmpeg" ] || echo "Hinweis: ffmpeg/ffprobe weder gebündelt noch im PATH – Video-Cues brauchen eines davon." >&2
 echo "Fertig: $app und $zip"

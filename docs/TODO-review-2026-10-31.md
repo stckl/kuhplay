@@ -231,7 +231,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   - Erst nach G3 und G4: `DecklinkOutput`, `ffmpeg_decklink_args`, `KUHPLAY_DECKLINK_BACKEND`,
     `pix_fmt`, den Fallback in `DecklinkSink` und die Tests dazu entfernen. README und falschen
     Kommentar in `decklink.rs` anpassen.
-- [ ] **G7. ffmpeg und ffprobe mitliefern**
+- [x] **G7. ffmpeg/ffprobe mitliefern** (ffprobe_binary() wie ffmpeg_binary(): env KUHPLAY_FFPROBE, Sibling neben der App, PATH; probe() nutzt sie + klare Fehlermeldung; scripts/vendor-ffmpeg.{sh,ps1} legen LGPL-Builds + LICENSE-ffmpeg.txt neben die App; build-mac/windows/linux rufen das Vendor-Skript auf; Test ffprobe_binary_env_override)
   - `probe` nutzt fest `ffprobe` aus dem `PATH` (`src/engine/video_backend.rs:448`). Die Suche aus
     `ffmpeg_binary()` auch für ffprobe verwenden, mit Test.
   - Build-Skripte legen beide Programme neben die App, auf dem Mac in das App-Bundle: LGPL-Build
