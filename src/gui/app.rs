@@ -1425,6 +1425,12 @@ impl ShowApp {
         &self.engine_label
     }
 
+    /// DeckLink-Statistik aus dem EngineHandle (frames, late, dropped, queued) – G4.
+    pub fn engine_decklink_stats(&self) -> (u64, u64, u64, u64) {
+        let st = self.engine.decklink_stats.lock().unwrap();
+        (st.frames, st.late, st.dropped, st.queued)
+    }
+
     pub fn broken_count(&mut self) -> usize {
         self.refresh_problems();
         self.problems.iter().filter(|b| !b.child).count()

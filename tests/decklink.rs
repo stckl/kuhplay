@@ -318,8 +318,14 @@ fn live_com_output_test_pattern() {
         out.push_frame(&frame).expect("push_frame");
         std::thread::sleep(Duration::from_millis(40));
     }
+    std::thread::sleep(Duration::from_millis(500)); // auslaufen lassen
     assert_eq!(out.frames_pushed(), frames as u64);
-    println!("OK: {frames} Frames auf {} ausgegeben", out.device_name());
+    let (late, dropped, queued) = out.stats();
+    println!("stats: late={late} dropped={dropped} queued={queued} (scheduled, callback feuert evtl. nicht ohne Sinksignal)");
+    println!(
+        "OK: {frames} Frames auf {} ausgegeben (scheduled)",
+        out.device_name()
+    );
 }
 
 /// G5/G8: Meldung, wenn Treiber fehlt bzw. 0 Geräte (z. B. nach macOS-Update).
@@ -362,6 +368,8 @@ fn live_native_output_test_pattern() {
     let modes = out.modes();
     println!("modi: {modes:?}");
     assert!(!modes.is_empty(), "Karte meldet keine Modi");
+    // G4: Scheduled Playback starten (Karte als Taktgeber)
+    out.start_scheduled().expect("start_scheduled");
     let frames = 125;
     for i in 0..frames {
         let mut rgba = vec![0u8; (1920 * 1080 * 4) as usize];
@@ -379,6 +387,12 @@ fn live_native_output_test_pattern() {
             .expect("push");
         std::thread::sleep(Duration::from_millis(40));
     }
+    std::thread::sleep(Duration::from_millis(500)); // auslaufen lassen
     assert_eq!(out.frames_pushed(), frames as u64);
-    println!("OK: {frames} Frames auf {} ausgegeben", out.device_name());
+    let (late, dropped, queued) = out.stats();
+    println!("stats: late={late} dropped={dropped} queued={queued} (scheduled, callback feuert evtl. nicht ohne Sinksignal)");
+    println!(
+        "OK: {frames} Frames auf {} ausgegeben (scheduled)",
+        out.device_name()
+    );
 }

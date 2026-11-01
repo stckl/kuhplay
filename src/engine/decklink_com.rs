@@ -75,6 +75,13 @@ unsafe trait IDeckLinkMutableVideoFrame: IDeckLinkVideoFrame {
     fn SetFlags(&self, newflags: u32) -> HRESULT;
 }
 
+/// IDeckLinkVideoOutputCallback (DeckLinkAPI.idl) – Scheduled Playback (G4).
+#[interface("20AA5225-1958-47CB-820B-80A8D521A6EE")]
+unsafe trait IDeckLinkVideoOutputCallback: IUnknown {
+    fn ScheduledFrameCompleted(&self, completedframe: *mut c_void, result: u32) -> HRESULT;
+    fn ScheduledPlaybackHasStopped(&self) -> HRESULT;
+}
+
 /// IDeckLinkOutput (DeckLinkAPI.idl) – nur das benötigte vtable-Präfix.
 #[interface("5F227C95-39D7-46C7-8B7D-9C81795FBBE4")]
 unsafe trait IDeckLinkOutput: IUnknown {
@@ -105,6 +112,32 @@ unsafe trait IDeckLinkOutput: IUnknown {
     ) -> HRESULT;
     fn CreateAncillaryData(&self, pixelformat: u32, outbuffer: *mut *mut c_void) -> HRESULT;
     fn DisplayVideoFrameSync(&self, theframe: *mut c_void) -> HRESULT;
+    fn ScheduleVideoFrame(
+        &self,
+        theframe: *mut c_void,
+        displaytime: i64,
+        displayduration: i64,
+        timescale: i64,
+    ) -> HRESULT;
+    fn SetScheduledFrameCompletionCallback(&self, thecallback: *mut c_void) -> HRESULT;
+    fn StartScheduledPlayback(
+        &self,
+        playbackstarttime: i64,
+        timescale: i64,
+        playbackspeed: f64,
+    ) -> HRESULT;
+    fn StopScheduledPlayback(
+        &self,
+        stopplaybackattime: i64,
+        actualstoptime: *mut i64,
+        timescale: i64,
+    ) -> HRESULT;
+    fn GetScheduledStreamTime(
+        &self,
+        desiredtimescale: i64,
+        streamtime: *mut i64,
+        playbackspeed: *mut f64,
+    ) -> HRESULT;
 }
 
 // CDeckLinkIterator-CLSIDs (SDK 16.0: BA6C6F44-… ist die aktuelle; die alten
@@ -157,10 +190,95 @@ pub fn list_devices() -> ShowResult<Vec<String>> {
 }
 
 /// Native DeckLink-Ausgabe per COM.
+/// Geteilter State für Scheduled Playback (G4): Queue + Zähler, vom
+/// COM-Callback (Treiber-Thread) und vom Engine-Thread (Push) genutzt.
+pub struct ScheduledState {
+    pub queue: Vec<Vec<u8>>,
+    pub next_time: i64,
+    pub time_scale: i64,
+    pub frame_dur: i64,
+    pub in_flight: bool,
+    pub late: u64,
+    pub dropped: u64,
+    pub scheduled: bool,
+}
+
+#[windows_core::implement(IDeckLinkVideoOutputCallback)]
+struct ScheduledCallback {
+    owner: ComDeckLinkOutputWeak,
+}
+
+// Schwache Referenz, damit der Callback den Output nicht zyklisch hält.
+pub struct ComDeckLinkOutputWeak {
+    state: std::sync::Arc<std::sync::Mutex<ScheduledState>>,
+    output: std::sync::Mutex<Option<IDeckLinkOutput>>,
+    frame: std::sync::Mutex<Option<IDeckLinkMutableVideoFrame>>,
+    buffer: std::sync::Mutex<Option<IDeckLinkVideoBuffer>>,
+}
+
+impl IDeckLinkVideoOutputCallback_Impl for ScheduledCallback_Impl {
+    unsafe fn ScheduledFrameCompleted(&self, _completedframe: *mut c_void, result: u32) -> HRESULT {
+        // result: bmdOutputFrameCompleted=0, bmdOutputFrameDropped=... (enum)
+        let mut st = self.owner.state.lock().unwrap();
+        st.in_flight = false;
+        // bmdOutputFrameCompletionResult: 0=Completed, 1=DisplayedLate, 2=Dropped, 3=Flushed
+        match result {
+            2 => st.dropped += 1,
+            0 | 3 => {}
+            _ => st.late += 1,
+        }
+        drop(st);
+        self.owner.schedule_next();
+        HRESULT(0)
+    }
+    unsafe fn ScheduledPlaybackHasStopped(&self) -> HRESULT {
+        HRESULT(0)
+    }
+}
+
+impl ComDeckLinkOutputWeak {
+    fn schedule_next(&self) {
+        let mut st = self.state.lock().unwrap();
+        if st.queue.is_empty() || st.in_flight {
+            if st.queue.is_empty() && st.scheduled && !st.in_flight {
+                st.dropped += 1;
+            }
+            return;
+        }
+        let data = st.queue.remove(0);
+        let in_flight = &mut st.in_flight;
+        *in_flight = true;
+        let (next_time, frame_dur, time_scale) = (st.next_time, st.frame_dur, st.time_scale);
+        st.next_time += frame_dur;
+        drop(st);
+        unsafe {
+            if let (Some(buffer), Some(output), Some(frame)) = (
+                self.buffer.lock().unwrap().as_ref(),
+                self.output.lock().unwrap().as_ref(),
+                self.frame.lock().unwrap().as_ref(),
+            ) {
+                let _ = buffer.StartAccess(BMD_BUFFER_ACCESS_WRITE);
+                let mut buf: *mut c_void = std::ptr::null_mut();
+                if buffer.GetBytes(&mut buf) == HRESULT(0) && !buf.is_null() {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, data.len());
+                }
+                let _ = buffer.EndAccess(BMD_BUFFER_ACCESS_WRITE);
+                let _ = output.ScheduleVideoFrame(
+                    frame.as_raw() as *mut c_void,
+                    next_time,
+                    frame_dur,
+                    time_scale,
+                );
+            }
+        }
+    }
+}
+
 pub struct ComDeckLinkOutput {
     output: IDeckLinkOutput,
     frame: IDeckLinkMutableVideoFrame,
     buffer: IDeckLinkVideoBuffer,
+    sched: Option<std::sync::Arc<std::sync::Mutex<ScheduledState>>>,
     uyvy: Vec<u8>,
     width: u32,
     height: u32,
@@ -245,6 +363,7 @@ impl ComDeckLinkOutput {
                 output,
                 frame,
                 buffer,
+                sched: None,
                 uyvy: vec![0u8; (config.width * config.height * 2) as usize],
                 width: config.width,
                 height: config.height,
@@ -286,6 +405,15 @@ impl ComDeckLinkOutput {
                 "decklink COM: Ausgabe deaktiviert".into(),
             ));
         }
+        // Scheduled Playback (G4): Frame einreihen statt sync pushen.
+        if let Some(state) = &self.sched {
+            let mut st = state.lock().unwrap();
+            if st.scheduled {
+                st.queue.push(uyvy.to_vec());
+                self.frames_pushed += 1;
+                return Ok(());
+            }
+        }
         unsafe {
             self.buffer
                 .StartAccess(BMD_BUFFER_ACCESS_WRITE)
@@ -313,6 +441,64 @@ impl ComDeckLinkOutput {
         }
         self.frames_pushed += 1;
         Ok(())
+    }
+
+    /// Startet Scheduled Playback (G4): Karte als Taktgeber, Frames einreihen.
+    pub fn start_scheduled(&mut self) -> ShowResult<()> {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(ScheduledState {
+            queue: Vec::new(),
+            next_time: 0,
+            time_scale: 25_000,
+            frame_dur: 1_000,
+            in_flight: false,
+            late: 0,
+            dropped: 0,
+            scheduled: false,
+        }));
+        let cb = ScheduledCallback {
+            owner: ComDeckLinkOutputWeak {
+                state: state.clone(),
+                output: std::sync::Mutex::new(Some(self.output.clone())),
+                frame: std::sync::Mutex::new(Some(self.frame.clone())),
+                buffer: std::sync::Mutex::new(Some(self.buffer.clone())),
+            },
+        };
+        let cb_obj: IDeckLinkVideoOutputCallback = cb.into();
+        unsafe {
+            self.output
+                .SetScheduledFrameCompletionCallback(cb_obj.as_raw() as *mut c_void)
+                .ok()
+                .map_err(|e| {
+                    ShowError::Engine(format!("SetScheduledFrameCompletionCallback: {e}"))
+                })?;
+            self.output
+                .StartScheduledPlayback(0, 25_000, 1.0)
+                .ok()
+                .map_err(|e| ShowError::Engine(format!("StartScheduledPlayback: {e}")))?;
+            // Nächste Frame-Zeit an die aktuelle Stream-Zeit koppeln (G4).
+            let mut stream_time: i64 = 0;
+            let mut speed: f64 = 1.0;
+            unsafe {
+                let _ = self
+                    .output
+                    .GetScheduledStreamTime(25_000, &mut stream_time, &mut speed);
+            }
+            state.lock().unwrap().next_time = stream_time + 1_000;
+        }
+        state.lock().unwrap().scheduled = true;
+        self.sched = Some(state);
+        Ok(())
+    }
+
+    /// (late, dropped, queued) – G4-Statistik.
+    pub fn stats(&self) -> (u64, u64, u64) {
+        self.sched
+            .as_ref()
+            .map(|s| {
+                let st = s.lock().unwrap();
+                (st.late, st.dropped, st.queue.len() as u64)
+            })
+            .unwrap_or((0, 0, 0))
     }
 
     /// Anzahl geschriebener Frames.

@@ -300,6 +300,8 @@ pub struct RealMediaEngine {
     audio_patch: crate::core::AudioPatch,
     /// Decklink-Hardware-Ausgabe (optional, siehe [`Self::start_decklink_from_env`]).
     decklink: Option<DecklinkSink>,
+    /// Geteilte Statistik für das EngineHandle (GUI liest mit, G4).
+    decklink_stats_handle: std::sync::Arc<std::sync::Mutex<super::decklink::DecklinkStats>>,
     /// Zweiter Decklink-Ausgang für den Key-SDI (Key/Fill, 2-Kabel):
     /// `KUHPLAY_DECKLINK_KEY_DEVICE`. Push: Alpha der Key-Route als Luma.
     decklink_key: Option<DecklinkSink>,
@@ -368,6 +370,9 @@ impl RealMediaEngine {
             extra_audio: Vec::new(),
             audio_patch: crate::core::AudioPatch::default(),
             decklink: None,
+            decklink_stats_handle: std::sync::Arc::new(std::sync::Mutex::new(
+                super::decklink::DecklinkStats::default(),
+            )),
             decklink_key: None,
             decklink_stage: String::new(),
             decklink_fps: 25,
@@ -410,8 +415,11 @@ impl RealMediaEngine {
                     ..config.clone()
                 };
                 match DecklinkSink::start(&key_config) {
-                    Ok(out) => {
+                    Ok(mut out) => {
                         info!(device = %key_device, "decklink key output gestartet");
+                        if let Err(err) = out.start_scheduled() {
+                            warn!(%err, "decklink key: scheduled nicht gestartet – Sync-Modus");
+                        }
                         self.decklink_key = Some(out);
                     }
                     Err(err) => warn!(%err, "decklink key output fehlgeschlagen"),
@@ -419,7 +427,7 @@ impl RealMediaEngine {
             }
         }
         match DecklinkSink::start(&config) {
-            Ok(output) => {
+            Ok(mut output) => {
                 info!(
                     device = %config.device,
                     stage = %stage,
@@ -428,6 +436,10 @@ impl RealMediaEngine {
                     config.height,
                     config.fps
                 );
+                // G4: Scheduled Playback – die Karte gibt den Takt vor.
+                if let Err(err) = output.start_scheduled() {
+                    warn!(%err, "decklink scheduled playback nicht gestartet – Sync-Modus");
+                }
                 self.decklink = Some(output);
                 self.decklink_stage = stage;
                 self.decklink_fps = config.fps.max(1);
@@ -438,6 +450,15 @@ impl RealMediaEngine {
         }
     }
 
+    /// Setzt den gemeinsamen Statistik-Store (G4) – aus spawn_real_engine_with_join.
+    pub fn with_decklink_stats(
+        mut self,
+        stats: std::sync::Arc<std::sync::Mutex<super::decklink::DecklinkStats>>,
+    ) -> Self {
+        self.decklink_stats_handle = stats;
+        self
+    }
+
     /// Hängt eine Decklink-Ausgabe programmatisch an (für Tests: beliebiger
     /// Subprocess-Sink via [`DecklinkOutput::spawn`]).
     pub fn with_decklink(mut self, output: DecklinkOutput, stage: String, fps: u32) -> Self {
@@ -445,6 +466,26 @@ impl RealMediaEngine {
         self.decklink_stage = stage;
         self.decklink_fps = fps.max(1);
         self
+    }
+
+    /// DeckLink-Statistik (late, dropped, queued) – G4; (0,0,0) ohne native Senke.
+    pub fn decklink_stats(&self) -> (u64, u64, u64) {
+        self.decklink
+            .as_ref()
+            .map(|d| d.stats())
+            .unwrap_or((0, 0, 0))
+    }
+
+    /// Pflegt die geteilte Statistik im EngineHandle (GUI/Remote, G4).
+    fn publish_decklink_stats(&self) {
+        let (late, dropped, queued) = self.decklink_stats();
+        let frames = self.decklink_frames_pushed();
+        *self.decklink_stats_handle.lock().unwrap() = super::decklink::DecklinkStats {
+            frames,
+            late,
+            dropped,
+            queued,
+        };
     }
 
     /// Anzahl der auf die Decklink-Ausgabe gepushten Frames (0 ohne Decklink).
@@ -505,6 +546,7 @@ impl RealMediaEngine {
             scaled = Arc::new(scale_nearest(frame, width, height));
             &scaled
         };
+        self.publish_decklink_stats();
         use super::output_sink::OutputSink as _;
         let result = self.decklink.as_mut().unwrap().push(frame);
         if let Err(err) = result {
@@ -2480,6 +2522,10 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
     let route_frames_e = route_frames.clone();
     let audio_voices = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
     let audio_voices_e = audio_voices.clone();
+    let decklink_stats = std::sync::Arc::new(std::sync::Mutex::new(
+        super::decklink::DecklinkStats::default(),
+    ));
+    let decklink_stats_e = decklink_stats.clone();
 
     let join = std::thread::Builder::new()
         .name("real-playback-engine".to_string())
@@ -2491,7 +2537,8 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
                 route_frames_e,
                 evt_tx,
             )
-            .with_audio_voice_store(audio_voices_e);
+            .with_audio_voice_store(audio_voices_e)
+            .with_decklink_stats(decklink_stats_e);
             // Decklink-Hardware-Ausgabe starten, falls konfiguriert
             // (KUHPLAY_DECKLINK_* – siehe DecklinkConfig::from_env).
             engine.start_decklink_from_env();
@@ -2517,6 +2564,7 @@ pub fn spawn_real_engine_with_join() -> (super::EngineHandle, std::thread::JoinH
 
     (
         super::EngineHandle {
+            decklink_stats,
             commands: cmd_tx,
             events: evt_rx,
             frames,

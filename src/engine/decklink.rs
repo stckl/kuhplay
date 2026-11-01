@@ -364,6 +364,15 @@ pub fn rgba_to_uyvy422_cs(src: &VideoFrame, dst: &mut [u8], cs: ColorSpace) {
     }
 }
 
+/// Geteilte DeckLink-Statistik (Engine → GUI/Remote), siehe EngineHandle.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DecklinkStats {
+    pub frames: u64,
+    pub late: u64,
+    pub dropped: u64,
+    pub queued: u64,
+}
+
 /// Aktive Decklink-Senke: nativ per COM (Windows, bevorzugt) oder per
 /// ffmpeg-Subprocess mit `decklink`-Muxer. Auswahl über
 /// `KUHPLAY_DECKLINK_BACKEND` = `auto` (Default; Windows: COM zuerst) | `com` | `ffmpeg`.
@@ -427,6 +436,22 @@ impl DecklinkSink {
         match self {
             Self::Ffmpeg(out) => out.height(),
             Self::Native(out) => out.height(),
+        }
+    }
+
+    /// (late, dropped, queued) – nur native Senke (G4); ffmpeg: (0,0,0).
+    pub fn stats(&self) -> (u64, u64, u64) {
+        match self {
+            Self::Ffmpeg(_) => (0, 0, 0),
+            Self::Native(out) => out.stats(),
+        }
+    }
+
+    /// Startet Scheduled Playback auf der nativen Senke (G4), sonst Ok(()).
+    pub fn start_scheduled(&mut self) -> ShowResult<()> {
+        match self {
+            Self::Ffmpeg(_) => Ok(()),
+            Self::Native(out) => out.start_scheduled(),
         }
     }
 

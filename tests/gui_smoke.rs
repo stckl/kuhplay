@@ -805,6 +805,9 @@ fn manual_app() -> (
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let (evt_tx, evt_rx) = crossbeam_channel::unbounded();
     let handle = EngineHandle {
+        decklink_stats: std::sync::Arc::new(std::sync::Mutex::new(
+            kuhplay::engine::decklink::DecklinkStats::default(),
+        )),
         commands: cmd_tx,
         events: evt_rx,
         frames: new_frame_store(),

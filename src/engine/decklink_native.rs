@@ -111,6 +111,17 @@ impl NativeOutput {
         Ok(())
     }
 
+    /// Startet Scheduled Playback (G4): die Karte ist Taktgeber, Frames werden
+    /// eingereiht. Key/Fill auf zwei Ports laufen damit kartengetaktet synchron.
+    pub fn start_scheduled(&mut self) -> ShowResult<()> {
+        platform::start_scheduled(&mut self.inner)
+    }
+
+    /// (late, dropped, queued) – verspätete/verlorene Frames seit Start (G4).
+    pub fn stats(&self) -> (u64, u64, u64) {
+        platform::stats(&self.inner)
+    }
+
     /// Anzahl gepushter Frames.
     pub fn frames_pushed(&self) -> u64 {
         self.frames_pushed
@@ -168,6 +179,14 @@ mod platform {
     pub fn push(out: &mut Output, uyvy: &[u8]) -> ShowResult<()> {
         out.com.push_uyvy(uyvy)
     }
+
+    pub fn start_scheduled(out: &mut Output) -> ShowResult<()> {
+        out.com.start_scheduled()
+    }
+
+    pub fn stats(out: &Output) -> (u64, u64, u64) {
+        out.com.stats()
+    }
 }
 
 #[cfg(all(not(target_os = "windows"), feature = "decklink"))]
@@ -193,6 +212,14 @@ mod platform {
             interlaced: *mut i32,
         );
         fn kp_dl_push(h: *mut c_void, uyvy: *const u8, len: i32) -> i32;
+        fn kp_dl_start_scheduled(h: *mut c_void) -> i32;
+        fn kp_dl_stats(
+            h: *mut c_void,
+            late: *mut i64,
+            dropped: *mut i64,
+            queued: *mut i64,
+            scheduled: *mut i64,
+        );
         fn kp_dl_close(h: *mut c_void);
     }
 
@@ -283,6 +310,36 @@ mod platform {
         Ok(())
     }
 
+    pub fn start_scheduled(out: &mut Output) -> ShowResult<()> {
+        let rc = unsafe { kp_dl_start_scheduled(out.handle) };
+        if rc != 0 {
+            return Err(ShowError::Engine(format!(
+                "DeckLink StartScheduledPlayback failed ({rc}): {}",
+                last_error()
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn stats(out: &Output) -> (u64, u64, u64) {
+        let (mut late, mut dropped, mut queued, mut scheduled) = (0i64, 0i64, 0i64, 0i64);
+        unsafe {
+            kp_dl_stats(
+                out.handle,
+                &mut late,
+                &mut dropped,
+                &mut queued,
+                &mut scheduled,
+            )
+        };
+        let _ = scheduled;
+        (
+            late.max(0) as u64,
+            dropped.max(0) as u64,
+            queued.max(0) as u64,
+        )
+    }
+
     impl Drop for Output {
         fn drop(&mut self) {
             unsafe { kp_dl_close(self.handle) };
@@ -321,5 +378,13 @@ mod platform {
 
     pub fn push(_out: &mut Output, _uyvy: &[u8]) -> ShowResult<()> {
         Err(ShowError::Engine("native DeckLink build missing".into()))
+    }
+
+    pub fn start_scheduled(_out: &mut Output) -> ShowResult<()> {
+        Err(ShowError::Engine("native DeckLink build missing".into()))
+    }
+
+    pub fn stats(_out: &Output) -> (u64, u64, u64) {
+        (0, 0, 0)
     }
 }

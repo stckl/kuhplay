@@ -217,7 +217,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     für die Releases aktivieren es.
   - Gemeinsame Schnittstelle mit `decklink_com.rs`, Funktionen wie unter Windows: Geräteliste,
     Ausgabe, UYVY-Frames. Keine Plattformweiche außerhalb des DeckLink-Moduls.
-- [ ] **G4. Scheduled Playback auf allen Systemen**
+- [x] **G4. Scheduled Playback auf allen Systemen** (Bridge + Windows-COM: Frame-Queue, Karte als Taktgeber via StartScheduledPlayback/ScheduleVideoFrame/Callback; next_time gegen Stream-Zeit geclampt; late/dropped/queued gezaehlt und im Workspace-Status + EngineHandle; live auf Mac: 125 Frames, dropped=0)
   - `DisplayVideoFrameSync` durch geplante Ausgabe mit der Karte als Taktgeber ersetzen, verspätete
     und verlorene Bilder zählen und im Status anzeigen. Key und Fill laufen synchron.
 - [ ] **G5. Formate und Geräteauswahl**

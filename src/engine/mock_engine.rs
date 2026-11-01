@@ -83,6 +83,9 @@ pub struct EngineHandle {
     /// Cue-IDs mit aktiver Audio-Voice (Real-Engine; Mock: leer). Video-Cues
     /// legen ebenfalls eine Voice an (Tonspur des Videos).
     pub audio_voices: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<Uuid>>>,
+    /// DeckLink-Statistik (frames, late, dropped, queued) – G4, wird vom
+    /// Real-Engine-Tick gepflegt, GUI liest mit.
+    pub decklink_stats: std::sync::Arc<std::sync::Mutex<crate::engine::decklink::DecklinkStats>>,
 }
 
 impl EngineHandle {
@@ -148,6 +151,9 @@ pub fn spawn_mock_engine_with_join() -> (EngineHandle, std::thread::JoinHandle<(
 
     (
         EngineHandle {
+            decklink_stats: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::engine::decklink::DecklinkStats::default(),
+            )),
             commands: cmd_tx,
             events: evt_rx,
             frames: new_frame_store(),
