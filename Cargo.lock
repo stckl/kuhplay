@@ -3001,6 +3001,7 @@ dependencies = [
  "axum",
  "base64",
  "block2 0.5.1",
+ "cc",
  "cpal",
  "crossbeam-channel",
  "display-info",

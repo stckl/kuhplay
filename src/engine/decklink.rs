@@ -368,31 +368,29 @@ pub fn rgba_to_uyvy422_cs(src: &VideoFrame, dst: &mut [u8], cs: ColorSpace) {
 /// ffmpeg-Subprocess mit `decklink`-Muxer. Auswahl über
 /// `KUHPLAY_DECKLINK_BACKEND` = `auto` (Default; Windows: COM zuerst) | `com` | `ffmpeg`.
 pub enum DecklinkSink {
-    /// ffmpeg-Subprocess mit `-f decklink` (Fallback / Nicht-Windows).
+    /// ffmpeg-Subprocess mit `-f decklink` (Fallback, bis G6 den Weg entfernt).
     Ffmpeg(DecklinkOutput),
-    /// Native COM-Ausgabe direkt auf die Karte (nur Windows).
-    #[cfg(target_os = "windows")]
-    Com(crate::engine::decklink_com::ComDeckLinkOutput),
+    /// Native Ausgabe direkt über das Blackmagic SDK (alle Plattformen, G3).
+    Native(crate::engine::decklink_native::NativeOutput),
 }
 
 impl DecklinkSink {
     /// Startet die Senke passend zur Plattform/Konfiguration.
     pub fn start(config: &DecklinkConfig) -> ShowResult<Self> {
-        #[cfg(target_os = "windows")]
         {
             let backend =
                 std::env::var("KUHPLAY_DECKLINK_BACKEND").unwrap_or_else(|_| "auto".into());
-            if backend == "auto" || backend == "com" {
-                match crate::engine::decklink_com::ComDeckLinkOutput::start(config) {
+            if backend == "auto" || backend == "native" || backend == "com" {
+                match crate::engine::decklink_native::NativeOutput::open(config) {
                     Ok(out) => {
-                        tracing::info!(device = %config.device, "decklink: nativ per COM geöffnet");
-                        return Ok(Self::Com(out));
+                        tracing::info!(device = %out.device_name(), "decklink: nativ über SDK geöffnet");
+                        return Ok(Self::Native(out));
                     }
                     Err(err) => {
-                        if backend == "com" {
+                        if backend != "auto" {
                             return Err(err);
                         }
-                        tracing::warn!(%err, "decklink COM nicht verfügbar – Fallback ffmpeg");
+                        tracing::warn!(%err, "decklink nativ nicht verfügbar – Fallback ffmpeg");
                     }
                 }
             }
@@ -404,8 +402,7 @@ impl DecklinkSink {
     pub fn push_frame(&mut self, frame: &VideoFrame) -> ShowResult<()> {
         match self {
             Self::Ffmpeg(out) => out.push_frame(frame),
-            #[cfg(target_os = "windows")]
-            Self::Com(out) => out.push_frame(frame),
+            Self::Native(out) => out.push_frame(frame),
         }
     }
 
@@ -413,8 +410,7 @@ impl DecklinkSink {
     pub fn frames_pushed(&self) -> u64 {
         match self {
             Self::Ffmpeg(out) => out.frames_pushed(),
-            #[cfg(target_os = "windows")]
-            Self::Com(out) => out.frames_pushed(),
+            Self::Native(out) => out.frames_pushed(),
         }
     }
 
@@ -422,8 +418,7 @@ impl DecklinkSink {
     pub fn width(&self) -> u32 {
         match self {
             Self::Ffmpeg(out) => out.width(),
-            #[cfg(target_os = "windows")]
-            Self::Com(out) => out.width(),
+            Self::Native(out) => out.width(),
         }
     }
 
@@ -431,8 +426,7 @@ impl DecklinkSink {
     pub fn height(&self) -> u32 {
         match self {
             Self::Ffmpeg(out) => out.height(),
-            #[cfg(target_os = "windows")]
-            Self::Com(out) => out.height(),
+            Self::Native(out) => out.height(),
         }
     }
 
@@ -440,8 +434,7 @@ impl DecklinkSink {
     pub fn is_running(&mut self) -> bool {
         match self {
             Self::Ffmpeg(out) => out.is_running(),
-            #[cfg(target_os = "windows")]
-            Self::Com(out) => out.is_running(),
+            Self::Native(_) => true,
         }
     }
 }

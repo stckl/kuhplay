@@ -53,8 +53,21 @@ unsafe trait IDeckLinkVideoFrame: IUnknown {
     fn GetRowBytes(&self) -> i32;
     fn GetPixelFormat(&self) -> u32;
     fn GetFlags(&self) -> u32;
-    fn GetBytes(&self, buffer: *mut *mut c_void) -> HRESULT;
+    // SDK 16.0: GetBytes liegt nicht mehr am Frame (v14_2_1-vtable), sondern
+    // am IDeckLinkVideoBuffer (siehe unten).
 }
+
+/// IDeckLinkVideoBuffer (DeckLinkAPI.h, SDK 16.0) – Pixelpuffer des Frames.
+#[interface("81F03D70-DE13-4B17-873A-C8AC9689C682")]
+unsafe trait IDeckLinkVideoBuffer: IUnknown {
+    fn GetBytes(&self, buffer: *mut *mut c_void) -> HRESULT;
+    fn GetSize(&self, size: *mut u64) -> HRESULT;
+    fn StartAccess(&self, flags: u32) -> HRESULT;
+    fn EndAccess(&self, flags: u32) -> HRESULT;
+}
+
+/// bmdBufferAccessWrite (DeckLinkAPITypes.idl).
+const BMD_BUFFER_ACCESS_WRITE: u32 = 1 << 1;
 
 /// IDeckLinkMutableVideoFrame (DeckLinkAPI.idl) – von CreateVideoFrame.
 #[interface("69E2639F-40DA-4E19-B6F2-20ACE815C390")]
@@ -63,16 +76,19 @@ unsafe trait IDeckLinkMutableVideoFrame: IDeckLinkVideoFrame {
 }
 
 /// IDeckLinkOutput (DeckLinkAPI.idl) – nur das benötigte vtable-Präfix.
-#[interface("CC5C8A6E-3F2F-4B3A-87EA-FD78AF300564")]
+#[interface("5F227C95-39D7-46C7-8B7D-9C81795FBBE4")]
 unsafe trait IDeckLinkOutput: IUnknown {
     fn DoesSupportVideoMode(
         &self,
-        displaymode: u32,
-        pixelformat: u32,
+        connection: u32,
+        requestedmode: u32,
+        requestedpixelformat: u32,
+        conversionmode: u32,
         flags: u32,
-        result: *mut i32,
-        resultdisplaymode: *mut *mut c_void,
+        actualmode: *mut u32,
+        supported: *mut i32,
     ) -> HRESULT;
+    fn GetDisplayMode(&self, displaymode: u32, resultdisplaymode: *mut *mut c_void) -> HRESULT;
     fn GetDisplayModeIterator(&self, iterator: *mut *mut c_void) -> HRESULT;
     fn SetScreenPreviewCallback(&self, previewcallback: *mut c_void) -> HRESULT;
     fn EnableVideoOutput(&self, displaymode: u32, flags: u32) -> HRESULT;
@@ -91,13 +107,13 @@ unsafe trait IDeckLinkOutput: IUnknown {
     fn DisplayVideoFrameSync(&self, theframe: *mut c_void) -> HRESULT;
 }
 
-// CDeckLinkIterator-CLSIDs, die DeckLinkAPI64.dll registriert (je nach
-// Desktop-Video-Version verschiedene Coclass-Versionen).
+// CDeckLinkIterator-CLSIDs (SDK 16.0: BA6C6F44-… ist die aktuelle; die alten
+// v10_8/v10_11-CLSIDs aus älteren Desktop-Video-Versionen bleiben als Fallback).
 const ITERATOR_CLSIDS: [GUID; 4] = [
-    GUID::from_u128(0x1073A05C_D885_47E9_B3C6_129B3F9F648B),
-    GUID::from_u128(0x1F2E109A_8F4F_49E4_9203_135595CB6FA5),
-    GUID::from_u128(0x652615D4_26CD_4514_B161_2FD5072ED008),
-    GUID::from_u128(0x87D2693F_8D4A_45C7_B43F_10ACBA25E68F),
+    GUID::from_u128(0xBA6C6F44_6DA5_4DCE_94AA_EE2D1372A676), // SDK 16.0 (aktuell)
+    GUID::from_u128(0x1073A05C_D885_47E9_B3C6_129B3F9F648B), // v10.8
+    GUID::from_u128(0x1F2E109A_8F4F_49E4_9203_135595CB6FA5), // v10.8
+    GUID::from_u128(0x652615D4_26CD_4514_B161_2FD5072ED008), // v10.11
 ];
 
 fn create_iterator() -> ShowResult<IDeckLinkIterator> {
@@ -144,6 +160,7 @@ pub fn list_devices() -> ShowResult<Vec<String>> {
 pub struct ComDeckLinkOutput {
     output: IDeckLinkOutput,
     frame: IDeckLinkMutableVideoFrame,
+    buffer: IDeckLinkVideoBuffer,
     uyvy: Vec<u8>,
     width: u32,
     height: u32,
@@ -221,9 +238,13 @@ impl ComDeckLinkOutput {
                 .map_err(|e| ShowError::Engine(format!("CreateVideoFrame fehlgeschlagen: {e}")))?;
             let frame = frame
                 .ok_or_else(|| ShowError::Engine("CreateVideoFrame lieferte kein Frame".into()))?;
+            let buffer: IDeckLinkVideoBuffer = frame
+                .cast()
+                .map_err(|e| ShowError::Engine(format!("QI IDeckLinkVideoBuffer: {e}")))?;
             Ok(Self {
                 output,
                 frame,
+                buffer,
                 uyvy: vec![0u8; (config.width * config.height * 2) as usize],
                 width: config.width,
                 height: config.height,
@@ -242,11 +263,6 @@ impl ComDeckLinkOutput {
     /// Pusht ein RGBA-Frame: RGBA→UYVY konvertieren, in den Card-Puffer
     /// kopieren, synchron ausgeben.
     pub fn push_frame(&mut self, frame: &VideoFrame) -> ShowResult<()> {
-        if !self.active {
-            return Err(ShowError::Engine(
-                "decklink COM: Ausgabe deaktiviert".into(),
-            ));
-        }
         if frame.width != self.width || frame.height != self.height {
             return Err(ShowError::Engine(format!(
                 "frame {}x{} passt nicht zur Decklink-Ausgabe {}x{}",
@@ -256,16 +272,38 @@ impl ComDeckLinkOutput {
         // Review G1: Farbraum aus der Auflösung (HD/UHD → BT.709, SD → BT.601).
         let cs = ColorSpace::from_height(self.height);
         rgba_to_uyvy422_cs(frame, &mut self.uyvy, cs);
+        let uyvy = std::mem::take(&mut self.uyvy);
+        let r = self.push_uyvy(&uyvy);
+        self.uyvy = uyvy;
+        r
+    }
+
+    /// Pusht ein fertiges UYVY-Frame (rowBytes × height) direkt auf die Karte.
+    /// SDK 16.0: Pixelpuffer über IDeckLinkVideoBuffer (StartAccess/GetBytes/EndAccess).
+    pub fn push_uyvy(&mut self, uyvy: &[u8]) -> ShowResult<()> {
+        if !self.active {
+            return Err(ShowError::Engine(
+                "decklink COM: Ausgabe deaktiviert".into(),
+            ));
+        }
         unsafe {
+            self.buffer
+                .StartAccess(BMD_BUFFER_ACCESS_WRITE)
+                .ok()
+                .map_err(|e| ShowError::Engine(format!("StartAccess fehlgeschlagen: {e}")))?;
             let mut buf: *mut c_void = std::ptr::null_mut();
-            self.frame
+            self.buffer
                 .GetBytes(&mut buf)
                 .ok()
                 .map_err(|e| ShowError::Engine(format!("GetBytes fehlgeschlagen: {e}")))?;
             if buf.is_null() {
                 return Err(ShowError::Engine("GetBytes lieferte null".into()));
             }
-            std::ptr::copy_nonoverlapping(self.uyvy.as_ptr(), buf as *mut u8, self.uyvy.len());
+            std::ptr::copy_nonoverlapping(uyvy.as_ptr(), buf as *mut u8, uyvy.len());
+            self.buffer
+                .EndAccess(BMD_BUFFER_ACCESS_WRITE)
+                .ok()
+                .map_err(|e| ShowError::Engine(format!("EndAccess fehlgeschlagen: {e}")))?;
             self.output
                 .DisplayVideoFrameSync(self.frame.as_raw() as *mut c_void)
                 .ok()

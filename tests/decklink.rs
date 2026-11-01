@@ -321,3 +321,64 @@ fn live_com_output_test_pattern() {
     assert_eq!(out.frames_pushed(), frames as u64);
     println!("OK: {frames} Frames auf {} ausgegeben", out.device_name());
 }
+
+/// G5/G8: Meldung, wenn Treiber fehlt bzw. 0 Geräte (z. B. nach macOS-Update).
+#[test]
+fn decklink_hint_bei_fehlendem_treiber() {
+    // Im CI/Treiber-losen Umfeld: available() false → Hint auf Desktop Video.
+    if kuhplay::engine::decklink_native::available() {
+        return; // auf dem Mac mit Karte überspringen
+    }
+    let (avail, devices, hint) = kuhplay::engine::decklink_native::devices_with_hint();
+    assert!(!avail);
+    assert!(devices.is_empty());
+    assert!(hint.unwrap().contains("Desktop Video"));
+}
+
+/// G3/G8 Live-Test auf dem Mac (UltraStudio Monitor 3G, Treiber 16.5):
+/// nur mit `--features decklink` und KUHPLAY_DECKLINK_LIVE=1, --ignored.
+/// Listet Geräte, öffnet 1080p25 und pusht 5 s Testbalken.
+#[cfg(all(not(target_os = "windows"), feature = "decklink"))]
+#[test]
+#[ignore = "braucht echte Hardware + KUHPLAY_DECKLINK_LIVE=1"]
+fn live_native_output_test_pattern() {
+    if std::env::var("KUHPLAY_DECKLINK_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+    use kuhplay::engine::decklink_native::{devices_with_hint, NativeOutput};
+    let (avail, devices, hint) = devices_with_hint();
+    println!("available={avail} devices={devices:?} hint={hint:?}");
+    assert!(avail, "Treiber fehlt: {hint:?}");
+    assert!(!devices.is_empty(), "Treiber da, aber 0 Geräte: {hint:?}");
+    let config = DecklinkConfig {
+        device: std::env::var("KUHPLAY_DECKLINK_DEVICE").unwrap_or_default(),
+        width: 1920,
+        height: 1080,
+        fps: 25,
+        pix_fmt: "uyvy422".to_string(),
+    };
+    let mut out = NativeOutput::open(&config).expect("open");
+    println!("geöffnet: {}", out.device_name());
+    let modes = out.modes();
+    println!("modi: {modes:?}");
+    assert!(!modes.is_empty(), "Karte meldet keine Modi");
+    let frames = 125;
+    for i in 0..frames {
+        let mut rgba = vec![0u8; (1920 * 1080 * 4) as usize];
+        let bar_x = (i * 16) % 1920;
+        for y in 0..1080 {
+            for x in bar_x..(bar_x + 100).min(1920) {
+                let o = ((y * 1920 + x) * 4) as usize;
+                rgba[o] = 235;
+                rgba[o + 1] = 235;
+                rgba[o + 2] = 235;
+                rgba[o + 3] = 255;
+            }
+        }
+        out.push_frame(&VideoFrame::new(1920, 1080, rgba))
+            .expect("push");
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    assert_eq!(out.frames_pushed(), frames as u64);
+    println!("OK: {frames} Frames auf {} ausgegeben", out.device_name());
+}

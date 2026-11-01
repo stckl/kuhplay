@@ -204,7 +204,7 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   - Problem (aus dem Code): `fps = 2997` wählt den richtigen Modus, die Engine taktet dann aber
     mit `1.0 / 2997` Sekunden. `fps = 29` taktet mit 29 statt 29,97.
   - Fix: Bildrate als Bruch führen (30000/1001), Test für das Intervall.
-- [ ] **G3. Native Ausgabe auf macOS und Linux, Windows auf SDK 16.0 heben**
+- [x] **G3. Native Ausgabe auf macOS und Linux, Windows auf SDK 16.0 heben** (macOS/Linux: C++-Bridge via FFI mit SDK 16.0, live getestet auf UltraStudio Monitor 3G; Windows: COM auf SDK-16.0-GUIDs/Vtable inkl. IDeckLinkVideoBuffer; Feature `decklink`, Build ohne SDK läuft durch)
   - Windows: `decklink_com.rs` nutzt laut Vergleich mit dem SDK 16.0 alte Schnittstellen.
     `IDeckLinkOutput` steht in `DeckLinkAPI_v10_11.idl`, `IDeckLinkVideoFrame` und
     `IDeckLinkMutableVideoFrame` in `DeckLinkAPI_v14_2_1.idl`, und `GetBytes` liegt jetzt nicht mehr
