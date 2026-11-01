@@ -26,7 +26,8 @@ use windows_core::{interface, IUnknown, IUnknown_Vtbl, Interface, BSTR, GUID, HR
 
 use crate::core::{ShowError, ShowResult};
 use crate::engine::decklink::{
-    bmd_display_mode, rgba_to_uyvy422_cs, ColorSpace, DecklinkConfig, BMD_FORMAT_8BIT_YUV,
+    bmd_display_mode, rgba_to_uyvy422_cs, scheduled_time_params, ColorSpace, DecklinkConfig,
+    BMD_FORMAT_8BIT_YUV,
 };
 use crate::engine::frame::VideoFrame;
 
@@ -351,6 +352,7 @@ pub struct ComDeckLinkOutput {
     uyvy: Vec<u8>,
     width: u32,
     height: u32,
+    fps: u32,
     device_name: String,
     frames_pushed: u64,
     active: bool,
@@ -436,6 +438,7 @@ impl ComDeckLinkOutput {
                 uyvy: vec![0u8; (config.width * config.height * 2) as usize],
                 width: config.width,
                 height: config.height,
+                fps: config.fps,
                 device_name: name,
                 frames_pushed: 0,
                 active: true,
@@ -514,11 +517,14 @@ impl ComDeckLinkOutput {
 
     /// Startet Scheduled Playback (G4): Karte als Taktgeber, Frames einreihen.
     pub fn start_scheduled(&mut self) -> ShowResult<()> {
+        // H2: Zeitskala aus der konfigurierten Bildrate ableiten (25 → 25000/1000,
+        // 29,97 → 30000/1001, …), analog decklink_bridge.cpp.
+        let (time_scale, frame_dur) = scheduled_time_params(self.fps);
         let state = std::sync::Arc::new(std::sync::Mutex::new(ScheduledState {
             queue: Vec::new(),
             next_time: 0,
-            time_scale: 25_000,
-            frame_dur: 1_000,
+            time_scale,
+            frame_dur,
             in_flight: false,
             late: 0,
             dropped: 0,
@@ -541,7 +547,7 @@ impl ComDeckLinkOutput {
                     ShowError::Engine(format!("SetScheduledFrameCompletionCallback: {e}"))
                 })?;
             self.output
-                .StartScheduledPlayback(0, 25_000, 1.0)
+                .StartScheduledPlayback(0, time_scale, 1.0)
                 .ok()
                 .map_err(|e| ShowError::Engine(format!("StartScheduledPlayback: {e}")))?;
             // Nächste Frame-Zeit an die aktuelle Stream-Zeit koppeln (G4).
@@ -549,8 +555,8 @@ impl ComDeckLinkOutput {
             let mut speed: f64 = 1.0;
             let _ = self
                 .output
-                .GetScheduledStreamTime(25_000, &mut stream_time, &mut speed);
-            state.lock().unwrap().next_time = stream_time + 1_000;
+                .GetScheduledStreamTime(time_scale, &mut stream_time, &mut speed);
+            state.lock().unwrap().next_time = stream_time + frame_dur;
         }
         state.lock().unwrap().scheduled = true;
         self.sched = Some(state);

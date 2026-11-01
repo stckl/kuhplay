@@ -261,10 +261,13 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     `GetTimecode` und `GetAncillaryData`.
   - Fix: Alle Traits Methode für Methode aus `third_party/decklink-sdk-16.0/windows/include/*.idl`
     übernehmen. Ein Test vergleicht IIDs und Methodenreihenfolge automatisch gegen die IDL-Dateien.
-- [ ] **H2. Windows: Scheduled Playback fest auf 25 fps**
-  - Ort: `start_scheduled` (`time_scale: 25_000`, `frame_dur: 1_000`, `StartScheduledPlayback(0,
-    25_000, 1.0)`). Andere Bildraten laufen falsch. Fix: wie in `decklink_bridge.cpp` aus der
-    Bildrate ableiten, auch 30000/1001. Test für 25, 29,97, 50 und 59,94.
+- [x] **H2. Windows: Scheduled Playback fest auf 25 fps** — erledigt: neue Funktion
+  `scheduled_time_params(fps)` in `src/engine/decklink.rs` leitet (time_scale, frame_dur) aus
+  der Bildrate ab (25 → 25000/1000, 29,97 → 30000/1001, 50 → 50000/1000, 59,94 → 60000/1001,
+  analog `decklink_bridge.cpp`); `ComDeckLinkOutput` speichert `fps` aus der Config und
+  `start_scheduled` nutzt die Werte für State, `StartScheduledPlayback` und
+  `GetScheduledStreamTime`. Test `scheduled_time_params_aus_bildrate` deckt 25, 29,97, 30, 50,
+  59,94, 60, 23,98, 24 + Konsistenz mit `fps_frame_interval` ab.
 - [ ] **H3. ffmpeg-Mitlieferung ist falsch**
   - `scripts/vendor-ffmpeg.sh` lädt auf macOS und Linux das Windows-Paket von gyan.dev und sucht dann
     `bin/ffmpeg`, das schlägt fehl. Der Fehler wird im Build-Skript nur als Hinweis ausgegeben.

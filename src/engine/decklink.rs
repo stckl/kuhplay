@@ -111,6 +111,26 @@ pub fn fps_frame_interval(fps: u32) -> std::time::Duration {
     }
 }
 
+/// (time_scale, frame_dur) für Scheduled Playback aus der fps-Zahl (H2), analog
+/// zur Mode-Tabelle in `decklink_bridge.cpp`: 25 → (25000, 1000),
+/// 29,97 → (30000, 1001), 50 → (50000, 1000), 59,94 → (60000, 1001).
+pub fn scheduled_time_params(fps: u32) -> (i64, i64) {
+    match fps {
+        2398 => (24_000, 1_001),
+        24 => (24_000, 1_000),
+        25 => (25_000, 1_000),
+        29 | 2997 => (30_000, 1_001),
+        30 => (30_000, 1_000),
+        50 => (50_000, 1_000),
+        59 | 5994 => (60_000, 1_001),
+        60 => (60_000, 1_000),
+        other => {
+            let f = i64::from(other.max(1));
+            (f * 1_000, 1_000)
+        }
+    }
+}
+
 /// Wandelt ein RGBA-Frame in ein Key-Signal (Luma = Alpha): RGB = Alpha-Wert.
 /// Für den Key-SDI-Ausgang beim 2-Kabel-Key/Fill.
 pub fn alpha_to_luma(src: &VideoFrame) -> VideoFrame {
@@ -320,6 +340,32 @@ mod tests {
     fn default_config_ist_1080p25() {
         let config = DecklinkConfig::default();
         assert_eq!((config.width, config.height, config.fps), (1920, 1080, 25));
+    }
+
+    #[test]
+    fn scheduled_time_params_aus_bildrate() {
+        assert_eq!(scheduled_time_params(25), (25_000, 1_000));
+        assert_eq!(scheduled_time_params(2997), (30_000, 1_001));
+        assert_eq!(scheduled_time_params(29), (30_000, 1_001));
+        assert_eq!(scheduled_time_params(30), (30_000, 1_000));
+        assert_eq!(scheduled_time_params(50), (50_000, 1_000));
+        assert_eq!(scheduled_time_params(5994), (60_000, 1_001));
+        assert_eq!(scheduled_time_params(59), (60_000, 1_001));
+        assert_eq!(scheduled_time_params(60), (60_000, 1_000));
+        assert_eq!(scheduled_time_params(2398), (24_000, 1_001));
+        assert_eq!(scheduled_time_params(24), (24_000, 1_000));
+        // Unbekannte Rate: ganzzahlig über fps*1000/1000 als Fallback.
+        assert_eq!(scheduled_time_params(120), (120_000, 1_000));
+        // Mit fps_frame_interval konsistent: frame_dur/time_scale == Intervall.
+        for fps in [25u32, 2997, 50, 5994] {
+            let (ts, dur) = scheduled_time_params(fps);
+            let interv = fps_frame_interval(fps).as_nanos() as f64;
+            let frame = dur as f64 / ts as f64 * 1e9;
+            assert!(
+                (frame - interv).abs() < 1.0,
+                "fps {fps}: frame {frame} vs interval {interv}"
+            );
+        }
     }
 
     #[test]
