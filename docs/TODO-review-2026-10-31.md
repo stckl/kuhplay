@@ -268,7 +268,17 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
   `start_scheduled` nutzt die Werte für State, `StartScheduledPlayback` und
   `GetScheduledStreamTime`. Test `scheduled_time_params_aus_bildrate` deckt 25, 29,97, 30, 50,
   59,94, 60, 23,98, 24 + Konsistenz mit `fps_frame_interval` ab.
-- [ ] **H3. ffmpeg-Mitlieferung ist falsch**
+- [x] **H3. ffmpeg-Mitlieferung ist falsch** — erledigt: `scripts/vendor-ffmpeg.sh` /
+  `vendor-ffmpeg.ps1` laden pro Plattform gepinnte LGPL-Builds mit fester SHA-256 (keine
+  release-/latest-Links): Linux x86_64/arm64 und Windows x64/arm64 = BtbN/FFmpeg-Builds
+  LGPL-Variante (Tag `autobuild-2026-10-31-12-59`, ffmpeg 9.0.2, `--disable-libx264/-libx265`,
+  kein `--enable-gpl`), macOS = eigener Build aus `ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz`
+  (SHA-256 festgeschrieben) mit `--disable-gpl --disable-nonfree --disable-libx264/-libx265`.
+  gyan.dev (GPL) wird nicht mehr verwendet. Prüfung nach dem Installieren: SHA-256,
+  `ffmpeg -version` (Version + Build-Config ohne GPL/Nonfree/x264/x265), `-hwaccels` nicht
+  leer, Decode-Smoke-Test; Build-Config landet in `BUILD-ffmpeg.txt`, korrekter Lizenzhinweis
+  in `LICENSE-ffmpeg.txt`. Fehlschlag → Exit 1, und die Release-Skripte brechen ab (kein
+  Hinweis mehr). Auf dem Mac gegen den echten Build getestet (videotoolbox-HW-Decoder aktiv).
   - `scripts/vendor-ffmpeg.sh` lädt auf macOS und Linux das Windows-Paket von gyan.dev und sucht dann
     `bin/ffmpeg`, das schlägt fehl. Der Fehler wird im Build-Skript nur als Hinweis ausgegeben.
   - `LICENSE-ffmpeg.txt` behauptet LGPL ohne GPL-Teile; das ist für diese Builds nicht belegt und nach
@@ -277,14 +287,40 @@ melden. Laufzeittest gegen den installierten Treiber 16.5 auf dem Mac.
     und Nonfree). Mit `ffmpeg -version` prüfen und die Build-Konfiguration beilegen. Prüfsumme
     festschreiben statt `release`-Link. Hardware-Decoder testen. Schlägt das Mitliefern fehl, muss der
     Release-Build abbrechen.
-- [ ] **H4. Release-Builds ohne DeckLink**
+- [x] **H4. Release-Builds ohne DeckLink** — erledigt: `build-mac.sh`, `build-linux.sh` und
+  `build-windows.ps1` bauen jetzt `--features webview,decklink` (bzw. `decklink` bei
+  `--no-webview`). Veraltete ffmpeg-Fallback-Hinweise in `build.rs`, `Cargo.toml` und
+  `src/engine/decklink.rs` (`device`-, `frames`-Kommentare) entfernt. Linux-Build vendored
+  ffmpeg jetzt vor dem Tar in das Paketverzeichnis (vorher lief es ins Leere/nach dem Zip).
   - `scripts/build-mac.sh` und `build-linux.sh` bauen nur `--features webview`. Seit G6 gibt es dann auf
     Mac und Linux keine DeckLink-Ausgabe mehr. Fix: `decklink` in die Release-Skripte aufnehmen.
     Veraltete Hinweise auf den ffmpeg-Fallback in `build.rs`, `Cargo.toml` und `decklink.rs`
     (`device`, `frames`-Kommentar) entfernen.
-- [ ] **H5. Hardware-Test nachschärfen**
+- [x] **H5. Hardware-Test nachschärfen** — erledigt: `live_native_soak_color_bars` läuft
+  default 30 Minuten (`KUHPLAY_DECKLINK_SOAK_SECS` überschreibbar) mit SMPTE-Farbalken +
+  wanderndem Marker, `dropped == 0` + Sichtprüfungs-Hinweis; neuer Live-Test
+  `live_native_modes_2997_50` für 1080p29,97 und 1080p50 (je 10 s, Modus wird vorher gegen
+  `modes()` der Karte geprüft, sonst übersprungen); Host-Test `farbalken_uyvy_farben_passen`
+  prüft die Y/Cb/Cr-Sollwerte der 8 Balken nach der UYVY-BT.709-Konvertierung (Pixel-Ebene).
   - Bisher nur 30 s in 1080p25. Ergänzen: mindestens 30 Minuten, zusätzlich 1080p29,97 und 1080p50,
     soweit die Karte es kann. Farbkontrolle mit Testbild und Sichtprüfung, kein reiner Zählertest.
+- [ ] **H6. GitHub-CI grün bekommen** (`.github/workflows/ci.yml`, feste Rust-Version 1.94.1)
+  - **Linux baut nicht:** `src/engine/decklink_bridge.cpp:100-107` nutzt `CFStringRef` und
+    `CFStringGetCString` ohne `__APPLE__`-Weiche. Unter Linux ist der Name laut SDK ein `const char *`.
+    Die Aussage „Linux baut“ war damit falsch; `--features decklink` muss dort kompilieren.
+  - **Windows:** Clippy schlägt im CI mit 6 Fehlern fehl, siehe Log des Laufs. Lokal auf dem Mac sind
+    sie unsichtbar, also den Windows-Lauf als Maßstab nehmen.
+  - **`scripts/vendor-ffmpeg.ps1`:** `param(...)` steht nach `$ErrorActionPreference` und bricht
+    deshalb mit „param not found“ ab. `param` muss die erste Anweisung sein.
+  - **Reihenfolge in den Build-Skripten:** Windows und Linux packen das Archiv, **bevor** ffmpeg
+    hineinkopiert wird, Linux außerdem in einen falschen Ordner. Zusammen mit H3 beheben.
+  - **macOS-Tests im CI-Runner schlagen fehl:** `play_stop_storm_keeps_engine_alive_and_consistent`,
+    `stage_editor_shows_display_placements_section`, `real_engine_broadcast_host_erlaubt`,
+    `e12_script_cue_settle_faengt_spaete_js_fehler`, `engine_webview_snapshot_backoff_bei_fehlern`.
+    Auf dem Entwicklungs-Mac laufen sie grün. Für jeden Ursache klären: Umgebung (kein Display, kein
+    Broadcast) oder zu knappes Timing oder echter Fehler. Tests nicht einfach abschalten oder abschwächen;
+    umgebungsabhängige Tests sauber überspringen und im Log sichtbar machen.
+  - Abgeschlossen, wenn CI und der von Hand gestartete Release-Build auf allen drei Plattformen grün sind.
 
 ## Block U: Installer und Update-Funktion (nach Block H)
 
