@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -26,13 +26,13 @@ jobs:
           - name: Linux
             os: ubuntu-24.04
           - name: macOS
-            os: macos-14
+            os: macos-15
           - name: Windows
             os: windows-2022
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: clippy, rustfmt
 
