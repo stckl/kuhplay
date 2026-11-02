@@ -188,8 +188,10 @@ fn parse_frame_event(frame: &serde_json::Value) -> Option<WebviewEvent> {
     })
 }
 
-/// Pfad des WebView-Binarys: `KUHPLAY_WEBVIEW_BIN` → Datei neben dem
-/// aktuellen Executable (`kuhplay-webview`). `None` = nicht gebaut/installiert
+/// Pfad des HTML5-Renderer-Binarys: `KUHPLAY_WEBVIEW_BIN` (Override) →
+/// CEF-Subprocess (`KUHPLAY_CEF_BIN` oder `KUHPLAY_HTML_RENDERER=cef`; nur
+/// mit Feature „cef" gebaut, Prototyp siehe docs/KONZEPT-html-templates.md §9)
+/// → `kuhplay-webview` neben dem Executable. `None` = nicht gebaut/installiert
 /// → virtueller Fallback.
 pub fn webview_binary() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("KUHPLAY_WEBVIEW_BIN") {
@@ -197,10 +199,41 @@ pub fn webview_binary() -> Option<PathBuf> {
             return Some(PathBuf::from(path));
         }
     }
+    #[cfg(feature = "cef")]
+    {
+        if let Ok(path) = std::env::var("KUHPLAY_CEF_BIN") {
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+        let use_cef = std::env::var("KUHPLAY_HTML_RENDERER")
+            .map(|v| v.eq_ignore_ascii_case("cef"))
+            .unwrap_or(false);
+        if use_cef {
+            if let Some(dir) = std::env::current_exe()
+                .ok()?
+                .parent()
+                .map(|p| p.to_path_buf())
+            {
+                return cef_sibling_paths(&dir)
+                    .into_iter()
+                    .find(|candidate| candidate.is_file());
+            }
+        }
+    }
     let exe = std::env::current_exe().ok()?;
     webview_sibling_paths(exe.parent()?)
         .into_iter()
         .find(|candidate| candidate.is_file())
+}
+
+/// Kandidaten-Pfade für das CEF-Binary neben dem Hauptprogramm.
+#[cfg(feature = "cef")]
+fn cef_sibling_paths(dir: &std::path::Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    return vec![dir.join("kuhplay-cef"), dir.join("kuhplay-cef.exe")];
+    #[cfg(not(target_os = "windows"))]
+    vec![dir.join("kuhplay-cef")]
 }
 
 /// Kandidaten-Pfade für das WebView-Binary neben dem Hauptprogramm

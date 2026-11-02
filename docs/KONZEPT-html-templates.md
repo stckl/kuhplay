@@ -189,5 +189,17 @@ GPU-Pipeline aus `docs/KONZEPT-slideshow.md`.
   Videos innerhalb von HTML-Seiten, Video-Cues laufen weiter über ffmpeg
 - Folgen für Script-Cues, die heute ebenfalls über `kuhplay-webview` laufen
 
+**Stand des Prototyps (2026-11-02):** `cef-rs` 156 ist angebunden – eigener Subprocess
+`kuhplay-cef` (`src/bin/kuhplay-cef.rs`, Feature `cef`, gleicher JSON-IPC wie
+`kuhplay-webview`, Auswahl per `KUHPLAY_HTML_RENDERER=cef`/`KUHPLAY_CEF_BIN`) mit
+windowless-Rendering: `OnPaint` liefert BGRA-premultiplied mit
+`windowless_frame_rate = 60`, Konvertierung nach RGBA straight alpha (Key/Fill),
+Snapshot skaliert/rendert in Zielgröße. Engine/Compositor bleiben unverändert.
+**Offen für die Abnahme auf Mac und ZBOOK:** CEF läuft sauber nur in einem
+.app-Bundle-Layout (Resources/locales explizit gesetzt, `CEF_PATH` für die
+Distribution); das minimale CEF-Paket ohne `icudtl.dat` startet nicht –
+volle Distribution nötig. Paketierung (150–300 MB) und Windows/Linux-Lauf
+stehen noch aus. Bis dahin bleibt `kuhplay-webview` (wry) der Default.
+
 Scheitert der Prototyp an einem Punkt, wird neu entschieden, kein stiller Rückfall auf die
 System-WebViews. Danach `docs/HTML-Templates.md` komplett auf den neuen Stand bringen.

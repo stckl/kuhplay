@@ -836,6 +836,10 @@ mod tests {
         // im Raster der Route gezeichnet, der Kreis bleibt rund.
         let mut route = OutputRoute::new("T", 800, 600);
         route.test_pattern = true;
+        // Grid liegt in Routenfarbe (Block W) – hier grün, damit nur der weiße
+        // Kreis die Helligkeitssuche trifft und das rote Stage-Bild als
+        // „Inhalt überdeckt“ erkennbar bleibt.
+        route.color = [0, 255, 0];
         let mut region = Region::full_stage(1920.0, 1080.0);
         region.route = Some(route.id);
         let stage = make_stage("S", 0, vec![region]);

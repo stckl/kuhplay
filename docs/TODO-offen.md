@@ -291,6 +291,20 @@ Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
 
 ---
 
+## CEF-Prototyp (HTML5-Renderer wie OBS/CasparCG) — angebunden, Abnahme offen
+
+- `src/bin/kuhplay-cef.rs` (Feature `cef`, `cef-rs` 156): windowless Offscreen-Rendering,
+  OnPaint → BGRA-premultiplied → RGBA straight alpha, `windowless_frame_rate = 60`,
+  gleicher JSON-IPC wie `kuhplay-webview` (Engine bleibt unverändert). Auswahl:
+  `KUHPLAY_HTML_RENDERER=cef` oder `KUHPLAY_CEF_BIN=<pfad>`; Default bleibt wry.
+- Build: `cargo check --features cef --all-targets` (macOS) grün. **Offen:** volle CEF-Distribution
+  (das minimale Paket ohne icudtl.dat startet nicht), .app-Bundle-Layout/Paketierung
+  (~150–300 MB), Live-Abnahme 60 fps 1080p/4K mit Alpha auf Mac und ZBOOK
+  (docs/KONZEPT-html-templates.md §9), Windows/Linux-Lauf (cef-dll-sys braucht zum
+  Cross-Check MSVC/cmake auf dem Zielrechner – auf dem ZBOOK direkt bauen), CI-Job mit CEF.
+
+---
+
 ## Sonstiges Kleinvolumen (nicht vergessen)
 
 - **docs/TODO-video-routing.md** als „abgearbeitet“ markieren oder ins Archiv
