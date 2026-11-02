@@ -265,9 +265,9 @@ struct ActiveHtml {
 }
 
 /// Snapshot-Intervall für WebView-Compositing (HTML5-Cues auf Stages).
-// ~30 fps für HTML5-Cues: CSS/JS-Animationen sollen kontinuierlich laufen
-// (wie im Browser), nicht ruckeln.
-const WEBVIEW_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(33);
+// ~60 fps für HTML5-Cues: CSS/JS-Animationen sollen flüssig laufen
+// (Offscreen-Rendering wie in OBS Studio), nicht ruckeln.
+const WEBVIEW_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(16);
 
 /// Nach dieser Anzahl fehlgeschlagener Snapshots in Folge stellt die Engine
 /// die Anfragen ein (z. B. Seite ohne Canvas auf Plattformen ohne nativen

@@ -18,7 +18,7 @@ Die Timeline (`assets/demo/timetable.html`) ist ein Beispiel, kein Sonderfall.
 | Thema | Entscheidung |
 |---|---|
 | Renderer | **CEF mit Offscreen-Rendering**, wie OBS und CasparCG |
-| Bildrate | Ausgabe-Bildrate, **mindestens 30 fps**, auch auf Windows und mit Alpha für Key/Fill |
+| Bildrate | Ausgabe-Bildrate, **mindestens 60 fps**, auch auf Windows und mit Alpha für Key/Fill |
 | Felder | Das Template legt Felder und Typen fest, KuhPlay erzeugt die Eingabefelder |
 | Trigger | Feste Trigger für rein/raus plus eigene Trigger des Templates |
 | Panic | **Einmal Esc spielt `out` schnell ab, zweimal Esc beendet sofort** |
@@ -48,7 +48,7 @@ weder Framework noch Aufbau vor, und eine Seite ohne Felddefinition läuft trotz
 ## 3. Ausgangslage im Code
 
 - Rendering über System-WebViews im Subprocess `kuhplay-webview`, ein Prozess pro Cue.
-- Bilder laufen einzeln als PNG/base64 über eine Pipe. Angefordert wird alle 33 ms
+- Bilder laufen einzeln als PNG/base64 über eine Pipe. Angefordert wird alle 16 ms
   (`WEBVIEW_SNAPSHOT_INTERVAL`); die tatsächliche Bildrate ist nicht gemessen.
 - Außerhalb von macOS wird nur ein Page-Canvas erfasst (`js_snapshot`). Normales HTML/CSS
   liefert dort den Fehler `no canvas element` und kein Bild.
@@ -172,7 +172,7 @@ Der Prototyp kommt vor allem anderen, weil alles darauf aufbaut. Zusammen planen
 GPU-Pipeline aus `docs/KONZEPT-slideshow.md`.
 
 **Muss nachweisen:**
-- mindestens 30 fps in 1080p und 4K mit Alpha, auf Mac und ZBOOK
+- mindestens 60 fps in 1080p und 4K mit Alpha, auf Mac und ZBOOK
 - normales HTML/CSS ohne Canvas wird erfasst
 - Alpha stimmt bis zum Ausgang: Testseite mit Verlauf, Schatten und weicher Kante, geprüft an Fill
   und Key. CEF liefert die Bilder vormultipliziert, die Render-Kette rechnet heute nicht

@@ -2900,3 +2900,21 @@ fn cue_list_knows_the_duration_before_playing() {
     let listed = app.cue_row_meta().get(&id).and_then(|m| m.media_duration);
     assert_eq!(listed, Some(Duration::from_secs(1)));
 }
+
+#[test]
+fn live_repaint_delay_taktet_bei_laufenden_cues_eng() {
+    // ~60 fps während Cues laufen (flüssige Animationen wie in OBS Studio),
+    // im Leerlauf 500 ms.
+    assert_eq!(
+        kuhplay::gui::app::live_repaint_delay(true),
+        Duration::from_millis(16)
+    );
+    assert_eq!(
+        kuhplay::gui::app::live_repaint_delay(false),
+        Duration::from_millis(500)
+    );
+    let mut app = demo_app();
+    assert!(!app.any_cue_running(), "Demo-Show startet im Leerlauf");
+    app.carts.active_mut().cues_mut()[0].status = CueStatus::Playing;
+    assert!(app.any_cue_running());
+}

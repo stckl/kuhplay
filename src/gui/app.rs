@@ -335,6 +335,18 @@ fn is_running_status(status: CueStatus) -> bool {
     )
 }
 
+/// Repaint-Intervall des Workspaces: Während Cues laufen ~60 fps (16 ms),
+/// damit Video-/HTML5-Animationen flüssig sind (Offscreen-Rendering wie in
+/// OBS Studio); im Leerlauf reicht die 500-ms-Uhr. Engine-Events lösen
+/// zusätzlich ein sofortiges Repaint aus (siehe `update`).
+pub fn live_repaint_delay(any_running: bool) -> Duration {
+    if any_running {
+        Duration::from_millis(16)
+    } else {
+        Duration::from_millis(500)
+    }
+}
+
 /// Gestartete Remote-Server (Web-Remote HTTP/WS + Companion TCP).
 ///
 /// Hält den tokio-Runtime, auf dem die Server laufen (muss leben, solange
@@ -2831,7 +2843,16 @@ impl ShowApp {
     /// Non-blocking Poll der Engine-Events → Status-Updates (über alle Carts,
     /// da Engine-Events auch Cues in nicht-aktiven Carts betreffen).
     /// Public für headless GUI-Tests (tests/gui_interaction.rs).
-    pub fn poll_engine_events(&mut self) {
+    /// `true`, wenn in irgendeinem Cart ein Cue aktiv ist
+    /// (Pre-Wait/Playing/Paused/Post-Wait) – steuert den Repaint-Takt.
+    pub fn any_cue_running(&self) -> bool {
+        (0..self.carts.cart_count()).any(|i| self.carts.cart(i).running_count() > 0)
+    }
+
+    /// Pollt Engine-Events. Rückgabe: `true`, wenn mindestens ein Event anlag
+    /// (dann ist ein sofortiges Repaint sinnvoll – siehe `update`).
+    pub fn poll_engine_events(&mut self) -> bool {
+        let mut got_event = false;
         if self
             .panic_deadline
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
@@ -2839,6 +2860,7 @@ impl ShowApp {
             self.panic_now();
         }
         while let Some(event) = self.engine.try_recv_event() {
+            got_event = true;
             if let EngineEvent::Started { cue_id, .. }
             | EngineEvent::Finished { cue_id }
             | EngineEvent::PostWaitElapsed { cue_id } = &event
@@ -2971,6 +2993,7 @@ impl ShowApp {
                 | EngineEvent::Pong(_) => {}
             }
         }
+        got_event
     }
 
     /// Wendet einen Status an (State-Machine validiert; Fehler werden geloggt,
@@ -3590,7 +3613,11 @@ impl eframe::App for ShowApp {
         // Theme wird einmalig in `main` (CreationContext) gesetzt – nicht
         // jeden Frame (TODO.md Phase 0b).
         self.swap_text_field_registry();
-        self.poll_engine_events();
+        // Engine-Events sofort sichtbar machen – im 500-ms-Leerlauf-Takt
+        // würde ein Statuswechsel sonst bis zu 500 ms verzögert erscheinen.
+        if self.poll_engine_events() {
+            ctx.request_repaint();
+        }
         self.poll_remote_commands();
         self.handle_hotkeys(ctx);
 
@@ -3629,8 +3656,10 @@ impl eframe::App for ShowApp {
 
         self.pump_remote();
 
-        // Repaint für Live-Updates (Engine-Events, Timecode, elapsed-Anzeige).
-        ctx.request_repaint_after(Duration::from_millis(50));
+        // Repaint für Live-Updates (Timecode, elapsed-Anzeige): Läuft ein
+        // Cue, eng mit ~60 fps takten (flüssige Animationen wie in OBS
+        // Studio), im Leerlauf reicht die 500-ms-Uhr.
+        ctx.request_repaint_after(live_repaint_delay(self.any_cue_running()));
     }
 
     /// Persistiert das UI-Layout (Panel-Sichtbarkeit, Tabs, Fenster) beim
