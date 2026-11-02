@@ -922,9 +922,16 @@ impl RealMediaEngine {
                     })
                 })
                 .collect();
+            // Scheitert eine Stage, läuft der Rest weiter: Die Engine bleibt am Leben.
             handles
                 .into_iter()
-                .map(|h| h.join().expect("stage composite thread"))
+                .filter_map(|h| match h.join() {
+                    Ok(rendered) => Some(rendered),
+                    Err(_) => {
+                        tracing::error!("stage composite thread panicked, frame skipped");
+                        None
+                    }
+                })
                 .collect()
         });
         // Phase 3: in den Store legen + Dirty-Tracking + Routen markieren.

@@ -179,6 +179,16 @@ pub fn composite_canvas(canvas: (u32, u32), surfaces: &[SurfaceEntry]) -> Vec<u8
                 Some(frame) => frame,
                 None => continue,
             };
+            // Ein Frame mit falscher Pufferlänge darf die Engine nicht abstürzen lassen.
+            if frame.rgba.len() != frame.width as usize * frame.height as usize * 4 {
+                tracing::error!(
+                    width = frame.width,
+                    height = frame.height,
+                    len = frame.rgba.len(),
+                    "frame buffer does not match its size, skipped"
+                );
+                continue;
+            }
             let alpha_base =
                 (surface.opacity.clamp(0.0, 1.0) * fade_opacity.clamp(0.0, 1.0)).clamp(0.0, 1.0);
             if alpha_base <= 0.0 {

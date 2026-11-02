@@ -6,14 +6,14 @@
 //!   Space = GO).
 //! * Daneben: Label „STANDBY", darunter „Q#  Name" groß, darunter das
 //!   Notes-Feld des Standby-Cues.
-//! * Darunter die Toolbar: eine abgesetzte Leiste mit den Cue-Typen in den
-//!   Gruppen der Toolbox, ausblendbar im Footer.
+//! * Darunter die Toolbar: schwarze Buttons für die Cue-Typen in den Gruppen
+//!   der Toolbox, ausblendbar im Footer.
 //! * Die Transport-Buttons liegen oben in der Sidebar.
 
 use egui::RichText;
 
 use super::app::ShowApp;
-use super::icons::{self, Icon};
+use super::icons::Icon;
 use super::theme::{self, palette, size};
 
 /// Zeichnet den Masthead (oberer Bereich unter der Menüleiste).
@@ -26,53 +26,47 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     }
 }
 
-/// Toolbar: dunklere Leiste, darin je Toolbox-Gruppe ein eigener Block mit
-/// einem Icon-Button pro Cue-Typ.
+/// Toolbar: schwarze Icon-Buttons auf einer Linie, je Toolbox-Gruppe durch
+/// eine größere Lücke getrennt.
 fn draw_toolbar(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {
-    let groups = super::toolbox::ordered_groups(&app.ui.toolbox_order);
-    egui::Frame::none()
-        .fill(palette::LIST_BG)
-        .stroke(egui::Stroke::new(1.0_f32, palette::BORDER))
-        .rounding(egui::Rounding::same(6.0))
-        .inner_margin(egui::Margin::same(4.0))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = size::SPACE_MEDIUM;
-                for (group, types) in groups {
-                    egui::Frame::none()
-                        .fill(palette::RAISED)
-                        .rounding(egui::Rounding::same(4.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                // Hover muss sich vom helleren Block abheben.
-                                ui.visuals_mut().widgets.hovered.bg_fill =
-                                    egui::Color32::from_rgb(92, 92, 106);
-                                for cue_type in types {
-                                    let response =
-                                        ui.add_enabled_ui(editable, |ui| {
-                                            icons::button(
-                                                ui,
-                                                Icon::for_cue_type(cue_type),
-                                                palette::TEXT,
-                                                size::MASTHEAD_ICON_BUTTON,
-                                                editable,
-                                            )
-                                        })
-                                        .inner
-                                        .on_hover_text(
-                                            format!("{group}: New {} Cue", cue_type.label()),
-                                        );
-                                    if response.clicked() {
-                                        app.add_cue(cue_type);
-                                    }
-                                }
-                            });
-                        });
-                }
-            });
-        });
+    const BUTTON_GAP: f32 = 2.0;
+    const GROUP_GAP: f32 = 12.0;
+    let button = size::MASTHEAD_ICON_BUTTON;
+    let (strip, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), button.y),
+        egui::Sense::hover(),
+    );
+    let mut x = strip.left();
+    for (group, types) in super::toolbox::ordered_groups(&app.ui.toolbox_order) {
+        for cue_type in types {
+            let rect = egui::Rect::from_min_size(egui::pos2(x, strip.top()), button);
+            x += button.x + BUTTON_GAP;
+            let sense = if editable {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            };
+            let response = ui
+                .allocate_rect(rect, sense)
+                .on_hover_text(format!("{group}: New {} Cue", cue_type.label()));
+            let fill = if editable && response.hovered() {
+                palette::RAISED
+            } else {
+                egui::Color32::BLACK
+            };
+            ui.painter().rect_filled(rect, 4.0, fill);
+            let color = if editable {
+                palette::TEXT
+            } else {
+                palette::TEXT_FAINT
+            };
+            Icon::for_cue_type(cue_type).paint(ui.painter(), rect.shrink(6.0), color);
+            if response.clicked() {
+                app.add_cue(cue_type);
+            }
+        }
+        x += GROUP_GAP - BUTTON_GAP;
+    }
 }
 
 fn draw_go_row(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {

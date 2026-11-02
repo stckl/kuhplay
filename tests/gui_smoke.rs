@@ -2574,3 +2574,43 @@ fn active_cue_row_centers_buttons_and_contains_long_names() {
     assert_eq!(icons_in_row, 3, "Pause, Typ-Icon und Stop");
     assert!(texts_in_row >= 5, "auch Name und Zeit stehen in der Zeile");
 }
+
+/// Toolbar: alle Buttons sind schwarz, gleich groß und liegen auf einer Linie.
+/// Die Toolbox endet wie die Cue-Liste über dem Inspector.
+#[test]
+fn toolbar_buttons_share_one_line_and_toolbox_ends_above_inspector() {
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut app = demo_app();
+    let raw = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1440.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
+    let out = ctx.run(raw, |ctx| app.draw_workspace(ctx));
+
+    let buttons: Vec<egui::Rect> = out
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Rect(r)
+                if r.fill == egui::Color32::BLACK && r.rect.size() == egui::vec2(32.0, 32.0) =>
+            {
+                Some(r.rect)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(buttons.len(), 18, "ein Button pro Cue-Typ");
+    assert!(buttons.iter().all(|b| b.top() == buttons[0].top()));
+
+    let toolbox = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("toolbox"))
+        .expect("Toolbox-Panel");
+    let sidebar = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("sidebar"))
+        .expect("Sidebar-Panel");
+    assert_eq!(toolbox.rect.bottom(), sidebar.rect.bottom());
+    assert_eq!(toolbox.rect.top(), sidebar.rect.top());
+}

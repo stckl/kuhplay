@@ -50,8 +50,13 @@ impl VideoFrame {
     }
 
     /// Blendet zwei Frames linear (`t` = 0.0 → `a`, 1.0 → `b`).
-    /// Für Diashow-Crossfades. Gleiche Größe vorausgesetzt.
+    /// Für Diashow-Crossfades. Unterschiedlich große Frames werden vorher
+    /// seitentreu mittig auf eine gemeinsame Fläche gelegt.
     pub fn blend(a: &VideoFrame, b: &VideoFrame, t: f32) -> VideoFrame {
+        if (a.width, a.height) != (b.width, b.height) {
+            let (w, h) = (a.width.max(b.width), a.height.max(b.height));
+            return Self::blend(&a.fit_into(w, h), &b.fit_into(w, h), t);
+        }
         let t = t.clamp(0.0, 1.0);
         let len = a.rgba.len().min(b.rgba.len());
         let mut out = vec![0u8; len];
@@ -64,6 +69,26 @@ impl VideoFrame {
             height: a.height,
             rgba: out,
         }
+    }
+
+    /// Skaliert seitentreu und mittig auf `width`×`height` (Rand transparent).
+    fn fit_into(&self, width: u32, height: u32) -> VideoFrame {
+        let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
+        let scale = (width as f32 / self.width.max(1) as f32)
+            .min(height as f32 / self.height.max(1) as f32);
+        let w = ((self.width as f32 * scale).round() as u32).clamp(1, width);
+        let h = ((self.height as f32 * scale).round() as u32).clamp(1, height);
+        let (x0, y0) = ((width - w) / 2, (height - h) / 2);
+        for y in 0..h {
+            let sy = (y as u64 * self.height as u64 / h as u64) as usize;
+            for x in 0..w {
+                let sx = (x as u64 * self.width as u64 / w as u64) as usize;
+                let src = (sy * self.width as usize + sx) * 4;
+                let dst = ((y0 + y) as usize * width as usize + (x0 + x) as usize) * 4;
+                out[dst..dst + 4].copy_from_slice(&self.rgba[src..src + 4]);
+            }
+        }
+        VideoFrame::new(width, height, out)
     }
 }
 
@@ -99,4 +124,37 @@ pub type RouteFrameStore = Arc<Mutex<HashMap<Uuid, Arc<VideoFrame>>>>;
 /// Erzeugt einen leeren Route-Frame-Store.
 pub fn new_route_frame_store() -> RouteFrameStore {
     Arc::new(Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+mod blend_size_tests {
+    use super::*;
+
+    #[test]
+    fn blend_of_different_sizes_yields_a_complete_frame() {
+        // Wie in der Diashow: ein großes und ein kleines Bild.
+        let big = VideoFrame::new(8, 4, [255, 0, 0, 255].repeat(32));
+        let small = VideoFrame::new(2, 2, [0, 0, 255, 255].repeat(4));
+        for (a, b) in [(&big, &small), (&small, &big)] {
+            let out = VideoFrame::blend(a, b, 0.5);
+            assert_eq!((out.width, out.height), (8, 4));
+            assert_eq!(out.rgba.len(), 8 * 4 * 4, "Puffer muss zur Größe passen");
+        }
+    }
+
+    #[test]
+    fn composite_skips_a_frame_with_wrong_buffer_length() {
+        let bad = std::sync::Arc::new(VideoFrame {
+            width: 8,
+            height: 8,
+            rgba: vec![255; 16],
+        });
+        let surface = crate::core::SurfaceGeometry::fit();
+        let entries = vec![(uuid::Uuid::new_v4(), 1, surface, Some(bad), 1.0)];
+        let out = crate::engine::compositor::composite_canvas((8, 8), &entries);
+        assert!(
+            out.iter().all(|&v| v == 0),
+            "kaputter Frame bleibt unsichtbar"
+        );
+    }
 }
