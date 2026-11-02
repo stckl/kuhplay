@@ -11,21 +11,21 @@ docs/HTML-Templates.md").
 ## 1. Lebenszyklus (warum das so läuft)
 
 1. **HTML5-Cue** lädt die Quelle (Inline / Datei / URL) in eine **echte
-   WebView** (Subprocess `kuhplay-webview`, Feature `webview`). Es öffnet sich
-   **kein sichtbares Fenster** – die WebView rendert offscreen.
+   CEF-Browser** (Subprocess `kuhplay-cef`, Feature `cef`, Offscreen-Rendering). Es öffnet sich
+   **kein sichtbares Fenster** – CEF rendert offscreen (windowless).
 2. Die Engine fordert nach dem Laden **alle 16 ms einen Snapshot** an
    (`WEBVIEW_SNAPSHOT_INTERVAL`, ca. 60 Hz; bei Snapshot-Fehlern Backoff auf
    500 ms) und legt ihn in den Stage-Compositor (Stage → Region → Route →
    Device). Das HTML skaliert dadurch **automatisch auf die Stage-Auflösung**.
    16 ms ist der *angeforderte* Takt – die tatsächlich erzielte Bildrate
    hängt von Rendering-Aufwand und Hardware ab und ist nicht gemessen.
-3. **HTML-Data-Cue** pusht ein JSON-Payload an die laufende WebView. Die
+3. **HTML-Data-Cue** pusht ein JSON-Payload an den laufenden CEF-Browser. Die
    Bridge ruft im Page-Kontext auf:
    ```js
    window.kuhplay.onShowControlData(<payload>)
    ```
 4. **JS-Trigger** (EvalJs, z. B. „Test"-Button im Inspector oder Script-Cue)
-   führt arbitrary JS in der WebView aus: `webview.evaluate_script(...)`.
+   führt arbitrary JS im CEF-Browser aus: `frame.execute_java_script(...)`.
 
 **Konsequenz für Animationen:** DOM/CSS-Animationen werden mit **ca. 60 Hz**
 (16 ms Snapshot-Takt, angefordert – Offscreen-Rendering wie in OBS Studio)
@@ -68,7 +68,7 @@ window.kuhplay.onShowControlData = (data) => {
 - Alles, was "oben/unten/links/rechts" sitzen soll, über Flexbox/Grid mit
   `vh`/`vw`-Abständen. Beispiel Schriftgröße: `font-size: 6vh`.
 - Hintergrund default **transparent** (Key/Fill: HTML liefert das Key-Signal;
-  die WebView ist transparent geschaltet). Wer ein deckendes Overlay will, setzt
+  der Browser ist transparent geschaltet). Wer ein deckendes Overlay will, setzt
   explizit `background: #0d1117` o. ä. auf `html,body`.
 - Text immer mit Kontrast/Schatten lesbar halten (`text-shadow`).
 
@@ -108,7 +108,7 @@ let state = { data: structuredClone(defaultData) };
 
 ## 6. Capture-Canvas (Cross-Plattform)
 
-- **macOS:** Snapshot nativ über WKWebView `takeSnapshot` – das DOM wird
+- Alle Plattformen: Snapshot über CEF `OnPaint` (Offscreen-Rendering) – das DOM wird
   1:1 in Stage-Auflösung aufgenommen. Kein Extra nötig.
 - **Windows/Linux:** Snapshot kooperativ über ein Page-Canvas. Das Template
   sollte zusätzlich malen:
@@ -123,11 +123,11 @@ let state = { data: structuredClone(defaultData) };
 
 ## 7. Debugging & Fehler
 
-- JS-Fehler in der WebView landen als `EngineEvent::Error` → Footer „⚠“ in
+- JS-Fehler im CEF-Browser landen als `EngineEvent::Error` → Footer „⚠“ in
   KuhPlay. Konsole gibt es nicht → **im Browser (Safari/Chrome) entwickeln
   und testen**, dann als Datei-/Inline-Quelle in KuhPlay laden.
 - Snapshot-Fehler: 1× Error, dann Backoff (Engine spammt nicht).
-- WebView-Binary fehlt (Build ohne `--features webview`): HTML5-Cues laufen
+- CEF-Binary fehlt (Build ohne `--features cef`): HTML5-Cues laufen
   virtuell (Events, aber kein Bild).
 
 ## 8. Minimales Beispiel-Template (Lower Third)

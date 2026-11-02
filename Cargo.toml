@@ -65,78 +65,36 @@ image = "0.25.10"
 # Hardware-Displays (Screen-Zuordnung der Stages, „Stage → Screen“).
 display-info = "0.5"
 
-# HTML5-WebView (optional, Feature „webview"): eigener Subprocess
-# (src/bin/kuhplay-webview.rs, tao+wry) für HTML5-Cues. Die Engine nutzt
-# ihn, wenn das Binary auffindbar ist, sonst virtueller Fallback – siehe
-# src/engine/webview_backend.rs.
-wry = { version = "0.47", optional = true }
-# Fenster/Event-Loop für den WebView-Subprocess (macOS: tao braucht den
-# Main-Thread – deshalb eigener Prozess, nicht in der eframe-App).
-tao = { version = "0.30", optional = true }
-# Base64 für Frame-Payloads der WebView-IPC (bereits transitiv im Tree).
+# HTML5-Renderer: CEF (Chromium Embedded Framework) mit Offscreen-Rendering
+# als eigener Subprocess (src/bin/kuhplay-cef.rs) – wie OBS/CasparCG. Einziger
+# Renderer; die Engine nutzt ihn, wenn das Binary auffindbar ist, sonst
+# virtueller Fallback – siehe src/engine/webview_backend.rs.
+cef = { version = "156", optional = true }
+# Base64 für Frame-Payloads der Renderer-IPC (bereits transitiv im Tree).
 base64 = "0.22"
 
-# macOS: nativer WKWebView-Snapshot (takeSnapshot) für WebView-Compositing
-# im Subprocess – Versionen passend zu wry 0.47 (objc2 0.5), keine neuen
-# Crates im Tree. Auf anderen Plattformen greift der JS-Canvas-Fallback.
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native Menüleiste (siehe src/gui/native_menu.rs).
 muda = "0.17"
 # Ausgabefenster exakt platzieren (siehe src/gui/macos_output.rs).
 objc2-06 = { package = "objc2", version = "0.6" }
 objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", features = ["NSGeometry", "NSString"] }
-objc2-foundation = { version = "0.2", optional = true, features = [
-    "NSData",
-    "NSError",
-    "NSDictionary",
-    "NSString",
-] }
-objc2-app-kit = { version = "0.2", optional = true, features = [
-    "NSImage",
-    "NSBitmapImageRep",
-] }
-objc2-web-kit = { version = "0.2", optional = true, features = [
-    "WKPreferences",
-    "WKSnapshotConfiguration",
-    "WKWebViewConfiguration",
-] }
-block2 = { version = "0.5", optional = true }
-objc2-05 = { package = "objc2", version = "0.5", optional = true }
-
-# CEF (Chromium Embedded Framework) als alternativer HTML5-Renderer mit
-# Offscreen-Rendering wie OBS/CasparCG (docs/KONZEPT-html-templates.md §9).
-# Optional: cef-dll-sys lädt die CEF-Distribution (~150–300 MB) erst bei
-# Feature „cef" herunter; ohne Feature bleibt der Build schlank.
-cef = { version = "156", optional = true }
 
 # Zukünftige Media-Anbindung (noch nicht einkompiliert, bewusst commented):
 # gstreamer = "0.23"       # Video/Audio, Hardware-Decoding (Decklink, NDI)
 # gstreamer-app = "0.23"   # App-Sink/Source für Frame-Zugriff
 
 [features]
-# „webview": baut den WebView-Subprocess (tao+wry/WKWebView) für HTML5-Cues.
-# Unter macOS zusätzlich objc2- für den nativen takeSnapshot (Compositing).
-webview = [
-    "wry",
-    "tao",
-    "dep:objc2-foundation",
-    "dep:objc2-app-kit",
-    "dep:objc2-web-kit",
-    "dep:block2",
-    "dep:objc2-05",
-]
+default = ["cef"]
 # Native DeckLink-Ausgabe direkt über das Blackmagic SDK 16.0
 # (third_party/decklink-sdk-16.0, nur Include-Header eingecheckt). Ohne SDK
 # oder ohne Feature läuft der Build normal durch.
 decklink = []
 # „cef": baut den CEF-Subprocess (kuhplay-cef) für HTML5-Cues mit
-# Offscreen-Rendering (Prototyp siehe docs/KONZEPT-html-templates.md §9).
+# Offscreen-Rendering wie OBS/CasparCG (docs/KONZEPT-html-templates.md §9).
+# Default an; ohne Feature (z. B. Cross-Check ohne CEF-Download) bleibt der
+# virtuelle Fallback in der Engine.
 cef = ["dep:cef"]
-
-[[bin]]
-name = "kuhplay-webview"
-path = "src/bin/kuhplay-webview.rs"
-required-features = ["webview"]
 
 [[bin]]
 name = "kuhplay-cef"

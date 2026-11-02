@@ -3,7 +3,7 @@
 //!
 //! * JSON-lines IPC gegen einen **Fake-WebView** (Shell-Script statt
 //!   wry-Binary – headless testbar)
-//! * `KUHPLAY_WEBVIEW_BIN` überschreibt die Binary-Auflösung
+//! * `KUHPLAY_CEF_BIN` überschreibt die Binary-Auflösung
 //! * Spawn-Fehler bei nicht existierendem Binary
 //! * Engine: PlayHtml nutzt das echte Backend (WebView-Error wird als
 //!   EngineEvent::Error durchgereicht), EvalJs/PushJson bestätigt
@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use kuhplay::core::{HtmlSource, Stage, StageGeometry};
-use kuhplay::engine::webview_backend::{webview_binary, WebviewEvent, WebviewInstance};
+use kuhplay::engine::webview_backend::{cef_binary, WebviewEvent, WebviewInstance};
 use kuhplay::engine::{
     new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
     EngineCommand, EngineEvent, FrameStore, MediaEngine, RealMediaEngine, StageFrameStore,
@@ -92,13 +92,13 @@ fn wait_for_event(inst: &WebviewInstance, pred: impl Fn(&WebviewEvent) -> bool) 
 
 #[cfg(unix)]
 #[test]
-fn webview_binary_env_override_and_ipc_roundtrip() {
+fn cef_binary_env_override_and_ipc_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let script = write_fake_webview(dir.path(), None, false);
 
-    // Env-Override: KUHPLAY_WEBVIEW_BIN gewinnt vor der Sibling-Auflösung.
-    std::env::set_var("KUHPLAY_WEBVIEW_BIN", &script);
-    assert_eq!(webview_binary().as_deref(), Some(script.as_path()));
+    // Env-Override: KUHPLAY_CEF_BIN gewinnt vor der Sibling-Auflösung.
+    std::env::set_var("KUHPLAY_CEF_BIN", &script);
+    assert_eq!(cef_binary().as_deref(), Some(script.as_path()));
 
     // IPC-Roundtrip über das aufgelöste Binary.
     let cue_id = uuid::Uuid::new_v4();
@@ -128,13 +128,13 @@ fn webview_binary_env_override_and_ipc_roundtrip() {
     );
 
     inst.close();
-    std::env::remove_var("KUHPLAY_WEBVIEW_BIN");
+    std::env::remove_var("KUHPLAY_CEF_BIN");
 }
 
 #[test]
 fn webview_spawn_failure_bei_fehlendem_binary() {
     let result = WebviewInstance::spawn(
-        PathBuf::from("/nonexistent/kuhplay-webview").as_path(),
+        PathBuf::from("/nonexistent/kuhplay-cef").as_path(),
         uuid::Uuid::new_v4(),
         &HtmlSource::Inline("<h1>hi</h1>".into()),
     );
@@ -177,7 +177,7 @@ fn engine_nutzt_echtes_webview_backend() {
         new_route_frame_store(),
         evt_tx,
     )
-    .with_webview_bin(script);
+    .with_renderer_bin(script);
 
     let cue_id = uuid::Uuid::new_v4();
     engine
@@ -306,7 +306,7 @@ fn engine_webview_frame_landet_im_frame_store_and_composites() {
         new_route_frame_store(),
         evt_tx,
     )
-    .with_webview_bin(script);
+    .with_renderer_bin(script);
 
     // Stage konfigurieren, dann HTML5-Cue auf die Stage spielen.
     engine
@@ -361,7 +361,7 @@ fn engine_requests_only_one_snapshot_until_the_answer_arrives() {
         new_route_frame_store(),
         evt_tx,
     )
-    .with_webview_bin(script);
+    .with_renderer_bin(script);
     engine
         .handle(EngineCommand::ConfigureStage {
             stage: Stage::new("Main", StageGeometry::new(100.0, 100.0)),
@@ -401,7 +401,7 @@ fn engine_webview_snapshot_backoff_bei_fehlern() {
         new_route_frame_store(),
         evt_tx,
     )
-    .with_webview_bin(script);
+    .with_renderer_bin(script);
 
     let cue_id = uuid::Uuid::new_v4();
     engine
@@ -459,7 +459,7 @@ fn engine_fallback_virtuell_wenn_binary_fehlt() {
         new_route_frame_store(),
         evt_tx,
     )
-    .with_webview_bin(PathBuf::from("/nonexistent/kuhplay-webview"));
+    .with_renderer_bin(PathBuf::from("/nonexistent/kuhplay-cef"));
 
     let cue_id = uuid::Uuid::new_v4();
     engine
@@ -533,7 +533,7 @@ fn e12_script_cue_settle_faengt_spaete_js_fehler() {
         new_route_frame_store(),
         evt_tx,
     )
-    .with_webview_bin(bin);
+    .with_renderer_bin(bin);
     let cue_id = uuid::Uuid::new_v4();
     engine
         .handle(EngineCommand::RunScript {

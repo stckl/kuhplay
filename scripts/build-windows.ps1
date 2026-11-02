@@ -15,7 +15,7 @@ $name = "kuhplay-$version-windows-$arch"
 
 $cargoArgs = @('build', '--release', '--locked')
 # H4: DeckLink gehört seit G6 zum Release (SDK liegt unter third_party/).
-$features = if ($NoWebview) { 'decklink' } else { 'webview,decklink' }
+$features = if ($NoCef) { 'decklink' } else { 'cef,decklink' }
 $cargoArgs += @('--features', $features)
 & cargo @cargoArgs
 if ($LASTEXITCODE -ne 0) { throw "cargo build fehlgeschlagen ($LASTEXITCODE)." }
@@ -25,7 +25,7 @@ if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Path $out | Out-Null
 Copy-Item 'target\release\kuhplay.exe', 'README.md', 'icon.png' $out
 # Die Engine sucht den WebView-Prozess neben dem Haupt-Binary.
-if (-not $NoWebview) { Copy-Item 'target\release\kuhplay-webview.exe' $out }
+if (-not $NoCef) { Copy-Item 'target\release\kuhplay-cef.exe' $out }
 
 # H3: ffmpeg/ffprobe gebündelt neben die exe (vor dem Zip) – schlägt das
 # Mitliefern fehl (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build ab.

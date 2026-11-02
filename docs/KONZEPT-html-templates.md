@@ -47,7 +47,7 @@ weder Framework noch Aufbau vor, und eine Seite ohne Felddefinition läuft trotz
 
 ## 3. Ausgangslage im Code
 
-- Rendering über System-WebViews im Subprocess `kuhplay-webview`, ein Prozess pro Cue.
+- Rendering über System-WebViews im Subprocess `kuhplay-cef`, ein Prozess pro Cue.
 - Bilder laufen einzeln als PNG/base64 über eine Pipe. Angefordert wird alle 16 ms
   (`WEBVIEW_SNAPSHOT_INTERVAL`); die tatsächliche Bildrate ist nicht gemessen.
 - Außerhalb von macOS wird nur ein Page-Canvas erfasst (`js_snapshot`). Normales HTML/CSS
@@ -187,11 +187,11 @@ GPU-Pipeline aus `docs/KONZEPT-slideshow.md`.
 - zusätzliche App-Größe (Schätzung 150–300 MB), Build und Paket auf beiden Systemen
 - Standard-Builds von CEF enthalten oft keine proprietären Codecs wie H.264; das betrifft nur
   Videos innerhalb von HTML-Seiten, Video-Cues laufen weiter über ffmpeg
-- Folgen für Script-Cues, die heute ebenfalls über `kuhplay-webview` laufen
+- Folgen für Script-Cues, die heute ebenfalls über `kuhplay-cef` laufen
 
 **Stand des Prototyps (2026-11-02):** `cef-rs` 156 ist angebunden – eigener Subprocess
 `kuhplay-cef` (`src/bin/kuhplay-cef.rs`, Feature `cef`, gleicher JSON-IPC wie
-`kuhplay-webview`, Auswahl per `KUHPLAY_HTML_RENDERER=cef`/`KUHPLAY_CEF_BIN`) mit
+`kuhplay-cef`, Auswahl per `KUHPLAY_HTML_RENDERER=cef`/`KUHPLAY_CEF_BIN`) mit
 windowless-Rendering: `OnPaint` liefert BGRA-premultiplied mit
 `windowless_frame_rate = 60`, Konvertierung nach RGBA straight alpha (Key/Fill),
 Snapshot skaliert/rendert in Zielgröße. Engine/Compositor bleiben unverändert.
@@ -199,7 +199,7 @@ Snapshot skaliert/rendert in Zielgröße. Engine/Compositor bleiben unverändert
 .app-Bundle-Layout (Resources/locales explizit gesetzt, `CEF_PATH` für die
 Distribution); das minimale CEF-Paket ohne `icudtl.dat` startet nicht –
 volle Distribution nötig. Paketierung (150–300 MB) und Windows/Linux-Lauf
-stehen noch aus. Bis dahin bleibt `kuhplay-webview` (wry) der Default.
+stehen noch aus. Bis dahin bleibt `kuhplay-cef` (wry) der Default.
 
 Scheitert der Prototyp an einem Punkt, wird neu entschieden, kein stiller Rückfall auf die
 System-WebViews. Danach `docs/HTML-Templates.md` komplett auf den neuen Stand bringen.

@@ -57,7 +57,7 @@ use super::frame::{
 };
 use super::route_renderer;
 use super::video_backend::VideoBackend;
-use super::webview_backend::{webview_binary, WebviewInstance};
+use super::webview_backend::{cef_binary, WebviewInstance};
 use super::{EngineCommand, EngineEvent, MediaEngine};
 use crate::core::{OutputRoute, RouteManager};
 
@@ -250,7 +250,7 @@ struct ActiveHtml {
     layer: u32,
     #[allow(dead_code)]
     started_at: Duration,
-    /// Echtes WebView-Subprocess (Drop killt den Subprocess).
+    /// Echtes CEF-Subprocess (Drop killt den Subprocess).
     webview: Option<WebviewInstance>,
     /// Nächster fälliger Snapshot (Compositing). `None` bis `Loaded` – vor
     /// dem Laden würde jeder Snapshot fehlschlagen.
@@ -341,8 +341,8 @@ pub struct RealMediaEngine {
     decklink_fps: u32,
     /// Nächster Push-Zeitpunkt (Engine-Zeit).
     decklink_next_push: Duration,
-    /// WebView-Subprocess-Binary für HTML5-Cues (`None` = virtueller Fallback).
-    webview_bin: Option<PathBuf>,
+    /// CEF-Subprocess-Binary für HTML5-Cues (`None` = virtueller Fallback).
+    renderer_bin: Option<PathBuf>,
     /// Cue-IDs mit aktiver Audio-Voice (Spiegel für [`super::EngineHandle::audio_voices`]).
     audio_voices: Arc<Mutex<HashSet<Uuid>>>,
     /// MIDI-Ausgang für MIDI-Cues (lazy geöffnet beim ersten `SendMidi`,
@@ -410,7 +410,7 @@ impl RealMediaEngine {
             decklink_stage: String::new(),
             decklink_fps: 25,
             decklink_next_push: Duration::ZERO,
-            webview_bin: webview_binary(),
+            renderer_bin: cef_binary(),
             audio_voices: Arc::new(Mutex::new(HashSet::new())),
             midi_out: None,
             scripts: HashMap::new(),
@@ -424,10 +424,10 @@ impl RealMediaEngine {
         self
     }
 
-    /// Setzt das WebView-Subprocess-Binary für HTML5-Cues (Builder; für
+    /// Setzt das CEF-Subprocess-Binary für HTML5-Cues (Builder; für
     /// Tests – produktiv wird es in `new()` aufgelöst).
-    pub fn with_webview_bin(mut self, bin: PathBuf) -> Self {
-        self.webview_bin = Some(bin);
+    pub fn with_renderer_bin(mut self, bin: PathBuf) -> Self {
+        self.renderer_bin = Some(bin);
         self
     }
 
@@ -2193,7 +2193,7 @@ impl MediaEngine for RealMediaEngine {
                 let escaped = script.replace("</script>", "<\\/script>");
                 let html =
                     format!("<!DOCTYPE html><html><body><script>{escaped}</script></body></html>");
-                let Some(bin) = self.webview_bin.clone() else {
+                let Some(bin) = self.renderer_bin.clone() else {
                     self.emit(EngineEvent::Error {
                         cue_id: Some(cue_id),
                         message: "script cue: no webview binary (build with --features webview)"
@@ -2496,16 +2496,15 @@ impl MediaEngine for RealMediaEngine {
         // WebView-Instanzen aktivieren: echtes Subprocess-Backend, wenn das
         // Binary verfügbar ist, sonst virtueller Fallback.
         for (cue_id, source, stage, layer) in html_starts {
-            let webview = self
-                .webview_bin
-                .as_deref()
-                .and_then(|bin| match WebviewInstance::spawn(bin, cue_id, &source) {
+            let webview = self.renderer_bin.as_deref().and_then(
+                |bin| match WebviewInstance::spawn(bin, cue_id, &source) {
                     Ok(instance) => Some(instance),
                     Err(err) => {
                         warn!(%cue_id, %err, "webview spawn fehlgeschlagen – virtueller Fallback");
                         None
                     }
-                });
+                },
+            );
             self.html.insert(
                 cue_id,
                 ActiveHtml {

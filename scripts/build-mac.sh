@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Baut KuhPlay für macOS: dist/KuhPlay.app und ein Zip davon.
-# Aufruf: scripts/build-mac.sh [--no-webview]
+# Aufruf: scripts/build-mac.sh [--no-cef]
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-webview=1
+cef=1
 case "${1:-}" in
   "") ;;
-  --no-webview) webview=0 ;;
-  *) echo "Aufruf: $0 [--no-webview]" >&2; exit 2 ;;
+  --no-cef) cef=0 ;;
+  *) echo "Aufruf: $0 [--no-cef]" >&2; exit 2 ;;
 esac
 
 [ "$(uname -s)" = "Darwin" ] || { echo "Dieses Skript läuft nur auf macOS." >&2; exit 1; }
@@ -19,8 +19,8 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 arch=$(uname -m)
 
 # H4: DeckLink gehört seit G6 zum Release (SDK liegt unter third_party/).
-if [ "$webview" = 1 ]; then
-  cargo build --release --locked --features webview,decklink
+if [ "$cef" = 1 ]; then
+  cargo build --release --locked --features cef,decklink
 else
   cargo build --release --locked --features decklink
 fi
@@ -30,8 +30,8 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/kuhplay "$app/Contents/MacOS/"
 # Die Engine sucht den WebView-Prozess neben dem Haupt-Binary.
-if [ "$webview" = 1 ]; then
-  cp target/release/kuhplay-webview "$app/Contents/MacOS/"
+if [ "$cef" = 1 ]; then
+  cp target/release/kuhplay-cef "$app/Contents/MacOS/"
 fi
 # H3: ffmpeg/ffprobe gebündelt ins App-Bundle – schlägt das Mitliefern fehl
 # (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build hier ab.

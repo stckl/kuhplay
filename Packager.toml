@@ -28,7 +28,7 @@ binaries_dir = "target/release"
 
 binaries = [
   { path = "kuhplay", main = true },
-  { path = "kuhplay-webview" },
+  { path = "kuhplay-cef" },  # CEF-Subprocess; CEF-Distribution (libcef/Framework) liegt per CEF_PATH oder neben dem Paket – siehe docs/TODO-offen.md
 ]
 
 # ffmpeg/ffprobe landen neben dem Haupt-Binary im Paket (Dateiname mit Ziel-Triple).

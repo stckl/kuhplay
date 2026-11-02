@@ -59,7 +59,7 @@ jobs:
       - name: Build + ffmpeg vendoren (LGPL) + Installer
         shell: bash
         run: |
-          cargo build --release --locked --features webview,decklink
+          cargo build --release --locked --features cef,decklink
           if [ "${{ runner.os }}" = "Windows" ]; then
             powershell -ExecutionPolicy Bypass -File scripts/vendor-ffmpeg.ps1 target/release
           else

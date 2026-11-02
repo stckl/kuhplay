@@ -44,15 +44,27 @@ const DONE_TITLE: &str = "__kuhplay_done__";
 /// Default-View-Größe, bis die Engine eine Snapshot-Größe anfordert.
 const DEFAULT_VIEW: (i32, i32) = (1280, 720);
 
-#[derive(Clone, Default)]
+/// Letzter OnPaint-Frame (BGRA, premultiplied).
+type FrameBuf = Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>;
+
+#[derive(Clone)]
 struct Shared {
-    /// Letzter OnPaint-Frame (BGRA, premultiplied).
-    frame: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>,
-    /// Angeforderte View-Größe (Snapshot-Ziel), sonst DEFAULT_VIEW.
+    frame: FrameBuf,
+    /// Angeforderte View-Größe (Snapshot-Ziel), initial DEFAULT_VIEW.
     view: Arc<Mutex<(i32, i32)>>,
     /// Offener Snapshot-Request (Größe) – wird bei passendem OnPaint sofort
     /// als Frame beantwortet, sonst skaliert der Request den letzten Frame.
     pending: Arc<Mutex<Option<(u32, u32)>>>,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            frame: Arc::new(Mutex::new(None)),
+            view: Arc::new(Mutex::new(DEFAULT_VIEW)),
+            pending: Arc::new(Mutex::new(None)),
+        }
+    }
 }
 
 wrap_render_handler! {
@@ -272,12 +284,14 @@ fn main() {
     let client = OsrClient::new(render, load, disp);
 
     let args = Args::new();
-    let mut settings = Settings::default();
-    settings.no_sandbox = 1;
-    settings.windowless_rendering_enabled = 1;
-    settings.multi_threaded_message_loop = 0;
-    settings.external_message_pump = 1; // eigener Loop mit do_message_loop_work
-    settings.log_severity = LogSeverity::DISABLE;
+    let mut settings = Settings {
+        no_sandbox: 1,
+        windowless_rendering_enabled: 1,
+        multi_threaded_message_loop: 0,
+        external_message_pump: 1, // eigener Loop mit do_message_loop_work
+        log_severity: LogSeverity::DISABLE,
+        ..Default::default()
+    };
     // Ressourcen explizit setzen (Subprocess läuft nicht in einem .app-Bundle).
     if let Some(dir) = cef::sys::get_cef_dir() {
         let res = dir.join("Chromium Embedded Framework.framework/Resources");
@@ -301,8 +315,10 @@ fn main() {
     }
 
     let window_info = WindowInfo::default().set_as_windowless(std::ptr::null_mut());
-    let mut browser_settings = BrowserSettings::default();
-    browser_settings.windowless_frame_rate = 60; // flüssige Animationen wie OBS
+    let browser_settings = BrowserSettings {
+        windowless_frame_rate: 60, // flüssige Animationen wie OBS
+        ..Default::default()
+    };
     let url = CefString::from("about:blank");
     let mut client = client;
     let browser = browser_host_create_browser_sync(
@@ -313,7 +329,7 @@ fn main() {
         None,
         None,
     );
-    let Some(mut browser) = browser else {
+    let Some(browser) = browser else {
         let _ = writeln!(std::io::stderr(), "cef create_browser_sync failed");
         shutdown();
         std::process::exit(1);

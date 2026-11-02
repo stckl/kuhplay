@@ -1,7 +1,7 @@
 # Übergabe: Offene TODOs nach dem Video-Routing-Umbau
 
 **Stand:** Branch `main` (alles gemerged), zuletzt Review-Blöcke A–E abgearbeitet.
-662 Tests grün auf dem Mac, Clippy ohne Warnung (auch `--features webview` und
+662 Tests grün auf dem Mac, Clippy ohne Warnung (auch `--features cef` und
 Windows `--all-targets`), Windows-Check warning-frei. ZBOOK (Windows, rustc 1.99.1):
 Release-Build OK, 617 Tests passed / 0 failed (19 unix-only), Web-Remote live
 erreichbar. ACS-Sol-Media19 (192.168.89.210, UltraStudio Mini 3G): Rust+ffmpeg
@@ -19,7 +19,7 @@ endet mit grünem `cargo test`, Clippy ohne Warnung, Windows-Check und eigenem C
 cargo fmt
 cargo test --no-fail-fast          # Testzahl mit dem Stand davor vergleichen (z.Zt. 541)
 cargo clippy --all-targets         # keine Warnungen
-cargo check --target x86_64-pc-windows-msvc --features webview
+cargo check --target x86_64-pc-windows-msvc --no-default-features  # cef cross von mac nicht baubar
 ```
 
 Stolperfallen (aus `docs/TODO-video-routing.md` §7, gelten weiter): macOS kennt kein
@@ -95,7 +95,7 @@ Ausgabegeräte parallel.
 - Web-Remote `pageAudio`: Matrix read-only (Namen editierbar), kein
   Überschreiben von Mehrfach-Zuordnungen mehr.
 - Tests: 548 gruen (Serde alt→neu, Bitmaske, GUI-Smoke Matrix, Remote).
-  clippy 0 Warnungen, Windows-Check (x86_64-pc-windows-msvc --features webview) ok.
+  clippy 0 Warnungen, Windows-Check (x86_64-pc-windows-msvc --no-default-features) ok.
 
 ---
 
@@ -295,7 +295,7 @@ Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
 
 - `src/bin/kuhplay-cef.rs` (Feature `cef`, `cef-rs` 156): windowless Offscreen-Rendering,
   OnPaint → BGRA-premultiplied → RGBA straight alpha, `windowless_frame_rate = 60`,
-  gleicher JSON-IPC wie `kuhplay-webview` (Engine bleibt unverändert). Auswahl:
+  gleicher JSON-IPC wie `kuhplay-cef` (Engine bleibt unverändert). Auswahl:
   `KUHPLAY_HTML_RENDERER=cef` oder `KUHPLAY_CEF_BIN=<pfad>`; Default bleibt wry.
 - Build: `cargo check --features cef --all-targets` (macOS) grün. **Offen:** volle CEF-Distribution
   (das minimale Paket ohne icudtl.dat startet nicht), .app-Bundle-Layout/Paketierung

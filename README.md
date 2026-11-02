@@ -20,7 +20,7 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 | **Audio-Routing** | Pro Cue: Datei-Kanal → 16 benannte Kanäle; Patch-Matrix in den Workspace Settings: Kanal → mehrere Ausgänge UND mehrere Ausgabegeräte parallel; Umlegen wirkt live |
 | **Video** | Playout über ffmpeg, Stages mit Layern, Surfaces, Area of Interest, Hard Edge; Video-Routing: **Stage → Region → Output Route → Device** mit Edge Blending und Testbildern (auch LED-Wand); **Key/Fill pro Stage** (Fill-Route + Key-Route mit Alpha; Alpha aus Video/Bild/HTML, HTML default transparent) |
 | **Ausgabe** | Ein randloses Fenster pro belegtem Display (alle Routen des Displays, auch Teilbereiche) oder Vorschau-Fenster pro Route, ideal für die Arbeit am Laptop; Stage-Monitor pro Stage |
-| **HTML5** | Eigene WebView (Feature `webview`), JavaScript-Trigger und JSON-Push für Lower-Thirds, Spielstände, Countdowns |
+| **HTML5** | Eigene WebView (Feature `cef`), JavaScript-Trigger und JSON-Push für Lower-Thirds, Spielstände, Countdowns |
 | **Fernsteuerung** | Web-Remote, Bitfocus Companion, OSC, MIDI |
 | **Sicherheit im Betrieb** | Show-Mode sperrt alle Bearbeitungen, Panic, Erkennung kaputter Cues |
 
@@ -33,21 +33,21 @@ Voraussetzungen: [Rust](https://rustup.rs) und für Video-Cues `ffmpeg` samt
 ```sh
 git clone https://github.com/stckl/kuhplay.git
 cd kuhplay
-cargo run --release --features webview
+cargo run --release   # CEF-Renderer ist default (Feature `cef`)
 ```
 
 ### Release-Build / Dist
 
 ```sh
-cargo build --release --locked --features webview
-# Ergebnis: target/release/kuhplay + target/release/kuhplay-webview
+cargo build --release --locked
+# Ergebnis: target/release/kuhplay + target/release/kuhplay-cef
 # WICHTIG: beide Binaries müssen im selben Ordner liegen (HTML5/WebView-Sibling),
-# alternativ Pfad via KUHPLAY_WEBVIEW_BIN setzen.
+# alternativ Pfad via KUHPLAY_CEF_BIN setzen.
 ```
 
 Fertige Builds liegen zum Testen bereit:
-- **macOS:** `/Users/stocke/Desktop/KuhPlay-macOS/` (kuhplay + kuhplay-webview)
-- **Windows (ZBOOK):** `C:\Users\wolfb\kuhplay-dist\` (kuhplay.exe + kuhplay-webview.exe)
+- **macOS:** `/Users/stocke/Desktop/KuhPlay-macOS/` (kuhplay + kuhplay-cef)
+- **Windows (ZBOOK):** `C:\Users\wolfb\kuhplay-dist\` (kuhplay.exe + kuhplay-cef.exe)
 
 Web-Remote läuft default auf Port 8080; der PIN wird beim ersten Start generiert
 und liegt in `%APPDATA%\KuhPlay\remote_pin` (Windows) bzw.
@@ -107,11 +107,11 @@ Lizenzkopf erhalten). Mindestversion Desktop Video **16.0** – bei älterem Tre
 zeigt die App eine klare Meldung; fehlt die Karte nach einem macOS-Update, Desktop
 Video neu installieren und registrieren. Kompatibilität: „KuhPlay compatible with
 Blackmagic Design DeckLink“. Ohne Treiber/Gerät: Meldung in GUI und Web-Remote.
-Build: `cargo build --release --features webview,decklink`.
+Build: `cargo build --release --features cef,decklink` (CEF ist default).
 Hardware-Tests: macOS live gegen UltraStudio Monitor 3G bestanden (Dauerlauf
 30 s Farbalken, 0 Aussetzer; Key/Fill kann diese Karte nicht). Windows-Tests
 auf dem ZBOOK folgen, Linux ohne Karte ohne Hardware-Test.
-| `KUHPLAY_WEBVIEW_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
+| `KUHPLAY_CEF_BIN` | Pfad zum WebView-Prozess | neben dem Programm |
 | `KUHPLAY_HWACCEL` | `off` schaltet Hardware-Dekodierung ab (VideoToolbox/NVDEC/VAAPI/DXVA, auto mit Software-Fallback) | an |
 
 **Performance:** Video-Dekodierung läuft per Hardware-Beschleunigung (auto,
@@ -131,7 +131,7 @@ Jedes Skript baut auf seiner eigenen Plattform nach `dist/`.
 .\scripts\build-windows.ps1   # Zip
 ```
 
-Mit `--no-webview` (Windows: `-NoWebview`) entfällt die HTML5-WebView. Die
+Mit `--no-cef` (Windows: `-NoCef`) entfällt der CEF-Subprocess (virtueller Fallback). Die
 macOS-App ist nur ad hoc signiert: Auf fremden Macs braucht sie eine Developer-ID
 und Notarisierung, sonst blockiert Gatekeeper den Start.
 

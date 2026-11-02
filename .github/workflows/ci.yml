@@ -57,10 +57,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --locked --all-targets --features webview,decklink -- -D warnings
+        run: cargo clippy --locked --all-targets --features cef,decklink -- -D warnings
 
       - name: Tests
-        run: cargo test --locked --no-fail-fast --features webview,decklink
+        run: cargo test --locked --no-fail-fast --features cef,decklink
 
   companion:
     name: Companion-Modul
