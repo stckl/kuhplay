@@ -70,13 +70,14 @@ Legende: ✅ vorhanden · ◐ teilweise · ❌ fehlt
 | Loops | ✅ | `LoopMode` |
 | Fade-Kurven linear/dB | ✅ | `FadeCurve` |
 
-## 5. Bekannte Lücken (Priorität)
+## 5. Bekannte Lücken (Priorität, Detail-Recherche lokal in `docs-lokal/`, git-ignored)
 
-1. **Fade/Crossfade wie in der Referenz** – kompletter Auftrag in `docs/AUFTRAG-fade.md` (offen): Fade-Ziel wählbar, Volume+Opacity gleichzeitig, Stop-when-done, Crossfade-Cue mit EqualPower, Panic-Regel, Migration alter Shows.
-2. Rotation, Blend-Modes, Video-Effekte ❌.
-3. Freie Maske ❌ (nur rechteckiger Crop).
-4. OSC-Sende-Cue ❌ (über Network-Cue möglich).
-5. Mic/Camera ❌ (bewusste Produktentscheidung).
+1. **Fade/Crossfade wie in der Referenz** – kompletter Auftrag in `docs/AUFTRAG-fade.md` (offen): Fade-Ziel wählbar, Volume+Opacity gleichzeitig, Stop-when-done, eigene Kurven, relative Fades, Crossfade-Cue mit EqualPower, Panic-Regel, Migration alter Shows.
+2. **Inspector-Tabs der Referenz pro Cue-Typ** – Referenz kennt u. a. „Levels" (Volume/Pan/Routing + Dog-Ear-Anzeige), „Objects" (Video-Parameter faden), „Curve" (freie Kurven), „Audio FX" (EQ/Kompressor), „Time & Loops" mit Slices (In/Out + Play-Count pro Slice) und Loop je Slice. KuhPlay hat Slices/Loops/Levels, aber ❌ freie Kurven, ❌ Audio-Effekte, ❌ „Fade per Rate".
+3. Rotation ❌, Blend-Modes ❌ (nur Alpha), Video-Effekte ❌, freie Maske ❌ (nur rechteckiger Crop).
+4. OSC-Sende-Cue ❌ (über Network-Cue UDP möglich), MIDI-File-Wiedergabe ❌, MSC ❌.
+5. Mic/Camera ❌ (bewusste Produktentscheidung, kein Live-Input).
+6. Referenz-Triggers: Hotkey/OSC/MIDI/Timecode direkt am Cue, kombinierbar, unabhängig vom Playhead – KuhPlay: Triggers-Tab ✅, Timecode ✅, Hotkey pro Cue ◐ (globale Shortcuts ja, pro-Cue-Hotkey ❌).
 
 ## 6. Tastenkürzel
 

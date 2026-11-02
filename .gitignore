@@ -4,3 +4,6 @@
 *.rs.bk
 .DS_Store
 /docs/TODO-review-2026-10-31.md
+
+# Lokale Referenz-Recherche (nicht ins git):
+docs-lokal/
