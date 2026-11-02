@@ -18,7 +18,7 @@ use std::time::Duration;
 use egui::RichText;
 use uuid::Uuid;
 
-use crate::core::{format_timecode, CueStatus, CueType};
+use crate::core::{format_timecode, CueStatus, CueType, LoopMode};
 
 use super::app::{ShowApp, SidebarTab};
 use super::icons::{self, Icon};
@@ -171,6 +171,34 @@ struct ActiveCueRow {
     elapsed: Option<Duration>,
     /// Medien-Dauer (aus Engine-Event), falls bekannt – Basis fürs Spulen.
     media: Option<Duration>,
+    /// Gesamtlaufzeit, wenn es ein Ende gibt – Basis für Restzeit und Balken.
+    total: Option<Duration>,
+}
+
+/// Gesamtlaufzeit eines laufenden Cues: eingetragene Dauer, sonst die des Mediums.
+/// Endlosschleifen haben kein Ende.
+fn total_runtime(
+    duration: Duration,
+    media: Option<Duration>,
+    loop_mode: LoopMode,
+) -> Option<Duration> {
+    let base = Some(duration)
+        .filter(|d| *d > Duration::ZERO)
+        .or(media.filter(|d| *d > Duration::ZERO))?;
+    match loop_mode {
+        LoopMode::Once => Some(base),
+        LoopMode::Count(n) => Some(base.saturating_mul(n)),
+        LoopMode::Infinite => None,
+    }
+}
+
+/// Zeitanzeige einer Zeile: Restzeit, ohne bekanntes Ende die gelaufene Zeit.
+fn active_time_text(elapsed: Option<Duration>, total: Option<Duration>) -> String {
+    match (elapsed, total) {
+        (Some(e), Some(t)) => format!("−{}", format_timecode(t.saturating_sub(e))),
+        (Some(e), None) => format_timecode(e),
+        _ => String::new(),
+    }
 }
 
 /// Tab „Active Cues": laufende Cues mit Einzel-Steuerung.
@@ -187,6 +215,7 @@ fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
                 duration: cue.duration,
                 elapsed: app.elapsed_of(cue),
                 media: app.media_duration_of(cue),
+                total: total_runtime(cue.duration, app.media_duration_of(cue), cue.loop_mode),
             });
         }
     }
@@ -213,12 +242,14 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         duration,
         elapsed,
         media,
+        total: runtime,
     } = row;
-    let (id, cue_type, status, duration, elapsed, media) =
-        (*id, *cue_type, *status, *duration, *elapsed, *media);
-    let progress = match (elapsed, duration) {
-        (Some(e), d) if d > Duration::ZERO => {
-            (e.as_secs_f64() / d.as_secs_f64()).clamp(0.0, 1.0) as f32
+    let (id, cue_type, status, duration, elapsed, media, runtime) = (
+        *id, *cue_type, *status, *duration, *elapsed, *media, *runtime,
+    );
+    let progress = match (elapsed, runtime) {
+        (Some(e), Some(t)) if t > Duration::ZERO => {
+            (e.as_secs_f64() / t.as_secs_f64()).clamp(0.0, 1.0) as f32
         }
         // Loops / unbekannte Dauer: Balken bleibt leer
         // (kein prozentualer Fortschritt).
@@ -324,16 +355,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             .selectable(false)
             .truncate(),
     );
-    let time = match (elapsed, duration) {
-        (Some(e), d) if d > Duration::ZERO => {
-            let remaining = d.saturating_sub(e);
-            // Nur Restzeit: „elapsed / −remaining" passt nicht in
-            // eine Zeile der Sidebar.
-            format!("−{}", format_timecode(remaining))
-        }
-        (Some(e), _) => format_timecode(e),
-        _ => String::new(),
-    };
+    let time = active_time_text(elapsed, runtime);
     let mut time_ui = child(ui, time_rect, centered);
     time_ui.add(
         egui::Label::new(
@@ -396,4 +418,40 @@ fn panic_button(ui: &mut egui::Ui) -> egui::Response {
         palette::TEXT,
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+#[cfg(test)]
+mod active_time_tests {
+    use super::*;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn video_without_own_duration_counts_down_from_its_media_length() {
+        let total = total_runtime(Duration::ZERO, Some(SECOND * 100), LoopMode::Once);
+        assert_eq!(total, Some(SECOND * 100));
+        assert_eq!(
+            active_time_text(Some(SECOND * 40), total),
+            format!("−{}", format_timecode(SECOND * 60))
+        );
+    }
+
+    #[test]
+    fn own_duration_wins_and_loops_multiply() {
+        let once = total_runtime(SECOND * 5, Some(SECOND * 100), LoopMode::Once);
+        assert_eq!(once, Some(SECOND * 5));
+        let twice = total_runtime(Duration::ZERO, Some(SECOND * 10), LoopMode::Count(2));
+        assert_eq!(twice, Some(SECOND * 20));
+    }
+
+    #[test]
+    fn no_known_end_counts_up() {
+        let endless = total_runtime(SECOND, Some(SECOND), LoopMode::Infinite);
+        assert_eq!(endless, None);
+        assert_eq!(total_runtime(Duration::ZERO, None, LoopMode::Once), None);
+        assert_eq!(
+            active_time_text(Some(SECOND * 7), None),
+            format_timecode(SECOND * 7)
+        );
+    }
 }

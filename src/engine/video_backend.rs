@@ -477,7 +477,7 @@ pub fn probe(path: &str) -> Result<VideoInfo, String> {
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height,r_frame_rate,duration",
+            "stream=width,height,r_frame_rate,duration:format=duration",
             "-of",
             "json",
             path,
@@ -505,16 +505,26 @@ pub fn probe(path: &str) -> Result<VideoInfo, String> {
             .as_str()
             .ok_or("ffprobe: no r_frame_rate")?,
     );
-    let duration = stream["duration"]
-        .as_str()
-        .and_then(|d| d.parse::<f64>().ok())
-        .map(Duration::from_secs_f64);
+    let duration = probed_duration(&json);
     Ok(VideoInfo {
         width,
         height,
         fps,
         duration,
     })
+}
+
+/// Dauer aus der ffprobe-Antwort: MKV führt sie nur im Container, nicht im Stream.
+fn probed_duration(json: &serde_json::Value) -> Option<Duration> {
+    let seconds = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .and_then(|d| d.parse::<f64>().ok())
+            .filter(|d| d.is_finite() && *d > 0.0)
+    };
+    seconds(&json["streams"][0]["duration"])
+        .or_else(|| seconds(&json["format"]["duration"]))
+        .map(Duration::from_secs_f64)
 }
 
 /// Parst ffprobe-FPS-Formate: `"30/1"`, `"30000/1001"`, `"25"`.
@@ -528,6 +538,32 @@ fn parse_fps(s: &str) -> f64 {
         0.0
     } else {
         s.parse().unwrap_or(0.0)
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    #[test]
+    fn duration_falls_back_to_the_container() {
+        let mkv = serde_json::json!({
+            "streams": [{ "width": 1920 }],
+            "format": { "duration": "116.448000" }
+        });
+        assert_eq!(
+            probed_duration(&mkv),
+            Some(Duration::from_secs_f64(116.448))
+        );
+
+        let mp4 = serde_json::json!({
+            "streams": [{ "duration": "135.6" }],
+            "format": { "duration": "135.65" }
+        });
+        assert_eq!(probed_duration(&mp4), Some(Duration::from_secs_f64(135.6)));
+
+        let unknown = serde_json::json!({ "streams": [{}], "format": { "duration": "N/A" } });
+        assert_eq!(probed_duration(&unknown), None);
     }
 }
 
