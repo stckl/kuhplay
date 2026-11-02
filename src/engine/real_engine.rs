@@ -1490,11 +1490,7 @@ impl MediaEngine for RealMediaEngine {
                         }
                         PlaybackKind::Video => {
                             if let Some(path) = &path {
-                                let was_paused = self.video.is_paused(cue_id);
-                                let _ = self.video.play(cue_id, path, position);
-                                if was_paused {
-                                    self.video.pause(cue_id);
-                                }
+                                let _ = self.video.seek(cue_id, path, position);
                             }
                             if let Some(audio) = self.audio.as_mut() {
                                 audio.seek(cue_id, position);
@@ -2356,6 +2352,7 @@ impl MediaEngine for RealMediaEngine {
             );
             out.push(EngineEvent::HtmlLoaded { cue_id });
         }
+        self.video.tick_seeks();
         // WebView-Snapshots anfordern (Compositing) und Events pollen.
         // Fehler werden als Engine-Events gemeldet; Erfolgs-Bestätigungen
         // werden bereits beim Command emittiert.

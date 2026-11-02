@@ -72,7 +72,14 @@ struct VideoPlayer {
     control: crossbeam_channel::Sender<VideoControl>,
     // Kind-Prozess-Lebenszeit.
     child: Arc<Mutex<Option<Child>>>,
+    /// Metadaten der Datei (ein Sprung fragt ffprobe nicht erneut).
+    info: VideoInfo,
+    /// Start dieses ffmpeg-Prozesses (Wartezeit auf das erste Bild).
+    started: Instant,
 }
+
+/// So lange wartet ein neuer Sprung höchstens auf das erste Bild des vorigen.
+const SEEK_FIRST_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Videometadaten (aus ffprobe).
 #[derive(Debug, Clone, Copy)]
@@ -89,6 +96,8 @@ pub struct VideoBackend {
     frames: FrameStore,
     /// Frames pro Sekunde des letzten Starts (für Position).
     fps: HashMap<Uuid, f64>,
+    /// Neuester Sprung, der noch auf das erste Bild des vorigen wartet.
+    pending_seeks: HashMap<Uuid, (String, Duration)>,
 }
 
 impl VideoBackend {
@@ -97,6 +106,7 @@ impl VideoBackend {
             players: HashMap::new(),
             frames,
             fps: HashMap::new(),
+            pending_seeks: HashMap::new(),
         }
     }
 
@@ -167,9 +177,95 @@ impl VideoBackend {
                 state,
                 control: tx,
                 child,
+                info,
+                started: Instant::now(),
             },
         );
         Ok(info)
+    }
+
+    /// Springt an `position`. Das letzte Bild bleibt stehen, bis das neue da ist.
+    /// Beim Ziehen kommen Sprünge schneller, als ffmpeg ein erstes Bild liefert:
+    /// Dann zählt nur der neueste, sonst käme nie ein Bild an.
+    pub fn seek(&mut self, cue_id: Uuid, path: &str, position: Duration) -> Result<(), String> {
+        let Some(player) = self.players.get(&cue_id) else {
+            return self.play(cue_id, path, position).map(|_| ());
+        };
+        if Self::first_frame_pending(player) {
+            self.pending_seeks
+                .insert(cue_id, (path.to_string(), position));
+        } else {
+            self.restart_at(cue_id, path, position);
+        }
+        Ok(())
+    }
+
+    /// Führt wartende Sprünge aus, sobald ihr Vorgänger ein Bild geliefert hat.
+    pub fn tick_seeks(&mut self) {
+        let ready: Vec<Uuid> = self
+            .pending_seeks
+            .keys()
+            .filter(|id| {
+                self.players
+                    .get(id)
+                    .is_none_or(|player| !Self::first_frame_pending(player))
+            })
+            .copied()
+            .collect();
+        for cue_id in ready {
+            if let Some((path, position)) = self.pending_seeks.remove(&cue_id) {
+                self.restart_at(cue_id, &path, position);
+            }
+        }
+    }
+
+    fn first_frame_pending(player: &VideoPlayer) -> bool {
+        let state = player.state.lock().unwrap();
+        state.frames_shown == 0 && !state.eof && player.started.elapsed() < SEEK_FIRST_FRAME_TIMEOUT
+    }
+
+    /// Neuer ffmpeg-Prozess an `position`; Pause und letztes Bild bleiben.
+    fn restart_at(&mut self, cue_id: Uuid, path: &str, position: Duration) {
+        let Some(old) = self.players.remove(&cue_id) else {
+            return;
+        };
+        let info = old.info;
+        let mut new_state = PlayerState::new();
+        if old.state.lock().unwrap().paused {
+            new_state.paused = true;
+            new_state.paused_since = Some(Instant::now());
+        }
+        Self::end_player(old);
+        let state = Arc::new(Mutex::new(new_state));
+        let (tx, rx) = crossbeam_channel::unbounded::<VideoControl>();
+        let child = Arc::new(Mutex::new(None::<Child>));
+        self.spawn_ffmpeg(
+            cue_id,
+            path,
+            position,
+            &info,
+            state.clone(),
+            rx,
+            child.clone(),
+        );
+        self.players.insert(
+            cue_id,
+            VideoPlayer {
+                state,
+                control: tx,
+                child,
+                info,
+                started: Instant::now(),
+            },
+        );
+    }
+
+    fn end_player(player: VideoPlayer) {
+        let _ = player.control.send(VideoControl::Stop);
+        if let Some(mut child) = player.child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
     /// Startet (bzw. restartet) den ffmpeg-Prozess + Reader-Thread.
@@ -243,12 +339,9 @@ impl VideoBackend {
     /// Stoppt einen Player (Kind-Prozess + Reader-Thread beenden).
     pub fn stop(&mut self, cue_id: Uuid) {
         if let Some(p) = self.players.remove(&cue_id) {
-            let _ = p.control.send(VideoControl::Stop);
-            if let Some(mut child) = p.child.lock().unwrap().take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+            Self::end_player(p);
         }
+        self.pending_seeks.remove(&cue_id);
         self.fps.remove(&cue_id);
         self.frames.lock().unwrap().remove(&cue_id);
     }
@@ -360,7 +453,14 @@ fn reader_loop(
         {
             let s = state.lock().unwrap();
             if s.paused {
+                let first = s.frames_shown == 0;
                 drop(s);
+                // Sprung im Pausenzustand: Das erste Bild zeigt die neue Stelle.
+                if first {
+                    let frame = VideoFrame::new(w, h, buf.clone());
+                    frames.lock().unwrap().insert(cue_id, Arc::new(frame));
+                    state.lock().unwrap().frames_shown = 1;
+                }
                 // Pausiert: Frame verwerfen? Nein – wir halten das Frame und
                 // warten, bis die Pause endet (Frame bleibt stehen).
                 loop {
@@ -538,6 +638,106 @@ fn parse_fps(s: &str) -> f64 {
         0.0
     } else {
         s.parse().unwrap_or(0.0)
+    }
+}
+
+#[cfg(test)]
+mod seek_tests {
+    use super::super::frame::new_frame_store;
+    use super::*;
+
+    /// Testvideo mit laufendem Bild; `None`, wenn ffmpeg fehlt.
+    fn clip(dir: &std::path::Path) -> Option<String> {
+        let path = dir.join("clip.mp4");
+        let status = Command::new(VideoBackend::ffmpeg_binary())
+            .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=s=64x64:r=25:d=20")
+            .args(["-c:v", "mpeg4", "-g", "5"])
+            .arg(&path)
+            .status()
+            .ok()?;
+        status
+            .success()
+            .then(|| path.to_string_lossy().into_owned())
+    }
+
+    fn wait_until(mut done: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    #[test]
+    fn dragging_keeps_a_picture_and_ends_on_the_last_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(path) = clip(dir.path()) else {
+            return;
+        };
+        let frames = new_frame_store();
+        let mut video = VideoBackend::new(frames.clone());
+        let id = Uuid::new_v4();
+        video.play(id, &path, Duration::ZERO).unwrap();
+        assert!(wait_until(|| frames.lock().unwrap().contains_key(&id)));
+
+        // Ziehen: alle 20 ms ein Sprung. Das Bild darf nie verschwinden.
+        let mut pictures = std::collections::HashSet::new();
+        for i in 0..50u64 {
+            video
+                .seek(id, &path, Duration::from_millis(1000 + i * 300))
+                .unwrap();
+            video.tick_seeks();
+            let frame = frames.lock().unwrap().get(&id).cloned();
+            let frame = frame.expect("beim Spulen muss ein Bild bleiben");
+            pictures.insert(frame.rgba.clone());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            pictures.len() >= 3,
+            "nur {} Bilder beim Ziehen",
+            pictures.len()
+        );
+
+        // Nach dem Loslassen wird auch der letzte Sprung noch ausgeführt.
+        assert!(wait_until(|| {
+            video.tick_seeks();
+            video.pending_seeks.is_empty()
+        }));
+        video.stop(id);
+        assert!(!frames.lock().unwrap().contains_key(&id));
+    }
+
+    #[test]
+    fn seeking_while_paused_shows_the_new_position_and_stays_paused() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(path) = clip(dir.path()) else {
+            return;
+        };
+        let frames = new_frame_store();
+        let mut video = VideoBackend::new(frames.clone());
+        let id = Uuid::new_v4();
+        video.play(id, &path, Duration::ZERO).unwrap();
+        assert!(wait_until(|| frames.lock().unwrap().contains_key(&id)));
+        video.pause(id);
+        std::thread::sleep(Duration::from_millis(100));
+        let before = frames.lock().unwrap().get(&id).cloned().unwrap();
+
+        video.seek(id, &path, Duration::from_secs(10)).unwrap();
+        assert!(video.is_paused(id));
+        assert!(wait_until(|| {
+            video.tick_seeks();
+            let now = frames.lock().unwrap().get(&id).cloned().unwrap();
+            now.rgba != before.rgba
+        }));
+        let shown = frames.lock().unwrap().get(&id).cloned().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        let later = frames.lock().unwrap().get(&id).cloned().unwrap();
+        assert_eq!(shown.rgba, later.rgba, "Pause muss stehen bleiben");
+        video.stop(id);
     }
 }
 
