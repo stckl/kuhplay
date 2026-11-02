@@ -191,11 +191,11 @@ impl ActivePlayback {
     }
 }
 
-/// Ein laufender Fade.
+/// Ein laufender Fade. Schlüssel in `fades` ist (Ziel-Cue, Parameter) –
+/// ein neuer Fade auf denselben Parameter ersetzt den laufenden (docs/AUFTRAG-fade.md).
 struct ActiveFade {
-    /// Ziel-Cue des Fades (`None` = Fade-Cue selbst).
-    target_cue: Option<Uuid>,
-    param: FadeParam,
+    /// Fade-Cue, zu dem dieser Fade gehört (meldet Finished, wenn alle fertig).
+    fade_cue: Uuid,
     from: f32,
     target: f32,
     duration: Duration,
@@ -300,7 +300,15 @@ pub struct RealMediaEngine {
     held: HashMap<Uuid, HeldFrame>,
     /// Warten auf das erste Bild eines neuen Cues.
     deferred_stops: Vec<DeferredStop>,
-    fades: HashMap<Uuid, ActiveFade>,
+    fades: HashMap<(Uuid, FadeParam), ActiveFade>,
+    /// Noch laufende Fades pro Fade-Cue (Finished erst bei 0).
+    fade_pending: HashMap<Uuid, u32>,
+    /// Stop-when-done: Ziel-Cue pro Fade-Cue.
+    fade_stop_target: HashMap<Uuid, Uuid>,
+    /// Crossfade: zu stoppende „Von"-Cue pro Crossfade-Cue (am Ende stoppen+zurücksetzen).
+    xf_from: HashMap<Uuid, Uuid>,
+    /// Aktueller Lautstärke-Wert pro Cue (für from=None und Reset nach Neustart).
+    current_volumes: HashMap<Uuid, f32>,
     chasing: HashMap<Uuid, Timecode>,
     stages: HashMap<String, Stage>,
     /// Testbild pro Stage-Name („Test Pattern"; überdeckt die Inhalte).
@@ -391,6 +399,10 @@ impl RealMediaEngine {
             held: HashMap::new(),
             deferred_stops: Vec::new(),
             fades: HashMap::new(),
+            fade_pending: HashMap::new(),
+            fade_stop_target: HashMap::new(),
+            xf_from: HashMap::new(),
+            current_volumes: HashMap::new(),
             chasing: HashMap::new(),
             stages: HashMap::new(),
             routes: RouteManager::new(),
@@ -825,6 +837,42 @@ impl RealMediaEngine {
         }
     }
 
+    /// Aktueller Wert eines Parameters am Ziel (für from=None: kein Sprung).
+    fn current_value(&self, target: Uuid, param: FadeParam) -> f32 {
+        match param {
+            FadeParam::Volume => self.current_volumes.get(&target).copied().unwrap_or(1.0),
+            FadeParam::Opacity => self
+                .opacities
+                .lock()
+                .unwrap()
+                .get(&target)
+                .copied()
+                .unwrap_or(1.0),
+            FadeParam::Rate => 1.0,
+        }
+    }
+
+    /// Stoppt einen Cue intern (Stop-when-done, Crossfade-Ende): Backends zu,
+    /// Status-Maps raus, Stopped-Event.
+    fn stop_cue_simple(&mut self, cue_id: Uuid) {
+        self.fades
+            .retain(|(t, _), f| *t != cue_id && f.fade_cue != cue_id);
+        if let Some(playback) = self.active.remove(&cue_id) {
+            Self::stop_backend(&mut self.audio, &mut self.video, cue_id, &playback);
+            self.audio_voices.lock().unwrap().remove(&cue_id);
+            self.chasing.remove(&cue_id);
+            self.html.remove(&cue_id);
+            self.frames.lock().unwrap().remove(&cue_id);
+            self.opacities.lock().unwrap().remove(&cue_id);
+            self.current_volumes.remove(&cue_id);
+            if let Some(stage) = &playback.stage {
+                let stage = stage.clone();
+                self.compositor.mark_dirty(&stage);
+            }
+            self.emit(EngineEvent::Stopped { cue_id });
+        }
+    }
+
     /// Wendet einen Fade-Zwischenwert auf die Backends/Stores an.
     fn apply_fade_value(&mut self, cue_id: Uuid, param: FadeParam, value: f32) {
         match param {
@@ -842,7 +890,7 @@ impl RealMediaEngine {
                     }
                 }
             }
-            // Rate: nur Events (Playrate-Fading ist Engine-V2).
+            // Rate wird nicht mehr unterstützt (aus UI/Command entfernt).
             FadeParam::Rate => {}
         }
     }
@@ -1577,7 +1625,12 @@ impl MediaEngine for RealMediaEngine {
                     self.audio_voices.lock().unwrap().remove(&cue_id);
                     self.chasing.remove(&cue_id);
                     self.html.remove(&cue_id);
-                    self.fades.remove(&cue_id);
+                    self.fades
+                        .retain(|(t, _), f| *t != cue_id && f.fade_cue != cue_id);
+                    self.fade_pending.remove(&cue_id);
+                    self.fade_stop_target.remove(&cue_id);
+                    self.xf_from.remove(&cue_id);
+                    self.current_volumes.remove(&cue_id);
                     self.frames.lock().unwrap().remove(&cue_id);
                     self.opacities.lock().unwrap().remove(&cue_id);
                     Self::mark_stage_dirty(&mut self.compositor, &playback);
@@ -1598,6 +1651,10 @@ impl MediaEngine for RealMediaEngine {
                     .collect();
                 self.active.clear();
                 self.fades.clear();
+                self.fade_pending.clear();
+                self.fade_stop_target.clear();
+                self.xf_from.clear();
+                self.current_volumes.clear();
                 self.chasing.clear();
                 self.html.clear();
                 self.scripts.clear();
@@ -1621,30 +1678,193 @@ impl MediaEngine for RealMediaEngine {
             EngineCommand::Fade {
                 cue_id,
                 target_cue,
-                param,
                 from,
-                target,
+                volume,
+                opacity,
                 duration,
                 curve,
+                stop_when_done,
             } => {
-                let applied_to = target_cue.unwrap_or(cue_id);
+                let target = target_cue.unwrap_or(cue_id);
+                let running = self.active.contains_key(&target) || self.html.contains_key(&target);
+                if !running {
+                    // Ziel läuft nicht: Fade endet sofort ohne Wirkung und ohne
+                    // Engine-Fehler (AUFTRAG §2.5).
+                    self.emit(EngineEvent::Finished { cue_id });
+                } else {
+                    let mut n = 0u32;
+                    for (param, to) in [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)]
+                    {
+                        let Some(to) = to else { continue };
+                        // from=None: aktueller Wert des Ziels (kein Sprung).
+                        let from_v = from.unwrap_or_else(|| self.current_value(target, param));
+                        self.fades.insert(
+                            (target, param),
+                            ActiveFade {
+                                fade_cue: cue_id,
+                                from: from_v,
+                                target: to,
+                                duration,
+                                curve,
+                                started_at: now,
+                                last_value: from_v,
+                            },
+                        );
+                        self.apply_fade_value(target, param, from_v);
+                        n += 1;
+                    }
+                    if n == 0 {
+                        // weder Volume noch Opacity aktiv: sofort fertig.
+                        self.emit(EngineEvent::Finished { cue_id });
+                    } else {
+                        self.fade_pending.insert(cue_id, n);
+                        if stop_when_done {
+                            self.fade_stop_target.insert(cue_id, target);
+                        }
+                        if duration.is_zero() {
+                            for (param, to) in
+                                [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)]
+                            {
+                                if let Some(to) = to {
+                                    self.apply_fade_value(target, param, to);
+                                }
+                            }
+                            self.fades.retain(|_, f| f.fade_cue != cue_id);
+                            self.fade_pending.remove(&cue_id);
+                            if let Some(t) = self.fade_stop_target.remove(&cue_id) {
+                                self.stop_cue_simple(t);
+                            }
+                            self.emit(EngineEvent::Finished { cue_id });
+                        }
+                    }
+                }
+            }
+            EngineCommand::Crossfade {
+                cue_id,
+                from,
+                to,
+                to_volume,
+                duration,
+            } => {
+                let Some(to_id) = to else {
+                    self.emit(EngineEvent::Error {
+                        cue_id: Some(cue_id),
+                        message: "crossfade: missing 'to' cue".to_string(),
+                    });
+                    self.emit(EngineEvent::Finished { cue_id });
+                    return Ok(());
+                };
+                // „Nach" startet mit Volume 0 und Opacity 0 – vor dem ersten
+                // gerenderten Frame (AUFTRAG §3.1).
+                self.opacities.lock().unwrap().insert(to_id, 0.0);
+                self.current_volumes.insert(to_id, 0.0);
+                if let Some(audio) = self.audio.as_mut() {
+                    audio.set_volume(to_id, 0.0);
+                }
+                let from_pb = from.and_then(|f| self.active.get(&f));
+                let to_pb = self.active.get(&to_id);
+                let same_stage = match (from_pb, to_pb) {
+                    (Some(f), Some(t)) => f.stage.is_some() && f.stage == t.stage,
+                    _ => false,
+                };
+                let to_below = match (from_pb, to_pb) {
+                    (Some(f), Some(t)) => t.layer < f.layer,
+                    _ => false,
+                };
+                let mut n = 0u32;
+                if let Some(from_id) = from.filter(|f| self.active.contains_key(f)) {
+                    // Ton: „Von" mit Equal-Power auf 0 (cos(t·π/2)).
+                    let fv = self.current_value(from_id, FadeParam::Volume);
+                    self.fades.insert(
+                        (from_id, FadeParam::Volume),
+                        ActiveFade {
+                            fade_cue: cue_id,
+                            from: fv,
+                            target: 0.0,
+                            duration,
+                            curve: FadeCurve::EqualPowerDown,
+                            started_at: now,
+                            last_value: fv,
+                        },
+                    );
+                    n += 1;
+                    // Bild: gleiche Stage + „Nach" oben → „Von" bleibt deckend
+                    // (sonst blendet „Von" auf 0, damit nicht Schwarz durchscheint).
+                    if !same_stage || to_below {
+                        let fo = self.current_value(from_id, FadeParam::Opacity);
+                        self.fades.insert(
+                            (from_id, FadeParam::Opacity),
+                            ActiveFade {
+                                fade_cue: cue_id,
+                                from: fo,
+                                target: 0.0,
+                                duration,
+                                curve: FadeCurve::Linear,
+                                started_at: now,
+                                last_value: fo,
+                            },
+                        );
+                        n += 1;
+                    }
+                    self.xf_from.insert(cue_id, from_id);
+                }
+                // „Nach" einblenden: Ton Equal-Power auf eigenen Wert (sin(t·π/2)).
                 self.fades.insert(
-                    cue_id,
+                    (to_id, FadeParam::Volume),
                     ActiveFade {
-                        target_cue,
-                        param,
-                        from,
-                        target,
+                        fade_cue: cue_id,
+                        from: 0.0,
+                        target: to_volume,
                         duration,
-                        curve,
+                        curve: FadeCurve::EqualPowerUp,
                         started_at: now,
-                        last_value: from,
+                        last_value: 0.0,
                     },
                 );
-                self.apply_fade_value(applied_to, param, from);
+                n += 1;
+                if same_stage && !to_below {
+                    // „Nach" liegt oben: blendet linear 0→1, „Von" bleibt 1.
+                    self.fades.insert(
+                        (to_id, FadeParam::Opacity),
+                        ActiveFade {
+                            fade_cue: cue_id,
+                            from: 0.0,
+                            target: 1.0,
+                            duration,
+                            curve: FadeCurve::Linear,
+                            started_at: now,
+                            last_value: 0.0,
+                        },
+                    );
+                    n += 1;
+                } else if to_below {
+                    // „Nach" liegt unten: sofort voll deckend.
+                    self.apply_fade_value(to_id, FadeParam::Opacity, 1.0);
+                } else {
+                    // Verschiedene Stages: beide blenden unabhängig.
+                    self.fades.insert(
+                        (to_id, FadeParam::Opacity),
+                        ActiveFade {
+                            fade_cue: cue_id,
+                            from: 0.0,
+                            target: 1.0,
+                            duration,
+                            curve: FadeCurve::Linear,
+                            started_at: now,
+                            last_value: 0.0,
+                        },
+                    );
+                    n += 1;
+                }
+                self.fade_pending.insert(cue_id, n);
                 if duration.is_zero() {
-                    self.apply_fade_value(applied_to, param, target);
-                    self.fades.remove(&cue_id);
+                    self.fades.retain(|_, f| f.fade_cue != cue_id);
+                    if let Some(f) = self.xf_from.remove(&cue_id) {
+                        self.stop_cue_simple(f);
+                        self.opacities.lock().unwrap().remove(&f);
+                        self.current_volumes.remove(&f);
+                    }
+                    self.fade_pending.remove(&cue_id);
                     self.emit(EngineEvent::Finished { cue_id });
                 }
             }
@@ -1677,6 +1897,7 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
             EngineCommand::SetVolume { cue_id, volume } => {
+                self.current_volumes.insert(cue_id, volume);
                 if let Some(audio) = self.audio.as_mut() {
                     audio.set_volume(cue_id, volume);
                 }
@@ -2272,9 +2493,9 @@ impl MediaEngine for RealMediaEngine {
         let now = self.now();
         let mut out: Vec<EngineEvent> = Vec::new();
 
-        // Fades: Zwischenwerte + Abschluss (linear oder dB-interpoliert).
-        let mut fades_done = Vec::new();
-        for (cue_id, fade) in &mut self.fades {
+        // Fades: Zwischenwerte + Abschluss (linear, dB oder Equal-Power).
+        let mut fades_done: Vec<(Uuid, FadeParam)> = Vec::new();
+        for ((target, param), fade) in &mut self.fades {
             let elapsed = now.saturating_sub(fade.started_at);
             let progress = if fade.duration.is_zero() {
                 1.0
@@ -2288,33 +2509,55 @@ impl MediaEngine for RealMediaEngine {
                     let to_db = linear_to_db_clamped(fade.target);
                     db_to_linear(from_db + (to_db - from_db) * progress)
                 }
+                // Equal-Power für Crossfade-Ton: cos(t·π/2) abwärts, sin(t·π/2) aufwärts.
+                FadeCurve::EqualPowerDown => {
+                    fade.from
+                        + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).cos()
+                }
+                FadeCurve::EqualPowerUp => {
+                    fade.from
+                        + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).sin()
+                }
             };
             if value != fade.last_value {
                 fade.last_value = value;
-                self.pending_fade_values.push((
-                    *cue_id,
-                    fade.target_cue.unwrap_or(*cue_id),
-                    fade.param,
-                    value,
-                ));
+                self.pending_fade_values
+                    .push((*target, fade.fade_cue, *param, value));
                 out.push(EngineEvent::FadeProgress {
-                    cue_id: *cue_id,
-                    param: fade.param,
+                    cue_id: fade.fade_cue,
+                    param: *param,
                     value,
                 });
             }
             if progress >= 1.0 {
-                fades_done.push(*cue_id);
+                fades_done.push((*target, *param));
             }
         }
-        for cue_id in fades_done {
-            self.fades.remove(&cue_id);
-            out.push(EngineEvent::Finished { cue_id });
+        for (target, param) in fades_done {
+            if let Some(fade) = self.fades.remove(&(target, param)) {
+                let fade_cue = fade.fade_cue;
+                if let Some(pending) = self.fade_pending.get_mut(&fade_cue) {
+                    *pending = pending.saturating_sub(1);
+                    if *pending == 0 {
+                        self.fade_pending.remove(&fade_cue);
+                        // Stop-when-done: Ziel stoppen, bevor Finished gemeldet wird.
+                        if let Some(t) = self.fade_stop_target.remove(&fade_cue) {
+                            self.stop_cue_simple(t);
+                        }
+                        // Crossfade-Ende: „Von" stoppen und Werte zurücksetzen.
+                        if let Some(f) = self.xf_from.remove(&fade_cue) {
+                            self.stop_cue_simple(f);
+                            self.opacities.lock().unwrap().remove(&f);
+                            self.current_volumes.remove(&f);
+                        }
+                        out.push(EngineEvent::Finished { cue_id: fade_cue });
+                    }
+                }
+            }
         }
         let pending_fades = std::mem::take(&mut self.pending_fade_values);
-        for (cue_id, target_cue, param, value) in pending_fades {
-            let _ = cue_id;
-            self.apply_fade_value(target_cue, param, value);
+        for (target, _fade_cue, param, value) in pending_fades {
+            self.apply_fade_value(target, param, value);
         }
 
         // Playbacks: Pre-Wait → Laufend → Loops/Slices → Finished → Post-Wait.

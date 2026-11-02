@@ -496,6 +496,7 @@ function select(options, value, commit) {
   el.selectedIndex = Math.max(0, options.findIndex(o => JSON.stringify(o.value) === JSON.stringify(value)));
   return el;
 }
+function optNum(v, commit) { return h('input', { type: 'number', min: 0, max: 1, step: 0.05, value: v ?? '', placeholder: 'off', onchange: e => { const x = parseFloat(e.target.value); commit(Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : null); } }); }
 function check(value, label, commit) { return h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!value, onchange: e => commit(e.target.checked) }), label); }
 
 function renderInsp() {
@@ -644,10 +645,13 @@ function tabGeometry(c) {
 }
 function tabCurve(c) {
   return h('div', { class: 'form' },
-    field('Param', select(W.options.fade_param, c.fade_param, v => up(c, { fade_param: v }))),
+    field('Target', select((W.status.cues || []).map(x => [x.id, x.number + ' · ' + x.name]), c.fade_target ?? '', v => up(c, { fade_target: v || null }))),
+    field('Volume to', optNum(c.fade_volume, v => up(c, { fade_volume: v }))),
+    field('Opacity to', optNum(c.fade_opacity, v => up(c, { fade_opacity: v }))),
+    check(!!c.stop_when_done, 'Stop when done', v => up(c, { stop_when_done: v })),
     field('Curve', select(W.options.fade_curve, c.fade_curve, v => up(c, { fade_curve: v }))),
     field('Fade from', number(c.from_volume ?? 1, v => up(c, { from_volume: Math.min(1, Math.max(0, v)) }))),
-    field('Fade to', number(c.target_volume ?? 1, v => up(c, { target_volume: Math.min(c.fade_param === 'Rate' ? 4 : 1, Math.max(0, v)) }))));
+
 }
 function tabSource(c) {
   const source = c.html_source || { Url: 'https://' }, kind = Object.keys(source)[0], value = source[kind];

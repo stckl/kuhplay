@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::error::{ShowError, ShowResult};
 
 /// Welcher Parameter eines Cues gefadet wird.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum FadeParam {
     /// Lautstärke (0.0 – 1.0).
     #[default]
@@ -48,16 +48,27 @@ pub enum FadeCurve {
     Linear,
     /// dB-Interpolation über Zeit (gehörrichtig, Standard für Audio).
     Decibel,
+    /// Equal-Power aufsteigend: sin(t·π/2) – Crossfade „Nach" (Ton).
+    EqualPowerUp,
+    /// Equal-Power absteigend: cos(t·π/2) – Crossfade „Von" (Ton).
+    EqualPowerDown,
 }
 
 impl FadeCurve {
     /// Alle Kurven (für UI-ComboBoxen).
-    pub const ALL: [FadeCurve; 2] = [FadeCurve::Linear, FadeCurve::Decibel];
+    pub const ALL: [FadeCurve; 4] = [
+        FadeCurve::Linear,
+        FadeCurve::Decibel,
+        FadeCurve::EqualPowerUp,
+        FadeCurve::EqualPowerDown,
+    ];
 
     /// Anzeige-Label.
     pub fn label(self) -> &'static str {
         match self {
             FadeCurve::Linear => "Linear",
+            FadeCurve::EqualPowerUp => "Equal Power (up)",
+            FadeCurve::EqualPowerDown => "Equal Power (down)",
             FadeCurve::Decibel => "dB (logarithmisch)",
         }
     }

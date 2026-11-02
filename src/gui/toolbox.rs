@@ -26,7 +26,7 @@ const GROUPS: &[(&str, &[CueType])] = &[
             CueType::Text,
         ],
     ),
-    ("Fade", &[CueType::Fade]),
+    ("Fade", &[CueType::Fade, CueType::Crossfade]),
     (
         "Control",
         &[
@@ -164,10 +164,16 @@ mod tests {
             media.iter().position(|t| *t == CueType::Video)
                 > media.iter().position(|t| *t == CueType::Html)
         );
-        assert_eq!(
-            moved_order(&order, CueType::Fade, 1),
-            order,
-            "einzeln in der Gruppe"
+        // Fade-Gruppe hat zwei Typen (Fade, Crossfade): Fade rutscht innerhalb
+        // der Gruppe nach hinten, Crossfade bleibt letzter der Gruppe.
+        let moved = moved_order(&order, CueType::Fade, 1);
+        assert_ne!(moved, order, "Gruppe mit zwei Typen bewegt sich");
+        let fade_pos = |o: &Vec<CueType>| o.iter().position(|t| *t == CueType::Fade).unwrap();
+        let xf_pos = |o: &Vec<CueType>| o.iter().position(|t| *t == CueType::Crossfade).unwrap();
+        assert!(fade_pos(&moved) > fade_pos(&order));
+        assert!(
+            xf_pos(&moved) < fade_pos(&moved),
+            "Crossfade rutscht innerhalb der Gruppe vor Fade"
         );
     }
 }

@@ -57,16 +57,20 @@ fn last_fade(events: &[EngineEvent]) -> Option<(FadeParam, f32)> {
 fn db_fade_hits_exact_decibel_midpoint() {
     let (mut engine, rx) = setup();
     let id = Uuid::new_v4();
+    engine.handle(play_cmd(id, 10_000)).unwrap();
+    engine.tick();
+    drain(&rx);
     // 0 dB → -6.02 dB (Halbierung). Hälfte der Zeit = -3.01 dB = √0.5 ≈ 0.7071.
     engine
         .handle(EngineCommand::Fade {
             target_cue: None,
             cue_id: id,
-            param: FadeParam::Volume,
-            from: 1.0,
-            target: 0.5,
+            from: Some(1.0),
+            volume: Some(0.5),
+            opacity: None,
             duration: Duration::from_millis(1000),
             curve: FadeCurve::Decibel,
+            stop_when_done: false,
         })
         .unwrap();
 
@@ -98,15 +102,19 @@ fn db_fade_hits_exact_decibel_midpoint() {
 fn linear_fade_midpoint_is_the_arithmetic_mean() {
     let (mut engine, rx) = setup();
     let id = Uuid::new_v4();
+    engine.handle(play_cmd(id, 10_000)).unwrap();
+    engine.tick();
+    drain(&rx);
     engine
         .handle(EngineCommand::Fade {
             target_cue: None,
             cue_id: id,
-            param: FadeParam::Volume,
-            from: 1.0,
-            target: 0.5,
+            from: Some(1.0),
+            volume: Some(0.5),
+            opacity: None,
             duration: Duration::from_millis(1000),
             curve: FadeCurve::Linear,
+            stop_when_done: false,
         })
         .unwrap();
 
@@ -119,27 +127,31 @@ fn linear_fade_midpoint_is_the_arithmetic_mean() {
 }
 
 #[test]
-fn rate_fade_emits_rate_param_events() {
+fn volume_fade_reaches_target_value() {
     let (mut engine, rx) = setup();
     let id = Uuid::new_v4();
+    engine.handle(play_cmd(id, 10_000)).unwrap();
+    engine.tick();
+    drain(&rx);
     engine
         .handle(EngineCommand::Fade {
             target_cue: None,
             cue_id: id,
-            param: FadeParam::Rate,
-            from: 1.0,
-            target: 2.0,
+            from: Some(1.0),
+            volume: Some(2.0),
+            opacity: None,
             duration: Duration::from_millis(1000),
             curve: FadeCurve::Linear,
+            stop_when_done: false,
         })
         .unwrap();
 
     engine.advance_time(Duration::from_millis(250));
-    assert_eq!(last_fade(&drain(&rx)), Some((FadeParam::Rate, 1.25)));
+    assert_eq!(last_fade(&drain(&rx)), Some((FadeParam::Volume, 1.25)));
 
     engine.advance_time(Duration::from_millis(750));
     let events = drain(&rx);
-    assert_eq!(last_fade(&events), Some((FadeParam::Rate, 2.0)));
+    assert_eq!(last_fade(&events), Some((FadeParam::Volume, 2.0)));
     assert!(events
         .iter()
         .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)));

@@ -30,8 +30,12 @@ pub enum CueType {
     Audio,
     /// Video-Wiedergabe (Datei; Hardware-Out via GStreamer-Plugins).
     Video,
-    /// Parameter-Fade über [`Cue::duration`] (Volume/Rate/Opacity, linear/dB).
+    /// Parameter-Fade über [`Cue::duration`] (Volume und/oder Opacity des
+    /// Ziel-Cues, Kurve linear/dB; siehe docs/AUFTRAG-fade.md).
     Fade,
+    /// Crossfade: „Nach" startet mit Volume/Opacity 0 und blendet ein, während
+    /// „Von" ausblendet (Equal-Power am Ton) – ein GO, ein Übergang.
+    Crossfade,
     /// Container für Kinder-Cues (Group/QFolder).
     Group,
     /// Stoppt alle laufenden Playbacks (Blackout / Panic).
@@ -80,10 +84,11 @@ pub enum CueType {
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 18] = [
+    pub const ALL: [CueType; 19] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
+        CueType::Crossfade,
         CueType::Group,
         CueType::Stop,
         CueType::Script,
@@ -107,6 +112,7 @@ impl CueType {
             CueType::Audio => "♪",
             CueType::Video => "▶",
             CueType::Fade => "◐",
+            CueType::Crossfade => "⇄",
             CueType::Group => "▣",
             CueType::Stop => "■",
             CueType::Script => "✎",
@@ -131,6 +137,7 @@ impl CueType {
             CueType::Audio => "Audio",
             CueType::Video => "Video",
             CueType::Fade => "Fade",
+            CueType::Crossfade => "Crossfade",
             CueType::Group => "Group",
             CueType::Script => "Script",
             CueType::Stop => "Stop",
@@ -524,9 +531,24 @@ pub struct Cue {
     /// Welcher Parameter gefadet wird (Volume/Rate/Opacity).
     #[serde(default)]
     pub fade_param: FadeParam,
-    /// Fade-Kurve (linear oder dB).
+    /// Fade-Kurve (linear oder dB; gilt nur für Volume).
     #[serde(default)]
     pub fade_curve: FadeCurve,
+    /// Ziel-Lautstärke des Fades (0.0 – 1.0, None = inaktiv).
+    #[serde(default)]
+    pub fade_volume: Option<f32>,
+    /// Ziel-Deckkraft des Fades (0.0 – 1.0, None = inaktiv).
+    #[serde(default)]
+    pub fade_opacity: Option<f32>,
+    /// Stoppt das Ziel am Ende des Fades (vor dem Finished-Event).
+    #[serde(default)]
+    pub stop_when_done: bool,
+    /// Crossfade: laufender Cue, der ausblendet (None = keiner).
+    #[serde(default)]
+    pub crossfade_from: Option<Uuid>,
+    /// Crossfade: Cue, der startet (Pflicht).
+    #[serde(default)]
+    pub crossfade_to: Option<Uuid>,
     /// Loop-Modus der Wiedergabe.
     #[serde(default)]
     pub loop_mode: LoopMode,
@@ -663,6 +685,11 @@ impl Cue {
             fade_target: None,
             fade_param: FadeParam::Volume,
             fade_curve: FadeCurve::Linear,
+            fade_volume: None,
+            fade_opacity: None,
+            stop_when_done: false,
+            crossfade_from: None,
+            crossfade_to: None,
             loop_mode: LoopMode::Once,
             kill_others: false,
             hold_last_frame: false,
@@ -724,6 +751,18 @@ impl Cue {
     pub fn with_pre_wait(mut self, pre_wait: Duration) -> Self {
         self.pre_wait = pre_wait;
         self
+    }
+
+    /// Migriert alte Fade-Felder (target_volume/from_volume/fade_param) auf
+    /// die neuen (fade_volume/fade_opacity). Beim Laden aufrufen.
+    pub fn migrate_fade_fields(&mut self) {
+        if self.fade_volume.is_none() && self.fade_opacity.is_none() {
+            match self.fade_param {
+                FadeParam::Opacity => self.fade_opacity = self.target_volume,
+                _ => self.fade_volume = self.target_volume,
+            }
+        }
+        self.from_volume = None; // entfällt: Fade startet beim aktuellen Wert
     }
 
     /// Builder: Laufzeit/Fade-Dauer setzen.
@@ -1143,14 +1182,35 @@ impl Cue {
                 layer: self.layer,
                 surface: self.surface,
             }),
-            CueType::Fade => self.target_volume.map(|target| EngineCommand::Fade {
+            CueType::Fade => {
+                // Alte Felder (target_volume/fade_param) migrieren: Opacity -> fade_opacity.
+                let volume = self.fade_volume.or(self.target_volume);
+                let opacity = self.fade_opacity.or(match self.fade_param {
+                    FadeParam::Opacity => self.target_volume,
+                    _ => None,
+                });
+                if volume.is_none() && opacity.is_none() {
+                    None // stummer Fehlschlag vermeiden: kein Kommando, cue_list meldet Error
+                } else {
+                    Some(EngineCommand::Fade {
+                        cue_id: self.id,
+                        target_cue: self.fade_target,
+                        from: None, // None = aktueller Wert des Ziels (kein Sprung)
+                        volume,
+                        opacity,
+                        duration: self.duration,
+                        curve: self.fade_curve,
+                        stop_when_done: self.stop_when_done,
+                    })
+                }
+            }
+            CueType::Crossfade => Some(EngineCommand::Crossfade {
                 cue_id: self.id,
-                target_cue: self.fade_target,
-                param: self.fade_param,
-                from: self.from_volume.unwrap_or(1.0),
-                target,
+                from: self.crossfade_from,
+                to: self.crossfade_to,
+                // cue_list ersetzt to_volume durch die Lautstärke des „Nach"-Cues.
+                to_volume: 1.0,
                 duration: self.duration,
-                curve: self.fade_curve,
             }),
             CueType::Stop => Some(EngineCommand::StopAll),
             CueType::Html => self
@@ -1460,32 +1520,57 @@ mod tests {
     }
 
     #[test]
-    fn fade_cue_builds_fade_command_with_param_and_curve() {
-        let cue = Cue::new("1", "Fade", CueType::Fade)
-            .with_from_volume(0.75)
-            .with_fade_target(0.25)
+    fn fade_cue_builds_fade_command_with_volume_and_curve() {
+        let mut cue = Cue::new("1", "Fade", CueType::Fade)
             .with_duration(Duration::from_secs(2))
-            .with_fade_param(FadeParam::Volume)
             .with_fade_curve(FadeCurve::Decibel);
+        cue.fade_volume = Some(0.25); // neues Feld (alte target_volume migriert)
         match cue.build_trigger_command() {
             Some(EngineCommand::Fade {
                 cue_id,
-                target_cue: _,
-                param,
                 from,
-                target,
+                volume,
+                opacity,
                 duration,
                 curve,
+                stop_when_done,
+                ..
             }) => {
                 assert_eq!(cue_id, cue.id);
-                assert_eq!(param, FadeParam::Volume);
-                assert_eq!(from, 0.75);
-                assert_eq!(target, 0.25);
+                assert_eq!(from, None, "from=None = aktueller Wert (kein Sprung)");
+                assert_eq!(volume, Some(0.25));
+                assert_eq!(opacity, None);
                 assert_eq!(duration, Duration::from_secs(2));
                 assert_eq!(curve, FadeCurve::Decibel);
+                assert!(!stop_when_done);
             }
             other => panic!("expected Fade, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn fade_cue_without_volume_or_opacity_builds_no_command() {
+        // Stummer Fehlschlag vermeiden: kein Kommando ohne Zielwert.
+        let cue = Cue::new("1", "Fade", CueType::Fade);
+        assert_eq!(cue.build_trigger_command(), None);
+    }
+
+    #[test]
+    fn fade_cue_migrates_legacy_fields() {
+        let mut cue = Cue::new("1", "Fade", CueType::Fade);
+        cue.target_volume = Some(0.3);
+        cue.fade_param = FadeParam::Opacity;
+        cue.from_volume = Some(0.9);
+        cue.migrate_fade_fields();
+        assert_eq!(cue.fade_opacity, Some(0.3));
+        assert_eq!(cue.fade_volume, None);
+        assert_eq!(cue.from_volume, None, "from_volume entfaellt");
+        // Alt: Volume-Fade landet in fade_volume.
+        let mut cue2 = Cue::new("2", "Fade", CueType::Fade);
+        cue2.target_volume = Some(0.5);
+        cue2.fade_param = FadeParam::Volume;
+        cue2.migrate_fade_fields();
+        assert_eq!(cue2.fade_volume, Some(0.5));
     }
 
     #[test]

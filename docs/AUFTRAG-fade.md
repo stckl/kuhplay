@@ -1,6 +1,6 @@
 # Arbeitsauftrag: Fade und Crossfade
 
-**Stand:** 2026-11-02. **Status:** Auftrag, noch nicht umgesetzt.
+**Stand:** 2026-11-02. **Status:** umgesetzt (Commit siehe Git-Log), siehe „Umgesetzt“-Notizen unten.
 
 **Ziel:** Ein Fade-Cue blendet Ton und Bild eines laufenden Cues. Ein Crossfade-Cue macht mit einem GO den Übergang von einem Cue zum nächsten.
 
@@ -133,3 +133,14 @@ Für jeden Punkt ein Test, der ohne die Änderung fehlschlägt:
 - Eigene Kurven zum Zeichnen
 - Übergänge zwischen mehr als zwei Cues
 - Stop-Cue mit eigenem Ziel (`CueType::Stop` stoppt heute alles)
+
+---
+
+## Umgesetzt (2026-11-02)
+
+- **Fade-Cue:** Felder `fade_volume`/`fade_opacity` (unabhängig), `stop_when_done`, Ziel via `fade_target` (Inspector + Web-Remote). `EngineCommand::Fade.from` ist `Option<f32>` (`None` = aktueller Wert, kein Sprung). `fades`-Key ist `(Ziel-Cue, FadeParam)` – neuer Fade ersetzt laufenden; `fade_pending` zählt, Finished erst wenn alle Fades des Cues fertig. Ziel nicht laufend → sofort Finished ohne Fehler. Duration 0 → sofortiger Zielwert. Panic fadet mit `from: None` auf 0 (Volume dB + Opacity in einem Kommando). Rate-Faden entfernt (UI + Engine-Zweig). Gruppen-Ziel: cue_list fächert auf laufende Kinder auf.
+- **Crossfade-Cue:** neuer `CueType::Crossfade` (Toolbox-Gruppe „Fade“, Inspector Von/Nach). GO startet „Nach" (cue_list pusht Play + to_volume), Engine setzt Volume/Opacity 0 vor dem ersten Frame. Gleiche Stage: „Nach" oben blendet 0→1, „Von" bleibt deckend; „Nach" unten startet sofort deckend und „Von" blendet aus; verschiedene Stages blenden beide. Ton: `FadeCurve::EqualPowerUp/Down` (sin/cos). Ende: „Von" stoppen + Werte zurücksetzen, genau einmal Finished. „Von" nicht laufend → „Nach" startet trotzdem.
+- **Migration:** `Cue::migrate_fade_fields()` beim Laden (show.rs, rekursiv): `fade_param`/`target_volume` → `fade_volume`/`fade_opacity`, `from_volume` entfällt. Serde abwärtskompatibel (`#[serde(default)]`).
+- **Broken-Cues:** Fade kaputt bei fehlendem/ungueltigem Ziel, keinem Volume/Opacity, oder Parameter der am Ziel nicht existiert; Crossfade kaputt bei fehlendem/gleichem/nicht-Medien-„Nach" (src/gui/problems.rs).
+- **Tests:** `tests/fade_crossfade.rs` (9 Tests: kein Sprung, Finished genau 1×, Ersetzen, Stop-when-done, nicht-laufendes Ziel, Equal-Power bei t=0.5, alte-Show-Migration, Real-Engine, Crossfade-Command) + angepasste audio_params/timing_deterministic/gui_smoke/toolbox.
+- **Offen (bewusst):** Abnahme 6/9 am echten Stage-Canvas (deckende Videos, „Nach" oben) braucht Live-Lauf auf dem Mac; Curve-Tab (freie Kurven) und Audio-FX sind eigene Aufträge (siehe docs/FUNKTIONSUMFANG.md §5).

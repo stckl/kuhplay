@@ -861,13 +861,13 @@ fn broken_cue_shows_red_x_and_healthy_cue_does_not() {
         "kaputter Cue zeigt rotes ✕ in der Status-Spalte"
     );
 
-    // Gesunde Liste (Fade-Cues ohne Datei-Abhängigkeit): kein ✕.
+    // Gesunde Liste (Wait-Cues ohne Datei-Abhängigkeit): kein ✕.
     let mut healthy = demo_app();
     {
         let list = healthy.carts.active_mut();
         list.cues_mut().clear();
-        list.add(Cue::new("1", "Fade 1", CueType::Fade));
-        list.add(Cue::new("2", "Fade 2", CueType::Fade));
+        list.add(Cue::new("1", "Wait 1", CueType::Wait));
+        list.add(Cue::new("2", "Wait 2", CueType::Wait));
     }
     assert_eq!(healthy.broken_count(), 0);
     let out = render_table_only(&ctx, &mut healthy);
@@ -2543,7 +2543,7 @@ fn toolbar_buttons_share_one_line_and_toolbox_ends_above_inspector() {
             _ => None,
         })
         .collect();
-    assert_eq!(buttons.len(), 18, "ein Button pro Cue-Typ");
+    assert_eq!(buttons.len(), 19, "ein Button pro Cue-Typ");
     assert!(buttons.iter().all(|b| b.top() == buttons[0].top()));
 
     let toolbox = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("toolbox"))

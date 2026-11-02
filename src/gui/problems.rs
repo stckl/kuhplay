@@ -23,6 +23,58 @@ use super::app::ShowApp;
 pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
     let mut problems = Vec::new();
     match cue.cue_type {
+        CueType::Fade => {
+            // Kaputt, wenn: kein Ziel / Ziel existiert nicht / weder Volume noch
+            // Opacity aktiv / nur ein Parameter aktiv, den das Ziel nicht hat.
+            let target = cue.fade_target.and_then(|id| app.carts.find_cue_any(id));
+            if cue.fade_target.is_none() {
+                problems.push("no fade target".to_string());
+            } else if target.is_none() {
+                problems.push("fade target does not exist".to_string());
+            }
+            if cue.fade_volume.is_none() && cue.fade_opacity.is_none() {
+                problems.push("neither volume nor opacity set".to_string());
+            }
+            if let Some(t) = target {
+                let supports_volume = matches!(t.cue_type, CueType::Audio | CueType::Video);
+                let supports_opacity = matches!(
+                    t.cue_type,
+                    CueType::Video
+                        | CueType::SlideShow
+                        | CueType::Html
+                        | CueType::Text
+                        | CueType::Group
+                );
+                if cue.fade_volume.is_some() && !supports_volume {
+                    problems.push("target has no audio".to_string());
+                }
+                if cue.fade_opacity.is_some() && !supports_opacity {
+                    problems.push("target has no opacity".to_string());
+                }
+            }
+        }
+        CueType::Crossfade => {
+            // Kaputt, wenn „Nach" fehlt/nicht existiert/gleich „Von"/kein Medien-Cue.
+            let to = cue.crossfade_to.and_then(|id| app.carts.find_cue_any(id));
+            match to {
+                None => problems.push("no crossfade target ('to')".to_string()),
+                Some(t) => {
+                    if Some(t.id) == cue.crossfade_from {
+                        problems.push("'to' equals 'from'".to_string());
+                    }
+                    if !matches!(
+                        t.cue_type,
+                        CueType::Audio
+                            | CueType::Video
+                            | CueType::SlideShow
+                            | CueType::Html
+                            | CueType::Text
+                    ) {
+                        problems.push("'to' is not a media cue".to_string());
+                    }
+                }
+            }
+        }
         CueType::Audio | CueType::Video => {
             match &cue.target_path {
                 None => problems.push("no target file".to_string()),

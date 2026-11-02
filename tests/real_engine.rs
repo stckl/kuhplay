@@ -21,7 +21,7 @@ use crossbeam_channel::Receiver;
 use uuid::Uuid;
 
 use kuhplay::core::{
-    Crop, FadeCurve, FadeParam, LoopMode, Slide, SlideShow, Stage, StageGeometry, SurfaceGeometry,
+    Crop, FadeCurve, LoopMode, Slide, SlideShow, Stage, StageGeometry, SurfaceGeometry,
 };
 use kuhplay::engine::{spawn_real_engine, EngineCommand, EngineEvent, EngineHandle};
 
@@ -727,11 +727,12 @@ fn stage_canvas_reflects_opacity_fade() {
         .send(EngineCommand::Fade {
             target_cue: None,
             cue_id,
-            param: FadeParam::Opacity,
-            from: 1.0,
-            target: 0.5,
+            from: Some(1.0),
+            opacity: Some(0.5),
+            volume: None,
             duration: Duration::from_millis(400),
             curve: FadeCurve::Linear,
+            stop_when_done: false,
         })
         .expect("send fade");
 
@@ -1004,13 +1005,14 @@ fn fade_applies_to_target_cue_not_self() {
     let target_id = Uuid::new_v4();
     engine
         .send(EngineCommand::Fade {
-            cue_id: fade_id,
             target_cue: Some(target_id),
-            param: FadeParam::Opacity,
-            from: 1.0,
-            target: 0.0,
+            cue_id: fade_id,
+            from: Some(1.0),
+            opacity: Some(0.0),
+            volume: None,
             duration: Duration::from_millis(400),
             curve: FadeCurve::Linear,
+            stop_when_done: false,
         })
         .unwrap();
     let mid = wait_until(

@@ -10,8 +10,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::core::{
-    AudioRoute, FadeCurve, FadeParam, HtmlSource, LightMessage, LoopMode, MediaSlice, RouteManager,
-    SlideNav, SlideShow, Stage, SurfaceGeometry, Timecode,
+    AudioRoute, FadeCurve, HtmlSource, LightMessage, LoopMode, MediaSlice, RouteManager, SlideNav,
+    SlideShow, Stage, SurfaceGeometry, Timecode,
 };
 
 /// Eine Anweisung an die Playback-Engine.
@@ -62,17 +62,38 @@ pub enum EngineCommand {
     Stop { cue_id: Uuid },
     /// Stoppt alle laufenden Playbacks (Panic / Blackout).
     StopAll,
-    /// Fadet einen Parameter (`param`: Volume/Rate/Opacity) von `from` auf
-    /// `target` über `duration` – linear oder dB-interpoliert (`curve`).
+    /// Fadet Volume und/oder Opacity eines Ziel-Cues über `duration`
+    /// (docs/AUFTRAG-fade.md). `from: None` = aktueller Wert des Ziels
+    /// (kein Sprung). Der Fade-Cue meldet erst `Finished`, wenn alle seine
+    /// Fades fertig sind; `stop_when_done` stoppt das Ziel vorher.
     Fade {
         cue_id: Uuid,
-        /// Ziel-Cue, dessen Parameter gefadet wird (`None` = der Fade-Cue selbst).
+        /// Ziel-Cue (`None` = der Fade-Cue selbst).
         target_cue: Option<Uuid>,
-        param: FadeParam,
-        from: f32,
-        target: f32,
+        /// Startwert (None = aktueller Wert des Ziels).
+        from: Option<f32>,
+        /// Ziel-Lautstärke (None = Volume wird nicht gefadet).
+        volume: Option<f32>,
+        /// Ziel-Deckkraft (None = Opacity wird nicht gefadet).
+        opacity: Option<f32>,
         duration: Duration,
+        /// Kurve (gilt für Volume; Opacity läuft immer linear).
         curve: FadeCurve,
+        /// Stoppt das Ziel, bevor der Fade-Cue Finished meldet.
+        stop_when_done: bool,
+    },
+    /// Crossfade: startet `to` mit Volume/Opacity 0 und blendet es ein, während
+    /// `from` ausblendet (Ton mit Equal-Power: cos/sin). Am Ende wird `from`
+    /// gestoppt und zurückgesetzt. Ein Crossfade meldet genau einmal Finished.
+    Crossfade {
+        cue_id: Uuid,
+        /// Laufender Cue, der ausblendet (None = keiner → `to` startet normal).
+        from: Option<Uuid>,
+        /// Cue, der startet (Pflicht).
+        to: Option<Uuid>,
+        /// Eigene Lautstärke des `to`-Cues (Zielwert des Einblendens).
+        to_volume: f32,
+        duration: Duration,
     },
     /// Springt an eine Position im Medium (Timecode-Sprung).
     Seek { cue_id: Uuid, position: Duration },

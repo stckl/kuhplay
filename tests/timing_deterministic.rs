@@ -10,7 +10,7 @@ use std::time::Duration;
 use crossbeam_channel::{unbounded, Receiver};
 use uuid::Uuid;
 
-use kuhplay::core::{FadeCurve, FadeParam, Fps, LoopMode, Timecode};
+use kuhplay::core::{FadeCurve, Fps, LoopMode, Timecode};
 use kuhplay::engine::{EngineCommand, EngineEvent, MediaEngine, MockMediaEngine, VirtualClock};
 
 type TestEngine = MockMediaEngine<VirtualClock>;
@@ -231,14 +231,20 @@ fn fade_hits_exact_intermediate_values() {
     let (mut engine, _clock, rx) = setup();
     let id = Uuid::new_v4();
     engine
+        .handle(play_cmd(id, 10_000, 0, 0, LoopMode::Once))
+        .unwrap();
+    engine.tick();
+    drain(&rx);
+    engine
         .handle(EngineCommand::Fade {
             target_cue: None,
             cue_id: id,
-            param: FadeParam::Volume,
-            from: 0.0,
-            target: 1.0,
+            from: Some(0.0),
+            volume: Some(1.0),
+            opacity: None,
             duration: Duration::from_millis(1000),
             curve: FadeCurve::Linear,
+            stop_when_done: false,
         })
         .unwrap();
 
@@ -268,14 +274,20 @@ fn zero_duration_fade_finishes_immediately() {
     let (mut engine, _clock, rx) = setup();
     let id = Uuid::new_v4();
     engine
+        .handle(play_cmd(id, 10_000, 0, 0, LoopMode::Once))
+        .unwrap();
+    engine.tick();
+    drain(&rx);
+    engine
         .handle(EngineCommand::Fade {
             target_cue: None,
             cue_id: id,
-            param: FadeParam::Volume,
-            from: 0.2,
-            target: 0.8,
+            from: Some(0.2),
+            volume: Some(0.8),
+            opacity: None,
             duration: Duration::ZERO,
             curve: FadeCurve::Linear,
+            stop_when_done: false,
         })
         .unwrap();
     let events = drain(&rx);

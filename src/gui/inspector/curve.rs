@@ -1,48 +1,109 @@
-//! Tab „Curve" (Fade-Cues): gefadeter Parameter, Kurve sowie
-//! Start- und Zielwert.
+//! Tab „Curve" (Fade- und Crossfade-Cues, siehe docs/AUFTRAG-fade.md).
 //!
-//! KuhPlay-Fades haben kein Ziel-Cue/-Stage (der Parameter des eigenen
-//! Cues wird gefadet) – daher gibt es hier kein „Audio Levels"/„Geometry"
-//! je nach Ziel.
+//! Fade-Cue: Ziel-Cue, Zielwerte für Volume und Opacity (unabhängig aktivierbar),
+//! Stop-when-done, Kurve (gilt für Volume; Opacity läuft immer linear).
+//! Crossfade-Cue: „Von" (ausblenden) und „Nach" (startet mit 0 und blendet ein).
 
 use egui::RichText;
 
-use crate::core::{CueType, FadeCurve, FadeParam};
+use crate::core::{Cue, CueType, FadeCurve};
 
 use crate::gui::app::ShowApp;
 use crate::gui::theme;
 
 /// Tab „Curve".
 pub fn draw_curve(ui: &mut egui::Ui, app: &mut ShowApp) {
+    let choices = cue_choices(app);
     let Some(cue) = app.carts.selected_mut() else {
         ui.label(RichText::new("No cue selected").weak());
         return;
     };
-    if cue.cue_type != CueType::Fade {
-        ui.label(RichText::new("Curve only for fade cues").weak());
-        return;
-    }
-    theme::form_grid("inspector_curve_grid").show(ui, |ui| {
-        theme::field_label(ui, "Param");
-        let mut param = cue.fade_param;
-        egui::ComboBox::from_id_salt("fade_param_combo")
-            .selected_text(param.label())
-            .show_ui(ui, |ui| {
-                for p in FadeParam::ALL {
-                    ui.selectable_value(&mut param, p, p.label());
-                }
-            });
-        if param != cue.fade_param {
-            cue.fade_param = param;
+    match cue.cue_type {
+        CueType::Fade => draw_fade(ui, cue, &choices),
+        CueType::Crossfade => draw_crossfade(ui, cue, &choices),
+        _ => {
+            ui.label(RichText::new("Curve only for fade and crossfade cues").weak());
         }
+    }
+}
+
+/// Nummern aller Cues im aktiven Cart (Ziel-Auswahl) als (label, id).
+fn cue_choices(app: &ShowApp) -> Vec<(String, uuid::Uuid)> {
+    let list = app.carts.active();
+    list.cues()
+        .iter()
+        .map(|c| (format!("{} · {}", c.number, c.name), c.id))
+        .collect()
+}
+
+/// Ziel-Combo („keins" + alle Cues).
+fn target_combo(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    choices: &[(String, uuid::Uuid)],
+    target: &mut Option<uuid::Uuid>,
+) {
+    let selected = target
+        .and_then(|id| {
+            choices
+                .iter()
+                .find(|(_, cid)| *cid == id)
+                .map(|(l, _)| l.clone())
+        })
+        .unwrap_or_else(|| "— none —".to_string());
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(selected.to_string())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(target, None, "— none —");
+            for (label, id) in choices {
+                ui.selectable_value(target, Some(*id), label);
+            }
+        });
+}
+
+/// Optionaler 0..1-Zielwert: Checkbox + DragValue.
+fn optional_level(ui: &mut egui::Ui, label: &str, value: &mut Option<f32>) {
+    theme::field_label(ui, label);
+    let mut active = value.is_some();
+    if ui.checkbox(&mut active, "").changed() {
+        *value = if active {
+            Some(value.unwrap_or(1.0))
+        } else {
+            None
+        };
+    }
+    if active {
+        let mut v = value.unwrap_or(1.0);
+        if ui
+            .add(egui::DragValue::new(&mut v).speed(0.01).range(0.0..=1.0))
+            .changed()
+        {
+            *value = Some(v);
+        }
+    }
+    ui.end_row();
+}
+
+fn draw_fade(ui: &mut egui::Ui, cue: &mut Cue, choices: &[(String, uuid::Uuid)]) {
+    theme::form_grid("inspector_curve_grid").show(ui, |ui| {
+        theme::field_label(ui, "Target");
+        target_combo(ui, "fade_target_combo", choices, &mut cue.fade_target);
         ui.end_row();
 
-        theme::field_label(ui, "Curve");
+        optional_level(ui, "Volume to", &mut cue.fade_volume);
+        optional_level(ui, "Opacity to", &mut cue.fade_opacity);
+
+        theme::field_label(ui, "Stop when done");
+        ui.checkbox(&mut cue.stop_when_done, "stop target at end of fade");
+        ui.end_row();
+
+        theme::field_label(ui, "Curve (volume)");
         let mut curve = cue.fade_curve;
         egui::ComboBox::from_id_salt("fade_curve_combo")
-            .selected_text(curve.label())
+            .selected_text(curve.label().to_string())
             .show_ui(ui, |ui| {
-                for c in FadeCurve::ALL {
+                // Equal-Power-Kurven sind nur intern für Crossfades.
+                for c in [FadeCurve::Linear, FadeCurve::Decibel] {
                     ui.selectable_value(&mut curve, c, c.label());
                 }
             });
@@ -50,35 +111,17 @@ pub fn draw_curve(ui: &mut egui::Ui, app: &mut ShowApp) {
             cue.fade_curve = curve;
         }
         ui.end_row();
+    });
+}
 
-        theme::field_label(ui, "Fade from");
-        let mut from = cue.from_volume.unwrap_or(1.0);
-        if ui
-            .add(egui::DragValue::new(&mut from).speed(0.01).range(0.0..=1.0))
-            .changed()
-        {
-            cue.from_volume = Some(from);
-        }
+fn draw_crossfade(ui: &mut egui::Ui, cue: &mut Cue, choices: &[(String, uuid::Uuid)]) {
+    theme::form_grid("inspector_xf_grid").show(ui, |ui| {
+        theme::field_label(ui, "From (fades out)");
+        target_combo(ui, "xf_from_combo", choices, &mut cue.crossfade_from);
         ui.end_row();
 
-        theme::field_label(ui, "Fade to");
-        // Rate darf > 1 sein (Speed-up), Volume/Opacity bleiben 0..1.
-        let max = if cue.fade_param == FadeParam::Rate {
-            4.0
-        } else {
-            1.0
-        };
-        let mut volume = cue.target_volume.unwrap_or(1.0);
-        if ui
-            .add(
-                egui::DragValue::new(&mut volume)
-                    .speed(0.01)
-                    .range(0.0..=max),
-            )
-            .changed()
-        {
-            cue.target_volume = Some(volume);
-        }
+        theme::field_label(ui, "To (starts at 0)");
+        target_combo(ui, "xf_to_combo", choices, &mut cue.crossfade_to);
         ui.end_row();
     });
 }

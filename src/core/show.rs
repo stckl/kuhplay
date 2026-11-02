@@ -89,7 +89,21 @@ impl ShowDocument {
             .map_err(|err| ShowError::InvalidParameter(format!("deserialize show: {err}")))?;
         // Legacy-Audio-Patch (ein Ausgang je Kanal) in die Matrix migrieren.
         doc.audio_patch.migrate_legacy();
+        // Legacy-Fade-Felder (target_volume/from_volume/fade_param) migrieren.
+        for i in 0..doc.carts.cart_count() {
+            for cue in doc.carts.cart_mut(i).cues_mut() {
+                Self::migrate_cue_fade(cue);
+            }
+        }
         Ok(doc)
+    }
+
+    /// Migriert Legacy-Fade-Felder rekursiv (inkl. Gruppen-Kinder).
+    fn migrate_cue_fade(cue: &mut crate::core::Cue) {
+        cue.migrate_fade_fields();
+        for child in &mut cue.children {
+            Self::migrate_cue_fade(child);
+        }
     }
 
     /// `true`, wenn das Dokument noch alte Screens bzw. `Stage::screen`-

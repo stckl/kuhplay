@@ -345,6 +345,7 @@ impl Icon {
             CueType::Audio => Icon::Audio,
             CueType::Video => Icon::Video,
             CueType::Fade => Icon::Fade,
+            CueType::Crossfade => Icon::Fade,
             CueType::Group => Icon::Group,
             CueType::Stop => Icon::Stop,
             CueType::Script => Icon::Script,

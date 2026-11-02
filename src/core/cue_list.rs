@@ -648,6 +648,28 @@ impl CueList {
     /// Triggert einen einzelnen (Nicht-Group-)Cue.
     fn go_single(&mut self, index: usize, commands: &mut Vec<EngineCommand>) {
         {
+            // Daten vor dem &mut-Borrow sammeln (Borrow-Checker).
+            let xf_to = self.cues[index].crossfade_to;
+            let xf_to_volume = xf_to.and_then(|id| self.find_cue(id)).map(|c| c.volume);
+            let xf_to_play = xf_to
+                .and_then(|id| self.find_cue(id))
+                .and_then(|c| c.build_trigger_command());
+            let fade_group_children: Vec<Uuid> = if self.cues[index].cue_type == CueType::Fade {
+                self.cues[index]
+                    .fade_target
+                    .and_then(|id| self.find_cue(id))
+                    .filter(|t| t.cue_type == CueType::Group)
+                    .map(|t| {
+                        t.children
+                            .iter()
+                            .filter(|c| c.status.is_active())
+                            .map(|c| c.id)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let cue = &mut self.cues[index];
             // Ungültige Konfiguration (z. B. HTML-Cue ohne Quelle, Data-Cue mit
             // kaputtem JSON) → kontrollierter Error-Zustand, kein Panic.
@@ -677,8 +699,52 @@ impl CueList {
                     let _ = cue.transition_status(next);
                 }
             };
-            if let Some(command) = command {
-                commands.push(command);
+            if let Some(mut command) = command {
+                // Crossfade: „Nach"-Cue mitstarten; dessen Lautstärke ist das
+                // Einblend-Ziel (Engine setzt Volume/Opacity 0 vor dem ersten Frame).
+                if cue.cue_type == CueType::Crossfade {
+                    if let EngineCommand::Crossfade { to_volume, .. } = &mut command {
+                        if let Some(v) = xf_to_volume {
+                            *to_volume = v;
+                        }
+                    }
+                    if let Some(play) = xf_to_play {
+                        commands.push(play);
+                    }
+                }
+                // Fade auf eine Gruppe: wirkt auf alle laufenden Kinder – pro
+                // Kind ein eigenes Fade-Kommando (eigene fade_id fürs Pending-Counting).
+                let mut group_children_cmds: Vec<EngineCommand> = Vec::new();
+                if cue.cue_type == CueType::Fade && !fade_group_children.is_empty() {
+                    if let EngineCommand::Fade {
+                        from,
+                        volume,
+                        opacity,
+                        duration,
+                        curve,
+                        stop_when_done,
+                        ..
+                    } = &command
+                    {
+                        for child_id in &fade_group_children {
+                            group_children_cmds.push(EngineCommand::Fade {
+                                cue_id: uuid::Uuid::new_v4(),
+                                target_cue: Some(*child_id),
+                                from: *from,
+                                volume: *volume,
+                                opacity: *opacity,
+                                duration: *duration,
+                                curve: *curve,
+                                stop_when_done: *stop_when_done,
+                            });
+                        }
+                    }
+                }
+                if !group_children_cmds.is_empty() {
+                    commands.extend(group_children_cmds);
+                } else {
+                    commands.push(command);
+                }
                 push_volume_command(cue, commands);
             }
         }

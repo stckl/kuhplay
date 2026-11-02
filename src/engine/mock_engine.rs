@@ -334,7 +334,7 @@ impl ActivePlayback {
 
 /// Ein laufender Fade.
 struct ActiveFade {
-    param: FadeParam,
+    fade_cue: Uuid,
     from: f32,
     target: f32,
     duration: Duration,
@@ -350,7 +350,8 @@ struct ActiveFade {
 pub struct MockMediaEngine<C: Clock = RealClock> {
     clock: C,
     active: HashMap<Uuid, ActivePlayback>,
-    fades: HashMap<Uuid, ActiveFade>,
+    fades: HashMap<(Uuid, FadeParam), ActiveFade>,
+    fade_pending: HashMap<Uuid, u32>,
     /// Timecode-Chasing: Cue-ID → Timecode-In (Offset der externen Clock).
     chasing: HashMap<Uuid, Timecode>,
     /// Konfigurierte Video-Stages (Name → Stage).
@@ -372,6 +373,7 @@ impl<C: Clock> MockMediaEngine<C> {
             clock,
             active: HashMap::new(),
             fades: HashMap::new(),
+            fade_pending: HashMap::new(),
             chasing: HashMap::new(),
             stages: HashMap::new(),
             html: HashMap::new(),
@@ -736,6 +738,7 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 let stopped: Vec<Uuid> = self.active.keys().copied().collect();
                 self.active.clear();
                 self.fades.clear();
+                self.fade_pending.clear();
                 self.chasing.clear();
                 self.html.clear();
                 for cue_id in stopped {
@@ -744,35 +747,79 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
             }
             EngineCommand::Fade {
                 cue_id,
-                target_cue: _,
-                param,
+                target_cue,
                 from,
-                target,
+                volume,
+                opacity,
                 duration,
                 curve,
+                stop_when_done: _,
             } => {
-                debug!(%cue_id, ?param, from, target, ?duration, ?curve, "fade");
+                debug!(%cue_id, ?target_cue, ?from, ?volume, ?opacity, ?duration, ?curve, "fade");
+                // Mock: Ziel läuft nicht -> sofort fertig (wie Real-Engine §2.5);
+                // sonst Fades pro Parameter, Finished wenn alle fertig.
+                let target = target_cue.unwrap_or(cue_id);
+                if !self.active.contains_key(&target) {
+                    self.emit(EngineEvent::Finished { cue_id });
+                    return Ok(());
+                }
+                let mut n = 0u32;
+                for (param, to) in [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)] {
+                    let Some(to) = to else { continue };
+                    let from_v = from.unwrap_or(1.0);
+                    if duration.is_zero() {
+                        self.emit(EngineEvent::FadeProgress {
+                            cue_id,
+                            param,
+                            value: to,
+                        });
+                    } else {
+                        self.fades.insert(
+                            (target, param),
+                            ActiveFade {
+                                fade_cue: cue_id,
+                                from: from_v,
+                                target: to,
+                                duration,
+                                curve,
+                                started_at: now,
+                                last_value: from_v,
+                            },
+                        );
+                        n += 1;
+                    }
+                }
+                if duration.is_zero() || n == 0 {
+                    self.emit(EngineEvent::Finished { cue_id });
+                } else {
+                    self.fade_pending.insert(cue_id, n);
+                }
+            }
+            EngineCommand::Crossfade {
+                cue_id,
+                from,
+                to,
+                to_volume: _,
+                duration,
+            } => {
+                debug!(%cue_id, ?from, ?to, ?duration, "crossfade");
+                // Mock: Crossfade wie Fade behandeln (finished nach duration).
                 if duration.is_zero() {
-                    // Sofort-Fade.
-                    self.emit(EngineEvent::FadeProgress {
-                        cue_id,
-                        param,
-                        value: target,
-                    });
                     self.emit(EngineEvent::Finished { cue_id });
                 } else {
                     self.fades.insert(
-                        cue_id,
+                        (cue_id, FadeParam::Volume),
                         ActiveFade {
-                            param,
-                            from,
-                            target,
+                            fade_cue: cue_id,
+                            from: 0.0,
+                            target: 1.0,
                             duration,
-                            curve,
+                            curve: FadeCurve::Linear,
                             started_at: now,
-                            last_value: from,
+                            last_value: 0.0,
                         },
                     );
+                    self.fade_pending.insert(cue_id, 1);
                 }
             }
             EngineCommand::Seek { cue_id, position } => {
@@ -1111,8 +1158,9 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
         let mut out: Vec<EngineEvent> = Vec::new();
 
         // Fades: Zwischenwerte + Abschluss (linear oder dB-interpoliert).
-        let mut fades_done = Vec::new();
-        for (cue_id, fade) in &mut self.fades {
+        let mut fades_done: Vec<(Uuid, FadeParam)> = Vec::new();
+        let mut progress_events: Vec<EngineEvent> = Vec::new();
+        for ((target, param), fade) in &mut self.fades {
             let elapsed = now.saturating_sub(fade.started_at);
             let progress = if fade.duration.is_zero() {
                 1.0
@@ -1126,22 +1174,41 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                     let to_db = linear_to_db_clamped(fade.target);
                     db_to_linear(from_db + (to_db - from_db) * progress)
                 }
+                FadeCurve::EqualPowerUp => {
+                    fade.from
+                        + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).sin()
+                }
+                FadeCurve::EqualPowerDown => {
+                    fade.from
+                        + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).cos()
+                }
             };
             if value != fade.last_value {
                 fade.last_value = value;
-                out.push(EngineEvent::FadeProgress {
-                    cue_id: *cue_id,
-                    param: fade.param,
+                progress_events.push(EngineEvent::FadeProgress {
+                    cue_id: fade.fade_cue,
+                    param: *param,
                     value,
                 });
             }
             if progress >= 1.0 {
-                fades_done.push(*cue_id);
+                fades_done.push((*target, *param));
             }
         }
-        for cue_id in fades_done {
-            self.fades.remove(&cue_id);
-            out.push(EngineEvent::Finished { cue_id });
+        for ev in progress_events {
+            self.emit(ev);
+        }
+        for (target, param) in fades_done {
+            if let Some(fade) = self.fades.remove(&(target, param)) {
+                let fade_cue = fade.fade_cue;
+                if let Some(pending) = self.fade_pending.get_mut(&fade_cue) {
+                    *pending = pending.saturating_sub(1);
+                    if *pending == 0 {
+                        self.fade_pending.remove(&fade_cue);
+                        self.emit(EngineEvent::Finished { cue_id: fade_cue });
+                    }
+                }
+            }
         }
 
         // Playbacks: Pre-Wait → Laufend → Loops/Slices → Finished → Post-Wait.

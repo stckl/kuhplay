@@ -1134,30 +1134,47 @@ impl ShowApp {
         }
         self.panic_fade_ids.clear();
         let mut commands = Vec::new();
-        for (id, cue_type, volume) in active {
+        for (id, cue_type, _volume) in active {
             let params: &[FadeParam] = match cue_type {
                 CueType::Audio => &[FadeParam::Volume],
                 CueType::Video => &[FadeParam::Volume, FadeParam::Opacity],
                 CueType::SlideShow | CueType::Html | CueType::Text => &[FadeParam::Opacity],
                 _ => &[],
             };
+            // Panic: Fade auf 0 mit from=None (aktueller Wert, kein Sprung) –
+            // Volume und Opacity in einem Kommando (AUFTRAG-fade §2.10).
+            let fade_id = Uuid::new_v4();
+            self.panic_fade_ids.insert(fade_id);
+            let mut cmd = EngineCommand::Fade {
+                cue_id: fade_id,
+                target_cue: Some(id),
+                from: None,
+                volume: None,
+                opacity: None,
+                duration: self.panic_duration,
+                curve: FadeCurve::Decibel,
+                stop_when_done: false,
+            };
             for param in params {
-                let fade_id = Uuid::new_v4();
-                self.panic_fade_ids.insert(fade_id);
-                let (from, curve) = match param {
-                    FadeParam::Volume => (volume, FadeCurve::Decibel),
-                    _ => (1.0, FadeCurve::Linear),
-                };
-                commands.push(EngineCommand::Fade {
-                    cue_id: fade_id,
-                    target_cue: Some(id),
-                    param: *param,
-                    from,
-                    target: 0.0,
-                    duration: self.panic_duration,
-                    curve,
-                });
+                match param {
+                    FadeParam::Volume => {
+                        if let EngineCommand::Fade {
+                            volume: v, curve, ..
+                        } = &mut cmd
+                        {
+                            *v = Some(0.0);
+                            *curve = FadeCurve::Decibel;
+                        }
+                    }
+                    FadeParam::Opacity => {
+                        if let EngineCommand::Fade { opacity: o, .. } = &mut cmd {
+                            *o = Some(0.0);
+                        }
+                    }
+                    FadeParam::Rate => {}
+                }
             }
+            commands.push(cmd);
         }
         commands
     }
