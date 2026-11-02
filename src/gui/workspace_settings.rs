@@ -275,33 +275,15 @@ fn draw_audio(ui: &mut egui::Ui, app: &mut ShowApp) {
     };
 
     let running = app.carts.running_count() > 0;
-    let editable = !app.show_mode && !running;
-    let mut picked: Option<Option<String>> = None;
+    let _editable = !app.show_mode && !running;
     let mut refresh = false;
     theme::form_grid("settings_audio").show(ui, |ui| {
         theme::field_label(ui, "Output");
         ui.horizontal(|ui| {
-            ui.add_enabled_ui(editable, |ui| {
-                egui::ComboBox::from_id_salt("audio_output_combo")
-                    .selected_text(current_label)
-                    .width(320.0)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(current.is_none(), default_label)
-                            .clicked()
-                        {
-                            picked = Some(None);
-                        }
-                        for name in &names {
-                            if ui
-                                .selectable_label(current.as_ref() == Some(name), name)
-                                .clicked()
-                            {
-                                picked = Some(Some(name.clone()));
-                            }
-                        }
-                    });
-            });
+            ui.label(egui::RichText::new(current_label.as_str()).weak())
+                .on_hover_text(
+                    "Primary audio device (system default). Channel-to-device routing is done                      in the patch matrix below.",
+                );
             refresh = icons::button(
                 ui,
                 Icon::ArrowClockwise,
@@ -323,9 +305,6 @@ fn draw_audio(ui: &mut egui::Ui, app: &mut ShowApp) {
         .or(list_default.as_deref())
         .and_then(|name| device_infos.iter().find(|d| d.name == name))
         .map(|d| d.channels);
-    if let Some(device) = picked {
-        app.set_audio_output(device);
-    }
     if refresh {
         app.audio_devices = None;
     }
@@ -417,16 +396,46 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
         egui::ScrollArea::both()
             .max_height(ui.available_height() - 40.0)
             .show(ui, |ui| {
+                // Spalten: 1 Kanal + eine pro (Gerät, Ausgang) + Trenner nach jeder Gerätegruppe.
+                let n_sep = groups.len().saturating_sub(1);
                 egui::Grid::new("settings_audio_patch_matrix")
-                    .num_columns(columns.len() + 1 + groups.len().saturating_sub(1))
+                    .num_columns(columns.len() + 1 + n_sep)
                     .spacing(egui::vec2(4.0, 3.0))
                     .striped(true)
                     .show(ui, |ui| {
-                        // Kopfzeile 1: Gerätename über der Gruppe ( gekürzt, Tooltip = voll).
+                        // Index der Gruppe, zu der Spalte i gehört, und ob Trenner folgt.
+                        let group_of = |i: usize| -> Option<usize> {
+                            let mut acc = 0usize;
+                            for (gi, (_, n)) in groups.iter().enumerate() {
+                                if i < acc + n {
+                                    return Some(gi);
+                                }
+                                acc += n;
+                            }
+                            None
+                        };
+                        let sep_after = |i: usize| -> bool {
+                            group_of(i)
+                                .map(|gi| {
+                                    gi + 1 < groups.len() && {
+                                        let mut acc = 0usize;
+                                        for (_, n) in &groups {
+                                            acc += n;
+                                            if acc == i + 1 {
+                                                return true;
+                                            }
+                                        }
+                                        false
+                                    }
+                                })
+                                .unwrap_or(false)
+                        };
+                        // Kopfzeile 1: Gerätename über erster Spalte der Gruppe (zentriert-ish).
                         ui.label(egui::RichText::new("Channel").strong());
-                        let mut prev: Option<Option<String>> = None;
-                        for (device, _) in &columns {
-                            if prev.as_ref() != Some(device) {
+                        let mut prev_group: Option<usize> = None;
+                        for (i, (device, _)) in columns.iter().enumerate() {
+                            let gi = group_of(i).unwrap_or(0);
+                            if prev_group != Some(gi) {
                                 let full = match device {
                                     None => "System Default".to_string(),
                                     Some(n) => n.clone(),
@@ -437,49 +446,29 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
                                 if truncated {
                                     resp.on_hover_text(full);
                                 }
-                                prev = Some(device.clone());
+                                prev_group = Some(gi);
                             } else {
                                 ui.label("");
                             }
-                        }
-                        // Trenner-Spalten eigens zeichnen ist im Grid unhandlich –
-                        // stattdessen pro Gruppe letzter Spalte etwas Abstand:
-                        ui.end_row();
-                        // Kopfzeile 2: Ausgangsnummern (kurz, nie breitewirksam).
-                        ui.label(egui::RichText::new("Out").small());
-                        for (device, output) in &columns {
-                            let is_last_of_group = groups
-                                .iter()
-                                .find(|(d, _)| d == device)
-                                .map(|(_, n)| {
-                                    let start = columns
-                                        .iter()
-                                        .position(|(d2, _)| d2 == device)
-                                        .unwrap_or(0);
-                                    start + *n - 1
-                                })
-                                .map(|end| {
-                                    columns
-                                        .iter()
-                                        .position(|(d2, o2)| d2 == device && o2 == output)
-                                        .unwrap_or(0)
-                                        == end
-                                })
-                                .unwrap_or(false);
-                            let label = egui::RichText::new(output.to_string())
-                                .size(theme::size::LABEL_TEXT)
-                                .color(theme::palette::TEXT_DIM);
-                            if is_last_of_group {
-                                ui.horizontal(|ui| {
-                                    ui.label(label);
-                                    ui.add_space(10.0); // optischer Trenner (M3)
-                                });
-                            } else {
-                                ui.label(label);
+                            if sep_after(i) {
+                                ui.add(egui::Separator::default().vertical());
                             }
                         }
                         ui.end_row();
-                        // Eine Zeile pro KuhPlay-Kanal; Checkbox-Spalten schmal.
+                        // Kopfzeile 2: Ausgangsnummern.
+                        ui.label(egui::RichText::new("Out").small());
+                        for (i, (_, output)) in columns.iter().enumerate() {
+                            ui.label(
+                                egui::RichText::new(output.to_string())
+                                    .size(theme::size::LABEL_TEXT)
+                                    .color(theme::palette::TEXT_DIM),
+                            );
+                            if sep_after(i) {
+                                ui.label("");
+                            }
+                        }
+                        ui.end_row();
+                        // Eine Zeile pro KuhPlay-Kanal.
                         for (i, channel) in patch.channels.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(format!("Ch {}", i + 1)).strong());
@@ -489,7 +478,7 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
                                 );
                                 app.text_field_ids.insert(r.id);
                             });
-                            for (device, output) in &columns {
+                            for (di, (device, output)) in columns.iter().enumerate() {
                                 let mut checked = channel
                                     .outputs
                                     .iter()
@@ -507,6 +496,9 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
                                         });
                                     }
                                     changed = true;
+                                }
+                                if sep_after(di) {
+                                    ui.add(egui::Separator::default().vertical());
                                 }
                             }
                             ui.end_row();

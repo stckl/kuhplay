@@ -649,11 +649,6 @@ impl CueList {
     fn go_single(&mut self, index: usize, commands: &mut Vec<EngineCommand>) {
         {
             // Daten vor dem &mut-Borrow sammeln (Borrow-Checker).
-            let xf_to = self.cues[index].crossfade_to;
-            let xf_to_volume = xf_to.and_then(|id| self.find_cue(id)).map(|c| c.volume);
-            let xf_to_play = xf_to
-                .and_then(|id| self.find_cue(id))
-                .and_then(|c| c.build_trigger_command());
             let fade_group_children: Vec<Uuid> = if self.cues[index].cue_type == CueType::Fade {
                 self.cues[index]
                     .fade_target
@@ -699,19 +694,7 @@ impl CueList {
                     let _ = cue.transition_status(next);
                 }
             };
-            if let Some(mut command) = command {
-                // Crossfade: „Nach"-Cue mitstarten; dessen Lautstärke ist das
-                // Einblend-Ziel (Engine setzt Volume/Opacity 0 vor dem ersten Frame).
-                if cue.cue_type == CueType::Crossfade {
-                    if let EngineCommand::Crossfade { to_volume, .. } = &mut command {
-                        if let Some(v) = xf_to_volume {
-                            *to_volume = v;
-                        }
-                    }
-                    if let Some(play) = xf_to_play {
-                        commands.push(play);
-                    }
-                }
+            if let Some(command) = command {
                 // Fade auf eine Gruppe: wirkt auf alle laufenden Kinder – pro
                 // Kind ein eigenes Fade-Kommando (eigene fade_id fürs Pending-Counting).
                 let mut group_children_cmds: Vec<EngineCommand> = Vec::new();

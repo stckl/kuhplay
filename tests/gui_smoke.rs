@@ -2543,7 +2543,7 @@ fn toolbar_buttons_share_one_line_and_toolbox_ends_above_inspector() {
             _ => None,
         })
         .collect();
-    assert_eq!(buttons.len(), 19, "ein Button pro Cue-Typ");
+    assert_eq!(buttons.len(), 18, "ein Button pro Cue-Typ");
     assert!(buttons.iter().all(|b| b.top() == buttons[0].top()));
 
     let toolbox = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("toolbox"))

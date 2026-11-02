@@ -795,33 +795,6 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                     self.fade_pending.insert(cue_id, n);
                 }
             }
-            EngineCommand::Crossfade {
-                cue_id,
-                from,
-                to,
-                to_volume: _,
-                duration,
-            } => {
-                debug!(%cue_id, ?from, ?to, ?duration, "crossfade");
-                // Mock: Crossfade wie Fade behandeln (finished nach duration).
-                if duration.is_zero() {
-                    self.emit(EngineEvent::Finished { cue_id });
-                } else {
-                    self.fades.insert(
-                        (cue_id, FadeParam::Volume),
-                        ActiveFade {
-                            fade_cue: cue_id,
-                            from: 0.0,
-                            target: 1.0,
-                            duration,
-                            curve: FadeCurve::Linear,
-                            started_at: now,
-                            last_value: 0.0,
-                        },
-                    );
-                    self.fade_pending.insert(cue_id, 1);
-                }
-            }
             EngineCommand::Seek { cue_id, position } => {
                 if let Some(playback) = self.active.get_mut(&cue_id) {
                     if playback.finished_at.is_none() {

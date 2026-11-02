@@ -3084,3 +3084,69 @@ fn test_grid_toggle_reaches_the_engine_for_all_stages() {
     assert!(sent.iter().all(|s| s.grid));
     assert!(sent.iter().flat_map(|s| &s.regions).all(|r| !r.grid));
 }
+
+// ---------------------------------------------------------------------------
+// Fade-/Crossfade-Cue in der Praxis: UI-Felder -> GO -> Engine-Kommando -> Finished
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fade_cue_ui_to_go_to_finished_chain() {
+    use kuhplay::engine::spawn_mock_engine;
+    let mut app = ShowApp::new(spawn_mock_engine());
+    app.carts.active_mut().cues_mut().clear(); // Demo-Show raus
+                                               // Ziel-Cue (Audio) + Fade-Cue mit Ziel.
+    let target_id = {
+        let list = app.carts.active_mut();
+        list.add(Cue::new("1", "Musik", CueType::Audio));
+        list.cues()[0].id
+    };
+    let fade_id = {
+        let list = app.carts.active_mut();
+        list.add(Cue::new("2", "Fade out", CueType::Fade));
+        let id = list.cues()[1].id;
+        list.cues_mut()[1].fade_target = Some(target_id);
+        list.cues_mut()[1].fade_volume = Some(0.0);
+        list.cues_mut()[1].duration = Duration::from_millis(200);
+        id
+    };
+    // Ziel starten (GO auf Cue 1).
+    app.carts.active_mut().set_cursor(0);
+    let ctx = egui::Context::default();
+    run_hotkeys(
+        &mut app,
+        &ctx,
+        vec![key_event(egui::Key::Space, false)],
+        0.0,
+    );
+    app.flush_pending_go();
+    app.poll_engine_events();
+    assert_eq!(app.carts.active().cues()[0].status, CueStatus::Playing);
+    // Fade-Cue selektieren + GO.
+    app.carts.active_mut().set_cursor(1);
+    app.carts.active_mut().select_id(Some(fade_id));
+    run_hotkeys(
+        &mut app,
+        &ctx,
+        vec![key_event(egui::Key::Space, false)],
+        1.0,
+    );
+    app.flush_pending_go();
+    assert_eq!(
+        app.carts.active().cues()[1].status,
+        CueStatus::Playing,
+        "Fade läuft"
+    );
+    // Nach Fade-Dauer: Finished -> Completed (Mock-Engine, RealClock).
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        app.poll_engine_events();
+        if app.carts.active().cues()[1].status == CueStatus::Completed {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Fade-Cue hängt (kein Finished)"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

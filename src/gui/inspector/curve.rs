@@ -1,8 +1,7 @@
-//! Tab „Curve" (Fade- und Crossfade-Cues, siehe docs/AUFTRAG-fade.md).
+//! Tab „Curve" (Fade-Cues, siehe docs/AUFTRAG-fade.md).
 //!
 //! Fade-Cue: Ziel-Cue, Zielwerte für Volume und Opacity (unabhängig aktivierbar),
 //! Stop-when-done, Kurve (gilt für Volume; Opacity läuft immer linear).
-//! Crossfade-Cue: „Von" (ausblenden) und „Nach" (startet mit 0 und blendet ein).
 
 use egui::RichText;
 
@@ -20,9 +19,8 @@ pub fn draw_curve(ui: &mut egui::Ui, app: &mut ShowApp) {
     };
     match cue.cue_type {
         CueType::Fade => draw_fade(ui, cue, &choices),
-        CueType::Crossfade => draw_crossfade(ui, cue, &choices),
         _ => {
-            ui.label(RichText::new("Curve only for fade and crossfade cues").weak());
+            ui.label(RichText::new("Curve only for fade cues").weak());
         }
     }
 }
@@ -110,18 +108,6 @@ fn draw_fade(ui: &mut egui::Ui, cue: &mut Cue, choices: &[(String, uuid::Uuid)])
         if curve != cue.fade_curve {
             cue.fade_curve = curve;
         }
-        ui.end_row();
-    });
-}
-
-fn draw_crossfade(ui: &mut egui::Ui, cue: &mut Cue, choices: &[(String, uuid::Uuid)]) {
-    theme::form_grid("inspector_xf_grid").show(ui, |ui| {
-        theme::field_label(ui, "From (fades out)");
-        target_combo(ui, "xf_from_combo", choices, &mut cue.crossfade_from);
-        ui.end_row();
-
-        theme::field_label(ui, "To (starts at 0)");
-        target_combo(ui, "xf_to_combo", choices, &mut cue.crossfade_to);
         ui.end_row();
     });
 }

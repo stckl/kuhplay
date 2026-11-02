@@ -53,28 +53,6 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                 }
             }
         }
-        CueType::Crossfade => {
-            // Kaputt, wenn „Nach" fehlt/nicht existiert/gleich „Von"/kein Medien-Cue.
-            let to = cue.crossfade_to.and_then(|id| app.carts.find_cue_any(id));
-            match to {
-                None => problems.push("no crossfade target ('to')".to_string()),
-                Some(t) => {
-                    if Some(t.id) == cue.crossfade_from {
-                        problems.push("'to' equals 'from'".to_string());
-                    }
-                    if !matches!(
-                        t.cue_type,
-                        CueType::Audio
-                            | CueType::Video
-                            | CueType::SlideShow
-                            | CueType::Html
-                            | CueType::Text
-                    ) {
-                        problems.push("'to' is not a media cue".to_string());
-                    }
-                }
-            }
-        }
         CueType::Audio | CueType::Video => {
             match &cue.target_path {
                 None => problems.push("no target file".to_string()),

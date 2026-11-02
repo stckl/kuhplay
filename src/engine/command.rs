@@ -82,19 +82,6 @@ pub enum EngineCommand {
         /// Stoppt das Ziel, bevor der Fade-Cue Finished meldet.
         stop_when_done: bool,
     },
-    /// Crossfade: startet `to` mit Volume/Opacity 0 und blendet es ein, während
-    /// `from` ausblendet (Ton mit Equal-Power: cos/sin). Am Ende wird `from`
-    /// gestoppt und zurückgesetzt. Ein Crossfade meldet genau einmal Finished.
-    Crossfade {
-        cue_id: Uuid,
-        /// Laufender Cue, der ausblendet (None = keiner → `to` startet normal).
-        from: Option<Uuid>,
-        /// Cue, der startet (Pflicht).
-        to: Option<Uuid>,
-        /// Eigene Lautstärke des `to`-Cues (Zielwert des Einblendens).
-        to_volume: f32,
-        duration: Duration,
-    },
     /// Springt an eine Position im Medium (Timecode-Sprung).
     Seek { cue_id: Uuid, position: Duration },
     /// Setzt die Lautstärke (0.0 – 1.0).

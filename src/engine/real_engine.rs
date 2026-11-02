@@ -305,8 +305,6 @@ pub struct RealMediaEngine {
     fade_pending: HashMap<Uuid, u32>,
     /// Stop-when-done: Ziel-Cue pro Fade-Cue.
     fade_stop_target: HashMap<Uuid, Uuid>,
-    /// Crossfade: zu stoppende „Von"-Cue pro Crossfade-Cue (am Ende stoppen+zurücksetzen).
-    xf_from: HashMap<Uuid, Uuid>,
     /// Aktueller Lautstärke-Wert pro Cue (für from=None und Reset nach Neustart).
     current_volumes: HashMap<Uuid, f32>,
     chasing: HashMap<Uuid, Timecode>,
@@ -401,7 +399,6 @@ impl RealMediaEngine {
             fades: HashMap::new(),
             fade_pending: HashMap::new(),
             fade_stop_target: HashMap::new(),
-            xf_from: HashMap::new(),
             current_volumes: HashMap::new(),
             chasing: HashMap::new(),
             stages: HashMap::new(),
@@ -1629,7 +1626,6 @@ impl MediaEngine for RealMediaEngine {
                         .retain(|(t, _), f| *t != cue_id && f.fade_cue != cue_id);
                     self.fade_pending.remove(&cue_id);
                     self.fade_stop_target.remove(&cue_id);
-                    self.xf_from.remove(&cue_id);
                     self.current_volumes.remove(&cue_id);
                     self.frames.lock().unwrap().remove(&cue_id);
                     self.opacities.lock().unwrap().remove(&cue_id);
@@ -1653,7 +1649,6 @@ impl MediaEngine for RealMediaEngine {
                 self.fades.clear();
                 self.fade_pending.clear();
                 self.fade_stop_target.clear();
-                self.xf_from.clear();
                 self.current_volumes.clear();
                 self.chasing.clear();
                 self.html.clear();
@@ -1737,135 +1732,6 @@ impl MediaEngine for RealMediaEngine {
                             self.emit(EngineEvent::Finished { cue_id });
                         }
                     }
-                }
-            }
-            EngineCommand::Crossfade {
-                cue_id,
-                from,
-                to,
-                to_volume,
-                duration,
-            } => {
-                let Some(to_id) = to else {
-                    self.emit(EngineEvent::Error {
-                        cue_id: Some(cue_id),
-                        message: "crossfade: missing 'to' cue".to_string(),
-                    });
-                    self.emit(EngineEvent::Finished { cue_id });
-                    return Ok(());
-                };
-                // „Nach" startet mit Volume 0 und Opacity 0 – vor dem ersten
-                // gerenderten Frame (AUFTRAG §3.1).
-                self.opacities.lock().unwrap().insert(to_id, 0.0);
-                self.current_volumes.insert(to_id, 0.0);
-                if let Some(audio) = self.audio.as_mut() {
-                    audio.set_volume(to_id, 0.0);
-                }
-                let from_pb = from.and_then(|f| self.active.get(&f));
-                let to_pb = self.active.get(&to_id);
-                let same_stage = match (from_pb, to_pb) {
-                    (Some(f), Some(t)) => f.stage.is_some() && f.stage == t.stage,
-                    _ => false,
-                };
-                let to_below = match (from_pb, to_pb) {
-                    (Some(f), Some(t)) => t.layer < f.layer,
-                    _ => false,
-                };
-                let mut n = 0u32;
-                if let Some(from_id) = from.filter(|f| self.active.contains_key(f)) {
-                    // Ton: „Von" mit Equal-Power auf 0 (cos(t·π/2)).
-                    let fv = self.current_value(from_id, FadeParam::Volume);
-                    self.fades.insert(
-                        (from_id, FadeParam::Volume),
-                        ActiveFade {
-                            fade_cue: cue_id,
-                            from: fv,
-                            target: 0.0,
-                            duration,
-                            curve: FadeCurve::EqualPowerDown,
-                            started_at: now,
-                            last_value: fv,
-                        },
-                    );
-                    n += 1;
-                    // Bild: gleiche Stage + „Nach" oben → „Von" bleibt deckend
-                    // (sonst blendet „Von" auf 0, damit nicht Schwarz durchscheint).
-                    if !same_stage || to_below {
-                        let fo = self.current_value(from_id, FadeParam::Opacity);
-                        self.fades.insert(
-                            (from_id, FadeParam::Opacity),
-                            ActiveFade {
-                                fade_cue: cue_id,
-                                from: fo,
-                                target: 0.0,
-                                duration,
-                                curve: FadeCurve::Linear,
-                                started_at: now,
-                                last_value: fo,
-                            },
-                        );
-                        n += 1;
-                    }
-                    self.xf_from.insert(cue_id, from_id);
-                }
-                // „Nach" einblenden: Ton Equal-Power auf eigenen Wert (sin(t·π/2)).
-                self.fades.insert(
-                    (to_id, FadeParam::Volume),
-                    ActiveFade {
-                        fade_cue: cue_id,
-                        from: 0.0,
-                        target: to_volume,
-                        duration,
-                        curve: FadeCurve::EqualPowerUp,
-                        started_at: now,
-                        last_value: 0.0,
-                    },
-                );
-                n += 1;
-                if same_stage && !to_below {
-                    // „Nach" liegt oben: blendet linear 0→1, „Von" bleibt 1.
-                    self.fades.insert(
-                        (to_id, FadeParam::Opacity),
-                        ActiveFade {
-                            fade_cue: cue_id,
-                            from: 0.0,
-                            target: 1.0,
-                            duration,
-                            curve: FadeCurve::Linear,
-                            started_at: now,
-                            last_value: 0.0,
-                        },
-                    );
-                    n += 1;
-                } else if to_below {
-                    // „Nach" liegt unten: sofort voll deckend.
-                    self.apply_fade_value(to_id, FadeParam::Opacity, 1.0);
-                } else {
-                    // Verschiedene Stages: beide blenden unabhängig.
-                    self.fades.insert(
-                        (to_id, FadeParam::Opacity),
-                        ActiveFade {
-                            fade_cue: cue_id,
-                            from: 0.0,
-                            target: 1.0,
-                            duration,
-                            curve: FadeCurve::Linear,
-                            started_at: now,
-                            last_value: 0.0,
-                        },
-                    );
-                    n += 1;
-                }
-                self.fade_pending.insert(cue_id, n);
-                if duration.is_zero() {
-                    self.fades.retain(|_, f| f.fade_cue != cue_id);
-                    if let Some(f) = self.xf_from.remove(&cue_id) {
-                        self.stop_cue_simple(f);
-                        self.opacities.lock().unwrap().remove(&f);
-                        self.current_volumes.remove(&f);
-                    }
-                    self.fade_pending.remove(&cue_id);
-                    self.emit(EngineEvent::Finished { cue_id });
                 }
             }
             EngineCommand::Seek { cue_id, position } => {
@@ -2543,12 +2409,6 @@ impl MediaEngine for RealMediaEngine {
                         // Stop-when-done: Ziel stoppen, bevor Finished gemeldet wird.
                         if let Some(t) = self.fade_stop_target.remove(&fade_cue) {
                             self.stop_cue_simple(t);
-                        }
-                        // Crossfade-Ende: „Von" stoppen und Werte zurücksetzen.
-                        if let Some(f) = self.xf_from.remove(&fade_cue) {
-                            self.stop_cue_simple(f);
-                            self.opacities.lock().unwrap().remove(&f);
-                            self.current_volumes.remove(&f);
                         }
                         out.push(EngineEvent::Finished { cue_id: fade_cue });
                     }

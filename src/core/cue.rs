@@ -33,9 +33,6 @@ pub enum CueType {
     /// Parameter-Fade über [`Cue::duration`] (Volume und/oder Opacity des
     /// Ziel-Cues, Kurve linear/dB; siehe docs/AUFTRAG-fade.md).
     Fade,
-    /// Crossfade: „Nach" startet mit Volume/Opacity 0 und blendet ein, während
-    /// „Von" ausblendet (Equal-Power am Ton) – ein GO, ein Übergang.
-    Crossfade,
     /// Container für Kinder-Cues (Group/QFolder).
     Group,
     /// Stoppt alle laufenden Playbacks (Blackout / Panic).
@@ -84,11 +81,10 @@ pub enum CueType {
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 19] = [
+    pub const ALL: [CueType; 18] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
-        CueType::Crossfade,
         CueType::Group,
         CueType::Stop,
         CueType::Script,
@@ -112,7 +108,6 @@ impl CueType {
             CueType::Audio => "♪",
             CueType::Video => "▶",
             CueType::Fade => "◐",
-            CueType::Crossfade => "⇄",
             CueType::Group => "▣",
             CueType::Stop => "■",
             CueType::Script => "✎",
@@ -137,7 +132,6 @@ impl CueType {
             CueType::Audio => "Audio",
             CueType::Video => "Video",
             CueType::Fade => "Fade",
-            CueType::Crossfade => "Crossfade",
             CueType::Group => "Group",
             CueType::Script => "Script",
             CueType::Stop => "Stop",
@@ -543,12 +537,6 @@ pub struct Cue {
     /// Stoppt das Ziel am Ende des Fades (vor dem Finished-Event).
     #[serde(default)]
     pub stop_when_done: bool,
-    /// Crossfade: laufender Cue, der ausblendet (None = keiner).
-    #[serde(default)]
-    pub crossfade_from: Option<Uuid>,
-    /// Crossfade: Cue, der startet (Pflicht).
-    #[serde(default)]
-    pub crossfade_to: Option<Uuid>,
     /// Loop-Modus der Wiedergabe.
     #[serde(default)]
     pub loop_mode: LoopMode,
@@ -688,8 +676,6 @@ impl Cue {
             fade_volume: None,
             fade_opacity: None,
             stop_when_done: false,
-            crossfade_from: None,
-            crossfade_to: None,
             loop_mode: LoopMode::Once,
             kill_others: false,
             hold_last_frame: false,
@@ -1204,14 +1190,6 @@ impl Cue {
                     })
                 }
             }
-            CueType::Crossfade => Some(EngineCommand::Crossfade {
-                cue_id: self.id,
-                from: self.crossfade_from,
-                to: self.crossfade_to,
-                // cue_list ersetzt to_volume durch die Lautstärke des „Nach"-Cues.
-                to_volume: 1.0,
-                duration: self.duration,
-            }),
             CueType::Stop => Some(EngineCommand::StopAll),
             CueType::Html => self
                 .html_source
