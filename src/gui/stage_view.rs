@@ -1,12 +1,11 @@
-//! Stage-/Route-Ansichten: Monitor-Fenster pro Stage, Vorschau-Fenster pro
-//! Output Route und randlose Device-Ausgabe
+//! Stage-/Route-Ansichten: Monitor- und Vorschau-Fenster pro Stage und randlose
+//! Device-Ausgabe
 //! (**Stage → Region → Output Route → Device**).
 //!
 //! * **Stage-Monitor** ([`draw_stage_windows`]): `egui::Window` pro Stage
 //!   mit dem komponierten Canvas („Monitor“-Fenster).
-//! * **Route-Vorschau** ([`draw_route_previews`]): ein Fenster pro Route
-//!   (`Route: <Name>`) – für die Vorschau zählt der Inhalt, nicht der
-//!   Bildschirm. Testbild-Linien werden bei Verkleinerung nachgezeichnet.
+//! * **Stage-Vorschau** ([`draw_stage_previews`]): ein Fenster pro Stage
+//!   (`Stage: <Name>`) mit dem ganzen Canvas.
 //! * **Device-Ausgabe** ([`draw_device_outputs`]): **ein randloses Fenster
 //!   pro belegtem Display** (`KuhPlay – Output <Display-ID>`), das alle
 //!   Routen des Displays zeigt (auch Teilbereiche an ihrer Stelle) – damit
@@ -528,43 +527,64 @@ pub fn detect_displays() -> Vec<display_info::DisplayInfo> {
     display_info::DisplayInfo::all().unwrap_or_default()
 }
 
-/// Vorschau-Fenster pro Route (`Route: <Name>`): dasselbe Bild wie die
-/// Device-Ausgabe, aber als eigenes Fenster, das sich neben die App
-/// schieben lässt – die Vorschau zählt den Inhalt, nicht den Bildschirm
-/// (Arbeitsauftrag 3.3). Testbild-Linien werden nachgezeichnet, sonst
-/// verschwinden sie beim Verkleinern.
-pub fn draw_route_previews(app: &mut ShowApp, ctx: &Context) {
+/// Vorschau-Fenster pro Stage (`Stage: <Name>`): das ganze Canvas, egal auf wie
+/// viele Regionen und Ausgänge es verteilt ist. Das Fenster lässt sich neben die
+/// App schieben. Regionen mit Grid sind eingezeichnet.
+pub fn draw_stage_previews(app: &mut ShowApp, ctx: &Context) {
     if app.output_mode != OutputMode::Preview {
         return;
     }
-    let routes: Vec<OutputRoute> = app.routes.routes().to_vec();
-    for (index, route) in routes.into_iter().enumerate() {
+    let stages: Vec<crate::core::Stage> = app.stages.stages().to_vec();
+    for (index, stage) in stages.into_iter().enumerate() {
         let closed = app.closed_previews.clone();
-        if closed.lock().unwrap().contains(&route.id) {
+        let stage_id = stage.id;
+        if closed.lock().unwrap().contains(&stage_id) {
             continue;
         }
-        let aspect = route.height.max(1) as f32 / route.width.max(1) as f32;
+        let (stage_w, stage_h) = (
+            stage.geometry.width.max(1.0),
+            stage.geometry.height.max(1.0),
+        );
+        let aspect = stage_h / stage_w;
         let offset = index as f32 * 32.0;
-        let title = format!("Route: {}", route.name);
+        let title = format!("Stage: {}", stage.name);
         let builder = ViewportBuilder::default()
             .with_title(&title)
             .with_inner_size([480.0, 480.0 * aspect])
             .with_position([80.0 + offset, 80.0 + offset]);
-        let test_pattern = route.test_pattern;
-        let route_id = route.id;
-        let route_frames = app.engine.route_frames.clone();
+        let stage_frames = app.engine.stage_frames.clone();
+        let stage_name = stage.name.clone();
+        let show_grid = stage.grid;
+        let grid_regions: Vec<(egui::Rect, Color32)> = stage
+            .regions
+            .iter()
+            .filter(|region| region.grid)
+            .map(|region| {
+                let color = region
+                    .route
+                    .and_then(|id| app.routes.find(id))
+                    .map_or(Color32::WHITE, |route| {
+                        Color32::from_rgb(route.color[0], route.color[1], route.color[2])
+                    });
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(region.x, region.y),
+                    egui::vec2(region.width, region.height),
+                );
+                (rect, color)
+            })
+            .collect();
         ctx.show_viewport_deferred(
-            ViewportId::from_hash_of(("kuhplay-route-preview", route_id)),
+            ViewportId::from_hash_of(("kuhplay-stage-preview", stage_id)),
             builder,
             move |ctx, _class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
-                    closed.lock().unwrap().insert(route_id);
+                    closed.lock().unwrap().insert(stage_id);
                     return;
                 }
                 egui::CentralPanel::default()
                     .frame(egui::Frame::none().fill(Color32::BLACK))
                     .show(ctx, |ui| {
-                        // Seitenverhältnis der Route, auch im gezogenen Fenster.
+                        // Seitenverhältnis der Stage, auch im gezogenen Fenster.
                         let space = ui.available_rect_before_wrap();
                         let size = if space.width() * aspect <= space.height() {
                             egui::vec2(space.width(), space.width() * aspect)
@@ -572,14 +592,14 @@ pub fn draw_route_previews(app: &mut ShowApp, ctx: &Context) {
                             egui::vec2(space.height() / aspect, space.height())
                         };
                         let rect = egui::Rect::from_center_size(space.center(), size);
-                        let has_frame = route_frames.lock().unwrap().contains_key(&route_id);
-                        if let Some(frame) = route_frames.lock().unwrap().get(&route_id).cloned() {
+                        let frame = stage_frames.lock().unwrap().get(&stage_name).cloned();
+                        if let Some(frame) = &frame {
                             let image = ColorImage::from_rgba_unmultiplied(
                                 [frame.width as usize, frame.height as usize],
                                 &frame.rgba,
                             );
                             let tex = ui.ctx().load_texture(
-                                format!("kuhplay-route-preview-{}", route_id),
+                                format!("kuhplay-stage-preview-{stage_id}"),
                                 image,
                                 TextureOptions::LINEAR,
                             );
@@ -588,26 +608,47 @@ pub fn draw_route_previews(app: &mut ShowApp, ctx: &Context) {
                                 ScreenRotation::Deg0,
                                 tex.id(),
                             )));
-                        }
-                        // Verkleinert gingen die 1-px-Linien des Testbilds
-                        // verloren.
-                        if test_pattern {
-                            let stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
-                            ui.painter().rect_stroke(rect.shrink(0.5), 0.0, stroke);
-                            ui.painter().circle_stroke(
-                                rect.center(),
-                                rect.width().min(rect.height()) / 2.0 - 1.0,
-                                stroke,
-                            );
-                        }
-                        if !has_frame {
+                        } else {
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "No output",
+                                "No picture",
                                 egui::FontId::proportional(12.0),
                                 palette::TEXT_DIM,
                             );
+                        }
+                        let scale = rect.width() / stage_w;
+                        let to_screen = |r: egui::Rect| {
+                            egui::Rect::from_min_size(
+                                rect.min + r.min.to_vec2() * scale,
+                                r.size() * scale,
+                            )
+                        };
+                        if show_grid {
+                            let stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
+                            ui.painter().rect_stroke(rect.shrink(0.5), 0.0, stroke);
+                            for part in 1..4 {
+                                let f = part as f32 / 4.0;
+                                ui.painter().vline(
+                                    rect.left() + rect.width() * f,
+                                    rect.y_range(),
+                                    stroke,
+                                );
+                                ui.painter().hline(
+                                    rect.x_range(),
+                                    rect.top() + rect.height() * f,
+                                    stroke,
+                                );
+                            }
+                        }
+                        for (region, color) in &grid_regions {
+                            let area = to_screen(*region);
+                            let stroke = egui::Stroke::new(1.0_f32, *color);
+                            ui.painter().rect_stroke(area.shrink(0.5), 0.0, stroke);
+                            ui.painter()
+                                .line_segment([area.left_top(), area.right_bottom()], stroke);
+                            ui.painter()
+                                .line_segment([area.right_top(), area.left_bottom()], stroke);
                         }
                     });
                 ctx.request_repaint();

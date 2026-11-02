@@ -185,6 +185,8 @@ pub struct ShowApp {
     started_at: HashMap<Uuid, Instant>,
     /// Medien-Dauer pro Cue (aus `EngineEvent::Started`), Basis fürs Spulen.
     media_durations: HashMap<Uuid, Duration>,
+    /// Beendete Cues, deren letztes Bild noch steht.
+    holding: HashSet<Uuid>,
     /// Länge noch nicht gespielter Medien (für die Anzeige von Anfang an).
     probed_durations: crate::engine::media_probe::MediaDurations,
     /// Zwischenablage für „Copy/Paste Cue Properties" (JSON der Cue-Felder).
@@ -571,6 +573,7 @@ impl ShowApp {
             text_field_active: false,
             started_at: HashMap::new(),
             media_durations: HashMap::new(),
+            holding: HashSet::new(),
             probed_durations: Default::default(),
             properties_clipboard: None,
             banked: HashMap::new(),
@@ -963,7 +966,7 @@ impl ShowApp {
 
     /// Wechselt die Video-Ausgabe. „Displays" öffnet alle zugeordneten Stages
     /// Wechselt die Video-Ausgabe: `Displays` oeffnet randlose Fenster auf
-    /// allen belegten Displays, `Preview` ein Vorschau-Fenster pro Route.
+    /// allen belegten Displays, `Preview` ein Vorschau-Fenster pro Stage.
     /// Ein Wechsel schliesst von Hand geschlossene Fenster wieder auf.
     pub fn set_output_mode(&mut self, mode: OutputMode) {
         self.output_mode = mode;
@@ -1005,62 +1008,44 @@ impl ShowApp {
         match self.carts.go_chained() {
             Some(outcome) => {
                 let mut commands = outcome.commands;
-                // Kill-Switch: alle anderen laufenden Media-Cues (Video/Diashow/
-                // HTML) sofort stoppen, wenn der getriggerte Cue das verlangt.
-                let kill = self
-                    .carts
-                    .active()
-                    .cues()
-                    .get(outcome.index)
-                    .is_some_and(|c| c.kill_others);
-                if kill {
-                    let others: Vec<Uuid> = self
-                        .carts
-                        .active()
-                        .cues()
-                        .iter()
-                        .filter(|c| {
-                            c.id != self.carts.active().cues()[outcome.index].id
-                                && c.status.is_active()
-                                && matches!(
-                                    c.cue_type,
-                                    CueType::Video
-                                        | CueType::SlideShow
-                                        | CueType::Html
-                                        | CueType::Text
-                                )
-                        })
-                        .map(|c| c.id)
-                        .collect();
-                    for id in others {
-                        commands.push(EngineCommand::Stop { cue_id: id });
-                    }
+                let cues = self.carts.active().cues();
+                let Some(new_cue) = cues.get(outcome.index) else {
+                    return;
+                };
+                let is_running = |c: &Cue| c.status.is_active() || self.holding.contains(&c.id);
+                let is_picture = |c: &Cue| {
+                    matches!(
+                        c.cue_type,
+                        CueType::Video | CueType::SlideShow | CueType::Html | CueType::Text
+                    )
+                };
+                let mut stops: Vec<Uuid> = Vec::new();
+                // Kill-Switch: alle anderen laufenden Media-Cues (Video/Diashow/HTML).
+                if new_cue.kill_others {
+                    stops.extend(
+                        cues.iter()
+                            .filter(|c| c.id != new_cue.id && is_running(c) && is_picture(c))
+                            .map(|c| c.id),
+                    );
                 }
-                // „Vorherige Cues beenden": alle laufenden Cues stoppen,
-                // die in der Liste vor dem getriggerten Cue stehen.
-                let stop_prev = self
-                    .carts
-                    .active()
-                    .cues()
-                    .get(outcome.index)
-                    .is_some_and(|c| c.stop_previous);
-                if stop_prev {
-                    let prev: Vec<Uuid> = self
-                        .carts
-                        .active()
-                        .cues()
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, c)| *i < outcome.index && c.status.is_active())
-                        .map(|(_, c)| c.id)
-                        .collect();
-                    for id in prev {
-                        if !commands.iter().any(
-                            |cmd| matches!(cmd, EngineCommand::Stop { cue_id } if *cue_id == id),
-                        ) {
-                            commands.push(EngineCommand::Stop { cue_id: id });
+                // „Vorherige Cues beenden": alle laufenden Cues vor dem neuen.
+                if new_cue.stop_previous {
+                    for cue in &cues[..outcome.index] {
+                        if is_running(cue) && !stops.contains(&cue.id) {
+                            stops.push(cue.id);
                         }
                     }
+                }
+                // Die alten gehen erst, wenn das neue Bild steht, sonst wird es schwarz.
+                if !stops.is_empty() {
+                    commands.push(EngineCommand::StopWhenVisible {
+                        cue_id: new_cue.id,
+                        wait_for_picture: matches!(
+                            new_cue.cue_type,
+                            CueType::Video | CueType::SlideShow | CueType::Html
+                        ) && new_cue.stage.is_some(),
+                        stops,
+                    });
                 }
                 self.dispatch(commands);
             }
@@ -2655,11 +2640,30 @@ impl ShowApp {
             if let EngineCommand::Fade { cue_id, .. } = &command {
                 self.note_started(*cue_id);
             }
-            if let Err(err) = self.engine.send(command) {
-                self.last_error = Some(err.to_string());
-                tracing::error!("failed to dispatch engine command: {err}");
+            // Das Standbild am Ende ist eine Eigenschaft des Cues, nicht des Starts.
+            let hold = match &command {
+                EngineCommand::Play { cue_id, .. }
+                | EngineCommand::PlaySlideShow { cue_id, .. } => self
+                    .carts
+                    .find_cue_any(*cue_id)
+                    .is_some_and(|c| c.hold_last_frame)
+                    .then_some(*cue_id),
+                _ => None,
+            };
+            let mut outgoing = vec![command];
+            outgoing.extend(hold.map(|cue_id| EngineCommand::HoldLastFrame { cue_id }));
+            for command in outgoing {
+                if let Err(err) = self.engine.send(command) {
+                    self.last_error = Some(err.to_string());
+                    tracing::error!("failed to dispatch engine command: {err}");
+                }
             }
         }
+    }
+
+    /// Steht noch das letzte Bild dieses Cues?
+    pub fn is_holding(&self, id: Uuid) -> bool {
+        self.holding.contains(&id)
     }
 
     /// Audition-Mode („Workspace → Audition Mode"): Video-Cues spielen
@@ -2866,6 +2870,14 @@ impl ShowApp {
                     self.apply_status_with_follow(cue_id, CueStatus::Completed);
                     self.note_finished(cue_id);
                     self.broadcast_remote_event(RemoteEvent::CueFinished { id: cue_id });
+                    self.remote_dirty = true;
+                }
+                EngineEvent::FrameHeld { cue_id } => {
+                    self.holding.insert(cue_id);
+                    self.remote_dirty = true;
+                }
+                EngineEvent::HoldEnded { cue_id } => {
+                    self.holding.remove(&cue_id);
                     self.remote_dirty = true;
                 }
                 EngineEvent::Stopped { cue_id } => {
@@ -3466,7 +3478,7 @@ impl ShowApp {
         // Audition-Fenster (Workspace-Menü).
         audition_window::draw(ctx, self);
 
-        stage_view::draw_route_previews(self, ctx);
+        stage_view::draw_stage_previews(self, ctx);
 
         // Workspace-Settings-Fenster (Workspace → Workspace Settings;
         // Screens/Stages auf der Seite „Video").

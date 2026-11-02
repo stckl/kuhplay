@@ -1070,3 +1070,225 @@ fn video_plays_only_between_in_and_out() {
     let elapsed = started.elapsed().as_secs_f32();
     assert!((0.3..4.0).contains(&elapsed), "statt 10 s: {elapsed} s");
 }
+
+/// Testvideo: einfarbig, `seconds` lang. `None`, wenn ffmpeg fehlt.
+fn colour_clip(dir: &Path, name: &str, colour: &str, seconds: f32) -> Option<std::path::PathBuf> {
+    let path = dir.join(name);
+    let status =
+        std::process::Command::new(kuhplay::engine::video_backend::VideoBackend::ffmpeg_binary())
+            .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("color=c={colour}:s=64x64:r=25:d={seconds}"))
+            .args(["-c:v", "mpeg4"])
+            .arg(&path)
+            .status()
+            .ok()?;
+    status.success().then_some(path)
+}
+
+fn stage_clip_cmd(cue_id: Uuid, path: &Path) -> EngineCommand {
+    let mut command = play_cmd(cue_id, path, None);
+    if let EngineCommand::Play { stage, layer, .. } = &mut command {
+        *stage = Some("S".to_string());
+        *layer = 1;
+    }
+    command
+}
+
+fn stage_is_black(engine: &EngineHandle) -> bool {
+    engine
+        .stage_frames
+        .lock()
+        .unwrap()
+        .get("S")
+        .is_none_or(|f| {
+            f.rgba
+                .chunks_exact(4)
+                .all(|px| px[3] == 0 || px[..3] == [0, 0, 0])
+        })
+}
+
+fn wait_for_picture(engine: &EngineHandle) -> bool {
+    wait_until(|| !stage_is_black(engine), Duration::from_secs(5))
+}
+
+/// Kill: Der Bildschirm wird beim Wechsel nie schwarz.
+#[test]
+fn killing_previous_cues_waits_for_the_new_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(old) = colour_clip(dir.path(), "old.mp4", "red", 20.0) else {
+        return;
+    };
+    let new = colour_clip(dir.path(), "new.mp4", "blue", 20.0).unwrap();
+    let engine = spawn_real_engine();
+    let stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(64.0, 64.0));
+    engine
+        .commands
+        .send(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    let (old_id, new_id) = (Uuid::new_v4(), Uuid::new_v4());
+    engine.commands.send(stage_clip_cmd(old_id, &old)).unwrap();
+    assert!(wait_for_picture(&engine));
+
+    engine.commands.send(stage_clip_cmd(new_id, &new)).unwrap();
+    engine
+        .commands
+        .send(EngineCommand::StopWhenVisible {
+            cue_id: new_id,
+            stops: vec![old_id],
+            wait_for_picture: true,
+        })
+        .unwrap();
+    let start = std::time::Instant::now();
+    let mut blue = false;
+    while start.elapsed() < Duration::from_secs(3) {
+        assert!(
+            !stage_is_black(&engine),
+            "beim Wechsel darf nichts schwarz werden"
+        );
+        let frame = engine
+            .stage_frames
+            .lock()
+            .unwrap()
+            .get("S")
+            .cloned()
+            .unwrap();
+        blue |= frame.rgba[2] > 200 && frame.rgba[0] < 50;
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(blue, "das neue Video muss zu sehen sein");
+    let stopped = wait_for_event(
+        &engine.events,
+        |e| matches!(e, EngineEvent::Stopped { cue_id } if *cue_id == old_id),
+        Duration::from_secs(1),
+    );
+    assert!(stopped.is_some(), "das alte Video muss gestoppt sein");
+}
+
+/// Fällt der neue Cue aus, läuft der alte weiter.
+#[test]
+fn failed_new_cue_leaves_the_old_one_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(old) = colour_clip(dir.path(), "old.mp4", "red", 20.0) else {
+        return;
+    };
+    let engine = spawn_real_engine();
+    let stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(64.0, 64.0));
+    engine
+        .commands
+        .send(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    let old_id = Uuid::new_v4();
+    engine.commands.send(stage_clip_cmd(old_id, &old)).unwrap();
+    assert!(wait_for_picture(&engine));
+    engine
+        .commands
+        .send(EngineCommand::StopWhenVisible {
+            cue_id: Uuid::new_v4(),
+            stops: vec![old_id],
+            wait_for_picture: true,
+        })
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!stage_is_black(&engine), "der alte Cue läuft weiter");
+}
+
+/// Hold: Das letzte Bild bleibt nach dem Ende stehen, bis es gestoppt wird.
+#[test]
+fn hold_last_frame_stays_until_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(clip) = colour_clip(dir.path(), "clip.mp4", "green", 0.4) else {
+        return;
+    };
+    let engine = spawn_real_engine();
+    let stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(64.0, 64.0));
+    engine
+        .commands
+        .send(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    let id = Uuid::new_v4();
+    engine.commands.send(stage_clip_cmd(id, &clip)).unwrap();
+    engine
+        .commands
+        .send(EngineCommand::HoldLastFrame { cue_id: id })
+        .unwrap();
+    let held = wait_for_event(
+        &engine.events,
+        |e| matches!(e, EngineEvent::FrameHeld { cue_id } if *cue_id == id),
+        Duration::from_secs(5),
+    );
+    assert!(held.is_some(), "Ende muss gemeldet werden");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!stage_is_black(&engine), "das letzte Bild bleibt stehen");
+
+    engine
+        .commands
+        .send(EngineCommand::Stop { cue_id: id })
+        .unwrap();
+    assert!(wait_until(
+        || stage_is_black(&engine),
+        Duration::from_secs(2)
+    ));
+}
+
+/// Ohne Hold wird es am Ende schwarz wie bisher.
+#[test]
+fn without_hold_the_stage_goes_black_at_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(clip) = colour_clip(dir.path(), "clip.mp4", "green", 0.4) else {
+        return;
+    };
+    let engine = spawn_real_engine();
+    let stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(64.0, 64.0));
+    engine
+        .commands
+        .send(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    engine
+        .commands
+        .send(stage_clip_cmd(Uuid::new_v4(), &clip))
+        .unwrap();
+    assert!(wait_for_picture(&engine));
+    assert!(wait_until(
+        || stage_is_black(&engine),
+        Duration::from_secs(5)
+    ));
+}
+
+/// Ein neues Video auf demselben Layer löst das Standbild ab.
+#[test]
+fn new_video_on_the_same_layer_replaces_the_held_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(first) = colour_clip(dir.path(), "a.mp4", "green", 0.3) else {
+        return;
+    };
+    let second = colour_clip(dir.path(), "b.mp4", "blue", 20.0).unwrap();
+    let engine = spawn_real_engine();
+    let stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(64.0, 64.0));
+    engine
+        .commands
+        .send(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    let id = Uuid::new_v4();
+    engine.commands.send(stage_clip_cmd(id, &first)).unwrap();
+    engine
+        .commands
+        .send(EngineCommand::HoldLastFrame { cue_id: id })
+        .unwrap();
+    let held = wait_for_event(
+        &engine.events,
+        |e| matches!(e, EngineEvent::FrameHeld { cue_id } if *cue_id == id),
+        Duration::from_secs(5),
+    );
+    assert!(held.is_some());
+    engine
+        .commands
+        .send(stage_clip_cmd(Uuid::new_v4(), &second))
+        .unwrap();
+    let ended = wait_for_event(
+        &engine.events,
+        |e| matches!(e, EngineEvent::HoldEnded { cue_id } if *cue_id == id),
+        Duration::from_secs(5),
+    );
+    assert!(ended.is_some(), "das Standbild muss abgelöst werden");
+    assert!(!stage_is_black(&engine));
+}

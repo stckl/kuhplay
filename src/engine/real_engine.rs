@@ -227,6 +227,20 @@ fn script_settle() -> Duration {
         .unwrap_or(SCRIPT_SETTLE)
 }
 
+/// Stehendes letztes Bild eines beendeten Cues.
+struct HeldFrame {
+    stage: String,
+    layer: u32,
+    surface: SurfaceGeometry,
+    frame: Arc<VideoFrame>,
+}
+
+/// Alte Cues, die gehen, sobald der neue ein Bild zeigt.
+struct DeferredStop {
+    cue_id: Uuid,
+    stops: Vec<Uuid>,
+}
+
 struct ActiveHtml {
     #[allow(dead_code)]
     source: HtmlSource,
@@ -264,6 +278,9 @@ const WEBVIEW_SNAPSHOT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 /// Bleibt die Antwort so lange aus, gilt der Snapshot als verloren.
 const WEBVIEW_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// So lange wartet ein Kill höchstens auf das erste Bild des neuen Cues.
+const STOP_WHEN_VISIBLE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Default-Snapshot-Größe, wenn der Cue keiner Stage zugeordnet ist.
 const WEBVIEW_SNAPSHOT_DEFAULT: (u32, u32) = (1280, 720);
 
@@ -277,6 +294,12 @@ pub struct RealMediaEngine {
     events: Sender<EngineEvent>,
     started_at: Instant,
     active: HashMap<Uuid, ActivePlayback>,
+    /// Cues, deren letztes Bild am Ende stehen bleiben soll.
+    hold_on_end: HashSet<Uuid>,
+    /// Stehende letzte Bilder.
+    held: HashMap<Uuid, HeldFrame>,
+    /// Warten auf das erste Bild eines neuen Cues.
+    deferred_stops: Vec<DeferredStop>,
     fades: HashMap<Uuid, ActiveFade>,
     chasing: HashMap<Uuid, Timecode>,
     stages: HashMap<String, Stage>,
@@ -364,6 +387,9 @@ impl RealMediaEngine {
             sacn_seq: HashMap::new(),
             sacn_cid: *Uuid::new_v4().as_bytes(),
             active: HashMap::new(),
+            hold_on_end: HashSet::new(),
+            held: HashMap::new(),
+            deferred_stops: Vec::new(),
             fades: HashMap::new(),
             chasing: HashMap::new(),
             stages: HashMap::new(),
@@ -849,6 +875,25 @@ impl RealMediaEngine {
                 .unwrap_or(1.0);
             surfaces.push((*cue_id, playback.layer, surface, frame, fade_opacity));
         }
+        // Gehaltene Bilder: Startzeit 0, ein laufender Cue liegt also darüber.
+        for (cue_id, held) in &self.held {
+            if held.stage == stage_name {
+                let fade_opacity = self
+                    .opacities
+                    .lock()
+                    .unwrap()
+                    .get(cue_id)
+                    .copied()
+                    .unwrap_or(1.0);
+                surfaces.push((
+                    *cue_id,
+                    held.layer,
+                    held.surface,
+                    Some(held.frame.clone()),
+                    fade_opacity,
+                ));
+            }
+        }
         // Layer-Regel: höheres Layer liegt oben; gleiches Layer: später
         // gestarteter Cue liegt oben (neuester Content sichtbar).
         surfaces.sort_by_key(|(cue_id, layer, _, _, _)| {
@@ -860,6 +905,104 @@ impl RealMediaEngine {
             (*layer, started)
         });
         surfaces
+    }
+
+    /// Hält das letzte Bild eines gerade beendeten Cues, wenn der das will.
+    fn hold_frame_if_wanted(&mut self, cue_id: Uuid) {
+        if !self.hold_on_end.remove(&cue_id) {
+            return;
+        }
+        let Some(playback) = self.active.get(&cue_id) else {
+            return;
+        };
+        let Some(stage) = playback.stage.clone() else {
+            return;
+        };
+        if !matches!(
+            playback.kind,
+            PlaybackKind::Video | PlaybackKind::SlideShow(_)
+        ) {
+            return;
+        }
+        let Some(frame) = self.frames.lock().unwrap().get(&cue_id).cloned() else {
+            return;
+        };
+        let layer = playback.layer;
+        let surface = playback.surface.unwrap_or_else(SurfaceGeometry::fit);
+        // Ein neues Standbild ersetzt das alte auf demselben Layer.
+        let replaced: Vec<Uuid> = self
+            .held
+            .iter()
+            .filter(|(_, h)| h.stage == stage && h.layer == layer)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in replaced {
+            self.release_held(id);
+        }
+        self.compositor.mark_dirty(&stage);
+        self.held.insert(
+            cue_id,
+            HeldFrame {
+                stage,
+                layer,
+                surface,
+                frame,
+            },
+        );
+        self.emit(EngineEvent::FrameHeld { cue_id });
+    }
+
+    /// Nimmt ein gehaltenes Bild weg. `true`, wenn es eines gab.
+    fn release_held(&mut self, cue_id: Uuid) -> bool {
+        let Some(held) = self.held.remove(&cue_id) else {
+            return false;
+        };
+        self.compositor.mark_dirty(&held.stage);
+        self.opacities.lock().unwrap().remove(&cue_id);
+        self.emit(EngineEvent::HoldEnded { cue_id });
+        true
+    }
+
+    /// Ein laufendes Bild auf demselben Layer löst das Standbild ab.
+    fn release_covered_holds(&mut self) {
+        let frames = self.frames.lock().unwrap();
+        let covered: Vec<Uuid> = self
+            .held
+            .iter()
+            .filter(|(id, held)| {
+                self.active.iter().any(|(other, playback)| {
+                    other != *id
+                        && playback.finished_at.is_none()
+                        && playback.layer == held.layer
+                        && playback.stage.as_deref() == Some(held.stage.as_str())
+                        && frames.contains_key(other)
+                })
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        drop(frames);
+        for id in covered {
+            self.release_held(id);
+        }
+    }
+
+    /// Stoppt die alten Cues, sobald der neue ein Bild zeigt.
+    fn tick_deferred_stops(&mut self, now: Duration) {
+        for deferred in std::mem::take(&mut self.deferred_stops) {
+            let has_picture = self.frames.lock().unwrap().contains_key(&deferred.cue_id);
+            let playback = self.active.get(&deferred.cue_id);
+            let timed_out = playback
+                .and_then(|p| p.started_at)
+                .is_some_and(|started| now.saturating_sub(started) >= STOP_WHEN_VISIBLE_TIMEOUT);
+            if has_picture || timed_out {
+                for cue_id in deferred.stops {
+                    let _ = self.handle(EngineCommand::Stop { cue_id });
+                }
+            } else if playback.is_some() {
+                self.deferred_stops.push(deferred);
+            }
+            // Sonst ist der neue Cue ausgefallen: Die alten laufen weiter.
+        }
     }
 
     /// Kompiliert alle Stages neu, deren Surfaces sich geändert haben.
@@ -1237,6 +1380,7 @@ impl MediaEngine for RealMediaEngine {
                 surface,
             } => {
                 debug!(%cue_id, ?path, ?duration, ?stage, layer, "play (real)");
+                self.release_held(cue_id);
                 for slice in &slices {
                     if let Err(err) = slice.validate() {
                         self.emit(EngineEvent::Error {
@@ -1404,7 +1548,28 @@ impl MediaEngine for RealMediaEngine {
                     }
                 }
             }
+            EngineCommand::HoldLastFrame { cue_id } => {
+                self.hold_on_end.insert(cue_id);
+            }
+            EngineCommand::StopWhenVisible {
+                cue_id,
+                stops,
+                wait_for_picture,
+            } => {
+                if wait_for_picture {
+                    // Bild eines früheren Laufs zählt nicht.
+                    self.frames.lock().unwrap().remove(&cue_id);
+                    self.deferred_stops.push(DeferredStop { cue_id, stops });
+                } else {
+                    for cue_id in stops {
+                        let _ = self.handle(EngineCommand::Stop { cue_id });
+                    }
+                }
+            }
             EngineCommand::Stop { cue_id } => {
+                self.hold_on_end.remove(&cue_id);
+                self.release_held(cue_id);
+                self.deferred_stops.retain(|d| d.cue_id != cue_id);
                 // Script-Cue: WebView-Instanz schließen (Drop killt Subprocess).
                 self.scripts.remove(&cue_id);
                 if let Some(playback) = self.active.remove(&cue_id) {
@@ -1420,6 +1585,11 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
             EngineCommand::StopAll => {
+                self.hold_on_end.clear();
+                self.deferred_stops.clear();
+                for cue_id in self.held.keys().copied().collect::<Vec<_>>() {
+                    self.release_held(cue_id);
+                }
                 let stopped: Vec<Uuid> = self.active.keys().copied().collect();
                 let stages: Vec<String> = self
                     .active
@@ -2480,6 +2650,14 @@ impl MediaEngine for RealMediaEngine {
             }
         }
         // Natürliches Ende: Backends stoppen (Video-Bild + Audio-Voice).
+        // Erst halten: Das Stoppen löscht das Bild. Ohne Halten wird die Stage neu
+        // aufgebaut, das Bild verschwindet also wirklich.
+        for cue_id in &finished_now {
+            self.hold_frame_if_wanted(*cue_id);
+            if let Some(stage) = self.active.get(cue_id).and_then(|p| p.stage.clone()) {
+                self.compositor.mark_dirty(&stage);
+            }
+        }
         for cue_id in &finished_now {
             self.video.stop(*cue_id);
             if let Some(audio) = self.audio.as_mut() {
@@ -2497,6 +2675,9 @@ impl MediaEngine for RealMediaEngine {
             self.html.remove(&cue_id);
             self.audio_voices.lock().unwrap().remove(&cue_id);
         }
+
+        self.tick_deferred_stops(now);
+        self.release_covered_holds();
 
         // Compositor: geänderte Stages neu aufbauen.
         self.composite_dirty_stages();

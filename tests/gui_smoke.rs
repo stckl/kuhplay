@@ -1703,7 +1703,7 @@ fn audio_routing_ui_renders() {
 
 /// Vorschau-Modus: ein Fenster pro Route; Displays öffnet die Device-Ausgabe.
 #[test]
-fn output_mode_preview_shows_window_per_route() {
+fn output_mode_preview_shows_window_per_stage() {
     use kuhplay::core::{OutputRoute, Region, RouteManager};
     use kuhplay::gui::OutputMode;
     let ctx = egui::Context::default();
@@ -1721,13 +1721,13 @@ fn output_mode_preview_shows_window_per_route() {
     }
     app.configure_routes();
 
-    // Vorschau: ein Fenster pro Route (Headless: Inhalt, nicht Titel).
+    // Vorschau: ein Fenster pro Stage (Headless: Inhalt, nicht Titel).
     app.set_output_mode(OutputMode::Preview);
     let mut out = render_frame(&ctx, &mut app);
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
-    assert!(output_has_text(&out, "No output"));
+    assert!(output_has_text(&out, "No picture"));
 
     // Displays: randlose Fenster auf den belegten Displays (Route ohne
     // passendes Device zeigt nichts) – kein "No output"-Platzhalter mehr.
@@ -2055,7 +2055,7 @@ fn active_cue_row_not_clipped_and_seek_dispatches() {
 }
 
 /// Kill-Switch: Cue mit kill_others stoppt beim GO alle anderen laufenden
-/// Media-Cues (Video/Diashow/HTML) per EngineCommand::Stop.
+/// Media-Cues (Video/Diashow/HTML), sobald sein eigenes Bild steht.
 #[test]
 fn kill_others_stops_other_running_media_cues() {
     let (mut app, cmd_rx, _evt_tx) = manual_app();
@@ -2097,8 +2097,9 @@ fn kill_others_stops_other_running_media_cues() {
     app.go_now();
     let mut stopped = Vec::new();
     while let Ok(cmd) = cmd_rx.try_recv() {
-        if let EngineCommand::Stop { cue_id } = cmd {
-            stopped.push(cue_id);
+        if let EngineCommand::StopWhenVisible { cue_id, stops, .. } = cmd {
+            assert_eq!(cue_id, c3, "die alten warten auf das Bild des neuen");
+            stopped = stops;
         }
     }
     assert!(

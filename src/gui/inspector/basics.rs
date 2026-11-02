@@ -214,6 +214,14 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                     cue.cue_type,
                     CueType::Video | CueType::SlideShow | CueType::Html
                 ) {
+                    if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
+                        ui.label("At end:");
+                        ui.selectable_value(&mut cue.hold_last_frame, false, "Black");
+                        ui.selectable_value(&mut cue.hold_last_frame, true, "Hold last frame")
+                            .on_hover_text(
+                                "The last frame stays until it is stopped or replaced on its layer",
+                            );
+                    }
                     ui.checkbox(&mut cue.kill_others, "Kill others")
                         .on_hover_text(
                             "On start: stop all other running video/slideshow/HTML cues",

@@ -715,6 +715,16 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                     }
                 }
             }
+            EngineCommand::HoldLastFrame { .. } => {}
+            EngineCommand::StopWhenVisible { stops, .. } => {
+                for cue_id in stops {
+                    if self.active.remove(&cue_id).is_some() {
+                        self.chasing.remove(&cue_id);
+                        self.html.remove(&cue_id);
+                        self.emit(EngineEvent::Stopped { cue_id });
+                    }
+                }
+            }
             EngineCommand::Stop { cue_id } => {
                 if self.active.remove(&cue_id).is_some() {
                     self.chasing.remove(&cue_id);

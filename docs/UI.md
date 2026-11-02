@@ -282,7 +282,7 @@ Post-wait · Continue**.
   Ecken-Griffe ändern die Größe, Einrasten an Rand, Mittellinien und anderen
   Regionen (⌘ schaltet Einrasten aus); Pfeiltasten: 1 Pixel, ⇧ 10 Pixel, ⌥
   Größe; Blend-Bereich schraffiert, Region ohne Route gepunktet.
-* Video-Ausgabe: Off, Preview Windows (ein eigenes Fenster pro Route, frei
+* Video-Ausgabe: Off, Preview Windows (ein eigenes Fenster pro Stage, frei
   verschiebbar) oder Displays (ein randloses Fenster pro belegtem Display,
   das alle Routen des Displays zeigt, Teilbereiche an ihrer Stelle). Mit nur
   einem Display startet die App mit Preview Windows, weil ein Vollbild sonst

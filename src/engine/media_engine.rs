@@ -11,6 +11,10 @@ use super::EngineCommand;
 /// Rückmeldungen der Engine an die UI (asynchron, thread-sicher).
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
+    /// Der Cue ist zu Ende, sein letztes Bild bleibt stehen.
+    FrameHeld { cue_id: Uuid },
+    /// Das gehaltene Bild des Cues ist weg.
+    HoldEnded { cue_id: Uuid },
     /// Wiedergabe gestartet (nach Ablauf von Pre-Wait). `duration` ist die
     /// erkannte Medien-Dauer (None = unbekannt/bis EOF) – Basis fürs Spulen.
     Started {

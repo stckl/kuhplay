@@ -44,6 +44,16 @@ pub enum EngineCommand {
         layer: u32,
         surface: Option<SurfaceGeometry>,
     },
+    /// Das letzte Bild dieses Cues bleibt nach dem Ende stehen.
+    HoldLastFrame { cue_id: Uuid },
+    /// Stoppt `stops`, sobald `cue_id` sein erstes Bild zeigt, damit dazwischen
+    /// nichts schwarz wird. Ohne `wait_for_picture` sofort. Fällt `cue_id` aus,
+    /// laufen die alten Cues weiter.
+    StopWhenVisible {
+        cue_id: Uuid,
+        stops: Vec<Uuid>,
+        wait_for_picture: bool,
+    },
     /// Pausiert einen laufenden Cue.
     Pause { cue_id: Uuid },
     /// Setzt einen pausierten Cue fort.

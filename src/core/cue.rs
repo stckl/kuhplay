@@ -537,6 +537,10 @@ pub struct Cue {
     /// (Video/Diashow/HTML) stoppen.
     #[serde(default)]
     pub kill_others: bool,
+    /// Video/Diashow: Am Ende bleibt das letzte Bild stehen, bis es gestoppt oder
+    /// auf demselben Layer ersetzt wird. Sonst wird das Bild schwarz.
+    #[serde(default)]
+    pub hold_last_frame: bool,
     /// „Vorherige Cues beenden": Beim Start dieses Cues alle
     /// laufenden Cues stoppen, die in der Liste VOR diesem Cue stehen.
     #[serde(default)]
@@ -661,6 +665,7 @@ impl Cue {
             fade_curve: FadeCurve::Linear,
             loop_mode: LoopMode::Once,
             kill_others: false,
+            hold_last_frame: false,
             stop_previous: false,
             continue_mode: ContinueMode::Off,
             slices: Vec::new(),

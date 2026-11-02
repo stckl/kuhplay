@@ -29,7 +29,14 @@ use super::theme::{self, palette, size};
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     draw_transport(ui, app);
     ui.add_space(size::SPACE_MEDIUM);
-    let running = app.carts.running_count();
+    let holding = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .filter(|c| !c.status.is_active() && app.is_holding(c.id))
+        .count();
+    let running = app.carts.running_count() + holding;
     theme::tab_bar(
         ui,
         &mut app.ui.sidebar_tab,
@@ -162,6 +169,8 @@ fn draw_lists_carts(ui: &mut egui::Ui, app: &mut ShowApp) {
 /// Snapshot einer laufenden Cue-Zeile (vermeidet Borrow-Konflikte zwischen
 /// Zeilenaufbau und Engine-Kommandos).
 struct ActiveCueRow {
+    /// Beendet, das letzte Bild steht noch: Hier kann man es wegnehmen.
+    holding: bool,
     id: Uuid,
     number: String,
     name: String,
@@ -215,8 +224,10 @@ fn active_time_text(elapsed: Option<Duration>, total: Option<Duration>) -> Strin
 fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
     let mut rows: Vec<ActiveCueRow> = Vec::new();
     for cue in app.carts.active().cues() {
-        if cue.status.is_active() {
+        let holding = !cue.status.is_active() && app.is_holding(cue.id);
+        if cue.status.is_active() || holding {
             rows.push(ActiveCueRow {
+                holding,
                 id: cue.id,
                 number: cue.number.clone(),
                 name: cue.name.clone(),
@@ -255,7 +266,9 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         elapsed,
         media,
         total: runtime,
+        holding,
     } = row;
+    let holding = *holding;
     let (id, cue_type, status, duration, elapsed, media, runtime) = (
         *id, *cue_type, *status, *duration, *elapsed, *media, *runtime,
     );
@@ -346,7 +359,11 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         .on_hover_text("Stop this cue now")
         .clicked()
     {
-        let commands = app.stop_running(id);
+        let commands = if holding {
+            vec![crate::engine::EngineCommand::Stop { cue_id: id }]
+        } else {
+            app.stop_running(id)
+        };
         app.dispatch(commands);
     }
 
@@ -367,7 +384,11 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             .selectable(false)
             .truncate(),
     );
-    let time = active_time_text(elapsed, runtime);
+    let time = if holding {
+        "Holding last frame".to_string()
+    } else {
+        active_time_text(elapsed, runtime)
+    };
     let mut time_ui = child(ui, time_rect, centered);
     time_ui.add(
         egui::Label::new(
@@ -386,7 +407,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
     } else {
         media
     };
-    if let Some(total) = total.filter(|t| *t > Duration::ZERO) {
+    if let Some(total) = total.filter(|t| *t > Duration::ZERO && !holding) {
         let interact = (response.dragged() || response.clicked())
             && ui
                 .input(|i| i.pointer.interact_pos())

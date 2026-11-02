@@ -564,7 +564,7 @@ fn draw_output_mode(ui: &mut egui::Ui, app: &mut ShowApp) {
                 (
                     OutputMode::Preview,
                     "Preview Windows",
-                    "One window per screen, also reopens closed previews",
+                    "One window per stage, also reopens closed previews",
                 ),
                 (
                     OutputMode::Displays,
