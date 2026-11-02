@@ -713,6 +713,39 @@ impl ShowApp {
             self.configure_stage(stage);
         }
         self.configure_routes();
+        self.fit_regions_to_aspect();
+    }
+
+    /// Eine Region behält das Seitenverhältnis ihres Ausschnitts: Passt es auf dem
+    /// Display nicht, wird die Größe korrigiert statt das Bild zu verzerren.
+    pub fn fit_regions_to_aspect(&mut self) {
+        let displays: Vec<DisplayRefInfo> =
+            self.displays.iter().map(DisplayRefInfo::from).collect();
+        let mut changed = false;
+        for stage in self.stages.stages() {
+            for region in &stage.regions {
+                let Some(route) = region.route.and_then(|id| self.routes.find_mut(id)) else {
+                    continue;
+                };
+                let Some(crate::core::DeviceRef::Display { id, .. }) = &route.device else {
+                    continue;
+                };
+                let Some(display) = displays.iter().find(|d| d.id == *id) else {
+                    continue;
+                };
+                let device = display.pixel_size();
+                let ratio = super::stage_editor::picture_ratio(region, route.rotation);
+                if let Some(rect) =
+                    super::stage_editor::corrected_area(route.device_area, ratio, device)
+                {
+                    super::stage_editor::set_placement(route, rect, device);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.configure_routes();
+        }
     }
 
     /// Stellt sicher, dass eine Stage existiert (Default 1920×1080) und
@@ -2554,6 +2587,7 @@ impl ShowApp {
             self.configure_stage(stage);
         }
         self.configure_routes();
+        self.fit_regions_to_aspect();
         self.current_file = Some(path.to_path_buf());
         self.clear_timing();
         self.last_error = None;

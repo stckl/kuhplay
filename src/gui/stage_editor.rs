@@ -133,6 +133,7 @@ fn draw_stage_head(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
             apply_crop(region, crop, new);
         }
         app.configure_stage(updated);
+        app.fit_regions_to_aspect();
     }
     if let Some(new_name) = rename {
         app.rename_stage(&stage.name, &new_name);
@@ -236,6 +237,7 @@ fn add_region(ui: &egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
     let region_id = region.id;
     stage.regions.push(region);
     app.configure_stage(stage.clone());
+    app.fit_regions_to_aspect();
     set_selected_region(ui, &stage, region_id);
 }
 
@@ -273,6 +275,7 @@ fn add_key_region(ui: &egui::Ui, app: &mut ShowApp, stage_id: Uuid, fill_id: Uui
     let key_id = key.id;
     stage.regions.push(key);
     app.configure_stage(stage.clone());
+    app.fit_regions_to_aspect();
     set_selected_region(ui, &stage, key_id);
 }
 
@@ -321,6 +324,7 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
     let mut reg = region.clone();
     let device = device_size(&route, &displays);
     let (mut x, mut y, mut w, mut h) = route.device_area.rect(device.0, device.1);
+    let (device_rect_w, device_rect_h) = (w, h);
     let on_display = matches!(route.device, Some(DeviceRef::Display { .. }));
     let mut crop = region_crop(&region, stage_size);
     let old_crop = crop;
@@ -476,6 +480,16 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
         ui.label(egui::RichText::new(hint).small().color(palette::TEXT_DIM));
     }
 
+    // Auf dem Display bleibt das Seitenverhältnis: Breite und Höhe sind gekoppelt.
+    if on_display {
+        let ratio = picture_ratio(&region, route.rotation);
+        if w != device_rect_w {
+            h = height_for(w, ratio);
+        } else if h != device_rect_h {
+            w = width_for(h, ratio);
+        }
+    }
+
     if !region.key && ui.button("+ Add Key Region").clicked() {
         add_key_region(ui, app, stage_id, region.id);
         return;
@@ -500,7 +514,11 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
             Some(DeviceRef::Display { .. }) => device_size(&r, &displays),
             _ => (1920, 1080),
         };
-        (x, y, w, h) = (0, 0, size.0, size.1);
+        (x, y, w, h) = if matches!(r.device, Some(DeviceRef::Display { .. })) {
+            fit_rect(picture_ratio(&reg, r.rotation), size)
+        } else {
+            (0, 0, size.0, size.1)
+        };
     }
     // Die Region beginnt immer auf dem Display.
     if matches!(r.device, Some(DeviceRef::Display { .. })) {
@@ -584,6 +602,7 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
         rect: PixelRect,
         device: (u32, u32),
         origin: Pos2,
+        ratio: f32,
     }
     let selected = selected_region_id(ui, &stage);
     let letters = region_letters(&stage);
@@ -632,6 +651,7 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                 rect,
                 device: *size,
                 origin: device_rect.min,
+                ratio: picture_ratio(region, route.rotation),
             });
         }
     }
@@ -681,7 +701,7 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
             if let Some(p) = placed.iter().find(|p| p.region == region) {
                 let delta = (now - origin) / scale;
                 let rect = if resize {
-                    resized_area(start, (delta.x, delta.y), p.device)
+                    resized_area(start, (delta.x, delta.y), p.device, p.ratio)
                 } else {
                     moved_area(start, (delta.x, delta.y), p.device)
                 };
@@ -747,6 +767,29 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
         if cl + ct + cr + cb > 0.0 {
             let ghost =
                 Rect::from_min_max(area.min - egui::vec2(cl, ct), area.max + egui::vec2(cr, cb));
+            // Abgeschnittenes bleibt sichtbar: abgedunkelt und schraffiert.
+            let cut_zones = [
+                Rect::from_min_max(ghost.min, Pos2::new(area.left(), ghost.bottom())),
+                Rect::from_min_max(Pos2::new(area.right(), ghost.top()), ghost.max),
+                Rect::from_min_max(
+                    Pos2::new(area.left(), ghost.top()),
+                    Pos2::new(area.right(), area.top()),
+                ),
+                Rect::from_min_max(
+                    Pos2::new(area.left(), area.bottom()),
+                    Pos2::new(area.right(), ghost.bottom()),
+                ),
+            ];
+            for zone in cut_zones {
+                if zone.width() > 0.5 && zone.height() > 0.5 {
+                    painter.rect_filled(zone, 0.0, Color32::from_black_alpha(130));
+                    hatch(
+                        &painter.with_clip_rect(zone.intersect(map)),
+                        zone,
+                        with_alpha(color, 90),
+                    );
+                }
+            }
             painter.rect_stroke(ghost, 0.0, Stroke::new(1.0_f32, with_alpha(color, 110)));
         }
 
@@ -959,7 +1002,7 @@ fn one_to_one(region: &Region, rotation: ScreenRotation) -> PixelRect {
 }
 
 /// Setzt Lage und Größe auf dem Gerät; das Raster entspricht 1:1 diesen Pixeln.
-fn set_placement(route: &mut OutputRoute, rect: PixelRect, device: (u32, u32)) {
+pub(super) fn set_placement(route: &mut OutputRoute, rect: PixelRect, device: (u32, u32)) {
     route.device_area = area_from_rect(rect, device);
     let (w, h) = (rect.2.max(1), rect.3.max(1));
     (route.width, route.height) = if quarter_turned(route.rotation) {
@@ -1039,17 +1082,65 @@ fn moved_area(rect: PixelRect, delta: (f32, f32), device: (u32, u32)) -> PixelRe
     )
 }
 
-/// Skaliert `rect` an der Ecke unten rechts und bleibt auf dem Gerät.
-fn resized_area(rect: PixelRect, delta: (f32, f32), device: (u32, u32)) -> PixelRect {
-    let (x, y, w, h) = rect;
-    let max_w = device.0.saturating_sub(x).max(MIN_AREA_SIZE);
-    let max_h = device.1.saturating_sub(y).max(MIN_AREA_SIZE);
-    (
-        x,
-        y,
-        ((w as f32 + delta.0).round().max(0.0) as u32).clamp(MIN_AREA_SIZE, max_w),
-        ((h as f32 + delta.1).round().max(0.0) as u32).clamp(MIN_AREA_SIZE, max_h),
-    )
+/// Skaliert `rect` an der Ecke unten rechts: Das Seitenverhältnis `ratio` bleibt,
+/// die Ecke bleibt auf dem Gerät.
+fn resized_area(rect: PixelRect, delta: (f32, f32), device: (u32, u32), ratio: f32) -> PixelRect {
+    let (x, y, w, _) = rect;
+    let max_w = device.0.saturating_sub(x).max(MIN_AREA_SIZE) as f32;
+    let max_h = device.1.saturating_sub(y).max(MIN_AREA_SIZE) as f32;
+    let wanted = (w as f32 + delta.0).max((rect.3 as f32 + delta.1) * ratio);
+    let width = wanted
+        .min(max_w)
+        .min(max_h * ratio)
+        .max(MIN_AREA_SIZE as f32)
+        .round() as u32;
+    (x, y, width, height_for(width, ratio))
+}
+
+/// Seitenverhältnis (Breite/Höhe) des Bildes einer Region auf dem Gerät.
+pub(super) fn picture_ratio(region: &Region, rotation: ScreenRotation) -> f32 {
+    let (w, h) = (region.width.max(1.0), region.height.max(1.0));
+    if quarter_turned(rotation) {
+        h / w
+    } else {
+        w / h
+    }
+}
+
+fn height_for(width: u32, ratio: f32) -> u32 {
+    ((width as f32 / ratio).round() as u32).max(1)
+}
+
+fn width_for(height: u32, ratio: f32) -> u32 {
+    ((height as f32 * ratio).round() as u32).max(1)
+}
+
+/// Größtes Rechteck mit dem Verhältnis `ratio`, mittig auf dem Gerät.
+pub(super) fn fit_rect(ratio: f32, device: (u32, u32)) -> PixelRect {
+    let (w, h) = if device.0 as f32 / device.1.max(1) as f32 > ratio {
+        (width_for(device.1, ratio).min(device.0), device.1)
+    } else {
+        (device.0, height_for(device.0, ratio).min(device.1))
+    };
+    ((device.0 - w) / 2, (device.1 - h) / 2, w, h)
+}
+
+/// Lage auf dem Gerät mit dem richtigen Verhältnis; `None`, wenn sie schon stimmt.
+/// Das ganze Gerät wird zum Einpassen, sonst bleiben Position und Breite.
+pub(super) fn corrected_area(
+    area: DeviceArea,
+    ratio: f32,
+    device: (u32, u32),
+) -> Option<PixelRect> {
+    let rect = area.rect(device.0, device.1);
+    let current = rect.2 as f32 / rect.3.max(1) as f32;
+    if (current - ratio).abs() / ratio <= 0.005 {
+        return None;
+    }
+    Some(match area {
+        DeviceArea::Full => fit_rect(ratio, device),
+        DeviceArea::Part { .. } => (rect.0, rect.1, rect.2, height_for(rect.2, ratio)),
+    })
 }
 
 #[cfg(test)]
@@ -1084,19 +1175,52 @@ mod display_area_tests {
     }
 
     #[test]
-    fn resizing_keeps_position_and_limits() {
+    fn resizing_keeps_the_aspect_ratio_and_stays_on_the_device() {
+        let ratio = 800.0 / 600.0;
         let rect = (100, 100, 800, 600);
+        let (x, y, w, h) = resized_area(rect, (400.0, 0.0), DEVICE, ratio);
+        assert_eq!((x, y, w, h), (100, 100, 1200, 900));
+        // Die Höhe begrenzt: 980 frei, also 1307 breit statt bis zum Rand.
+        let (_, _, w, h) = resized_area(rect, (5000.0, 5000.0), DEVICE, ratio);
+        assert_eq!((w, h), (1307, 980));
+        let (_, _, w, _) = resized_area(rect, (-5000.0, -5000.0), DEVICE, ratio);
+        assert_eq!(w, MIN_AREA_SIZE);
+    }
+
+    #[test]
+    fn fit_centers_without_stretching() {
+        // 16:9 auf 16:10: oben und unten Rand.
+        assert_eq!(fit_rect(16.0 / 9.0, (1920, 1200)), (0, 60, 1920, 1080));
+        // 4:3 auf 16:9: links und rechts Rand.
+        assert_eq!(fit_rect(4.0 / 3.0, (1920, 1080)), (240, 0, 1440, 1080));
+        assert_eq!(fit_rect(16.0 / 9.0, DEVICE), (0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn crop_changes_the_ratio_and_rotation_turns_it() {
+        let mut region = Region::full_stage(1920.0, 1080.0);
+        apply_crop(&mut region, [0, 0, 960, 0], (1920.0, 1080.0));
+        assert!((picture_ratio(&region, ScreenRotation::Deg0) - 960.0 / 1080.0).abs() < 0.001);
+        assert!((picture_ratio(&region, ScreenRotation::Deg90) - 1080.0 / 960.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn wrong_ratios_are_corrected_and_right_ones_left_alone() {
+        let ratio = 16.0 / 9.0;
+        assert_eq!(corrected_area(DeviceArea::Full, ratio, DEVICE), None);
         assert_eq!(
-            resized_area(rect, (100.0, 50.0), DEVICE),
-            (100, 100, 900, 650)
+            corrected_area(DeviceArea::Full, ratio, (1920, 1200)),
+            Some((0, 60, 1920, 1080))
         );
+        let part = DeviceArea::Part {
+            x: 10,
+            y: 20,
+            width: 800,
+            height: 800,
+        };
         assert_eq!(
-            resized_area(rect, (5000.0, 5000.0), DEVICE),
-            (100, 100, 1820, 980)
-        );
-        assert_eq!(
-            resized_area(rect, (-5000.0, -5000.0), DEVICE),
-            (100, 100, MIN_AREA_SIZE, MIN_AREA_SIZE)
+            corrected_area(part, ratio, DEVICE),
+            Some((10, 20, 800, 450))
         );
     }
 

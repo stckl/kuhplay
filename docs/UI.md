@@ -263,10 +263,12 @@ Post-wait · Continue**.
     Cue die Stage nutzt.
   - **Stage und Regionen:** Eine Stage ist nur das Canvas mit Name und
     Auflösung. Regionen legen sie auf Displays: Ausgang, Position und Größe in
-    echten Display-Pixeln, Drehung in 90°-Schritten, Spiegelung, Crop je Seite,
+    echten Display-Pixeln (Breite und Höhe gekoppelt: Eine Region behält das
+    Seitenverhältnis ihres Ausschnitts und wird nie verzerrt, nur der Crop ändert
+    es), Drehung in 90°-Schritten, Spiegelung, Crop je Seite,
     Edge Blends, Grid. „1:1“ legt die Region in Original-Pixelgröße oben links aufs Display, auch wenn sie dann übersteht. Die
-    eine Placement-Ansicht zeigt alle Ausgänge mit Lage, Größe, Crop (Umriss der
-    ganzen Stage), Drehung (dicke Linie = Stage-Oberkante) und Edge Blends
+    eine Placement-Ansicht zeigt alle Ausgänge mit Lage, Größe, Crop (abgeschnittene Teile
+    abgedunkelt und schraffiert), Drehung (dicke Linie = Stage-Oberkante) und Edge Blends
     (schraffiert); Ziehen verschiebt, die Ecke skaliert, Doppelklick setzt 1:1.
     Der Grid-Button im Footer zeigt das Grid der ganzen Stage. Key/Fill sind zwei
     Regionen: eine normale und eine mit Signal „Key“ (Alpha als Graubild), je auf
