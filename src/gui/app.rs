@@ -886,6 +886,14 @@ impl ShowApp {
         });
     }
 
+    /// Setzt die Farbe eines Ausgangs (Regionen in Editor und Test-Grid).
+    pub fn set_route_color(&mut self, id: Uuid, color: [u8; 3]) {
+        if let Some(route) = self.routes.find_mut(id) {
+            route.color = color;
+            self.configure_routes();
+        }
+    }
+
     /// Ordnet eine Stage einem Screen zu (`None` = nur In-App-Vorschau) und
     /// meldet die Änderung an die Engine (Legacy-Screen-Modell).
     pub fn assign_stage_to_screen(&mut self, stage_name: &str, screen: Option<Uuid>) {
@@ -1681,6 +1689,9 @@ impl ShowApp {
             for region in &mut stage.regions {
                 region.grid = on;
             }
+            let _ = self.engine.send(EngineCommand::ConfigureStage {
+                stage: stage.clone(),
+            });
         }
         self.configure_routes();
         self.remote_dirty = true;

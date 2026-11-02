@@ -953,6 +953,7 @@ function pageRouting() {
       field('Scaling', select(W.options.route_scaling, route.scaling, v => set({ scaling: v }))),
       field('Rotation', select(W.options.rotation, route.rotation, v => set({ rotation: v }))),
       field('Rear Projection', check(route.rear_projection, 'Mirror horizontally', v => set({ rear_projection: v }))),
+      field('Mirror Vertical', check(route.mirror_vertical, 'Mirror vertically', v => set({ mirror_vertical: v }))),
       field('Test Pattern', h('div', { class: 'inline' }, check(route.test_pattern, 'Show', v => set({ test_pattern: v })), select(W.options.test_pattern_kind, route.test_pattern_kind, v => set({ test_pattern_kind: v })), route.test_pattern_kind === 'LedWall' ? number(route.checker_size, v => set({ checker_size: Math.max(8, Math.round(v)) })) : null)),
       h('div', { class: 'wide' }, h('button', { onclick: () => ask('Delete route ' + route.name + '?', 'Delete', () => send('remove_route', { id: route.id })) }, 'Delete Route'))));
   });

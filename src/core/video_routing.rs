@@ -144,6 +144,9 @@ pub struct OutputRoute {
     /// Horizontal spiegeln (Rückprojektion).
     #[serde(default)]
     pub rear_projection: bool,
+    /// Vertikal spiegeln (z. B. Deckenmontage).
+    #[serde(default)]
+    pub mirror_vertical: bool,
     /// Skalierung auf dem Gerät bei abweichender Auflösung.
     #[serde(default)]
     pub scaling: RouteScaling,
@@ -184,6 +187,7 @@ impl OutputRoute {
             device_area: DeviceArea::Full,
             rotation: ScreenRotation::Deg0,
             rear_projection: false,
+            mirror_vertical: false,
             scaling: RouteScaling::Fit,
             color: default_route_color(),
             test_pattern: false,

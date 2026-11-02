@@ -19,7 +19,7 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use uuid::Uuid;
 
-use crate::core::{region_letter, regions_in_reading_order, Crop, Region, StagePlacement};
+use crate::core::{region_letter, regions_in_reading_order, Crop, DeviceArea, DeviceRef, Region};
 
 use super::app::ShowApp;
 use super::theme::{self, palette};
@@ -297,6 +297,9 @@ fn draw_regions_panel(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                 .small(),
         );
     }
+    let mut new_color: Option<(Uuid, [u8; 3])> = None;
+    let mut edit_output: Option<Uuid> = None;
+    let mut new_output = false;
     for (index, region) in stage.regions.iter().enumerate() {
         let mut updated = region.clone();
         let letter = letters.get(&region.id).cloned().unwrap_or_default();
@@ -318,10 +321,27 @@ fn draw_regions_panel(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                     {
                         select = true;
                     }
-                    // Farbfleck in Routenfarbe.
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-                    ui.painter()
-                        .rect_filled(rect, 2.0, route_color.unwrap_or(palette::TEXT_DIM));
+                    // Farbfeld: Klick ändert die Farbe des Ausgangs dieser Region.
+                    match (region.route, route_color) {
+                        (Some(route_id), Some(mut color)) => {
+                            ui.spacing_mut().interact_size = egui::vec2(16.0, 16.0);
+                            let changed = egui::color_picker::color_edit_button_srgba(
+                                ui,
+                                &mut color,
+                                egui::color_picker::Alpha::Opaque,
+                            )
+                            .on_hover_text("Change the color of this output")
+                            .changed();
+                            if changed {
+                                new_color = Some((route_id, [color.r(), color.g(), color.b()]));
+                            }
+                        }
+                        _ => {
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+                            ui.painter().rect_filled(rect, 2.0, palette::TEXT_DIM);
+                        }
+                    }
                     // Route-Auswahl.
                     let current = region
                         .route
@@ -340,6 +360,11 @@ fn draw_regions_panel(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                                 );
                             }
                         });
+                    if let Some(route_id) = region.route {
+                        if ui.button("Edit Output…").clicked() {
+                            edit_output = Some(route_id);
+                        }
+                    }
                     let mut grid = updated.grid;
                     if ui.checkbox(&mut grid, "Grid").changed() {
                         updated.grid = grid;
@@ -381,6 +406,9 @@ fn draw_regions_panel(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                     add_region = Some(Some(route.id));
                 }
             }
+            if ui.selectable_label(false, "New output…").clicked() {
+                new_output = true;
+            }
             if ui.selectable_label(false, "Without route").clicked() {
                 add_region = Some(None);
             }
@@ -414,6 +442,17 @@ fn draw_regions_panel(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
     });
     ui.ctx().data_mut(|d| d.insert_temp(mode_id, draw_mode));
 
+    if new_output {
+        let route_id = app.add_route();
+        add_region = Some(Some(route_id));
+        edit_output = Some(route_id);
+    }
+    if let Some((route_id, color)) = new_color {
+        app.set_route_color(route_id, color);
+    }
+    if edit_output.is_some() {
+        app.route_editor_open = edit_output;
+    }
     if let Some(Some(route_id)) = add_region {
         // Neue Region: halbe Stage-Größe in der Mitte.
         let (sw, sh) = (stage.geometry.width, stage.geometry.height);
@@ -1229,334 +1268,284 @@ fn with_alpha(c: Color32, a: u8) -> Color32 {
 }
 
 // ------------------------------------------------------------------
-// Display-Placements: Stage direkt auf Displays legen (1:1 Gerätepixel,
-// Clipping am Displayrand, Z-Order über Stage-Layer) + Mini-Map.
+// Lage der Stage auf dem Display: Teilbereich des Ausgangs (Route). Standard ist
+// das ganze Display, Ziehen verschiebt, die Ecke skaliert.
 // ------------------------------------------------------------------
 
-/// Section „Displays“: Platzierung der Stage pro Display (in Gerätepixeln
-/// des Displays) inkl. Mini-Map, die das ganze Display UND die ganze
-/// Stagefläche (auch Überstand über den Displayrand hinaus) zeigt, plus
-/// alle anderen Stages auf demselben Display und die Z-Reihenfolge.
-fn draw_placements(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
-    theme::section_label(ui, "Displays (Stage 1:1 in Gerätepixeln, Clipping am Rand)");
-    ui.label(
-        egui::RichText::new(
-            "Display bleibt voll/native. Stage-Rechteck in Display-Pixeln; Überstand wird abgeschnitten. Z-Order über Stage-Layer.",
-        )
-        .small()
-        .color(palette::TEXT_DIM),
-    );
-    ui.add_space(theme::size::SPACE_SMALL);
+/// Kleinste Größe beim Skalieren in Gerätepixeln.
+const MIN_AREA_SIZE: u32 = 16;
 
+/// Bereich aus Rechteck: deckt er das ganze Gerät ab, ist er wieder `Full`.
+fn area_from_rect(rect: (u32, u32, u32, u32), device: (u32, u32)) -> DeviceArea {
+    let (x, y, width, height) = rect;
+    if (x, y, width, height) == (0, 0, device.0, device.1) {
+        DeviceArea::Full
+    } else {
+        DeviceArea::Part {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}
+
+/// Verschiebt `rect` um `delta` Gerätepixel und bleibt auf dem Gerät.
+fn moved_area(
+    rect: (u32, u32, u32, u32),
+    delta: (f32, f32),
+    device: (u32, u32),
+) -> (u32, u32, u32, u32) {
+    let (x, y, w, h) = rect;
+    let limit_x = device.0.saturating_sub(w) as f32;
+    let limit_y = device.1.saturating_sub(h) as f32;
+    (
+        (x as f32 + delta.0).round().clamp(0.0, limit_x) as u32,
+        (y as f32 + delta.1).round().clamp(0.0, limit_y) as u32,
+        w,
+        h,
+    )
+}
+
+/// Skaliert `rect` an der Ecke unten rechts und bleibt auf dem Gerät.
+fn resized_area(
+    rect: (u32, u32, u32, u32),
+    delta: (f32, f32),
+    device: (u32, u32),
+) -> (u32, u32, u32, u32) {
+    let (x, y, w, h) = rect;
+    let max_w = device.0.saturating_sub(x).max(MIN_AREA_SIZE);
+    let max_h = device.1.saturating_sub(y).max(MIN_AREA_SIZE);
+    (
+        x,
+        y,
+        ((w as f32 + delta.0).round().max(0.0) as u32).clamp(MIN_AREA_SIZE, max_w),
+        ((h as f32 + delta.1).round().max(0.0) as u32).clamp(MIN_AREA_SIZE, max_h),
+    )
+}
+
+/// Section „Display“: Auf welchem Display die Stage liegt, wo und wie groß.
+fn draw_placements(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
+    theme::section_label(ui, "Display");
+    let Some(stage) = app
+        .stages
+        .stages()
+        .iter()
+        .find(|s| s.id == stage_id)
+        .cloned()
+    else {
+        return;
+    };
     let displays: Vec<crate::core::DisplayRefInfo> = app
         .displays
         .iter()
         .map(crate::core::DisplayRefInfo::from)
         .collect();
-    if displays.is_empty() {
+    let selected = selected_region_id(ui, &stage);
+    let route_id = stage
+        .regions
+        .iter()
+        .find(|r| r.id == selected)
+        .and_then(|r| r.route)
+        .or_else(|| stage.regions.iter().find_map(|r| r.route));
+    let route = route_id.and_then(|id| app.routes.find(id)).cloned();
+
+    if displays.is_empty() && route.is_none() {
         ui.label(
             egui::RichText::new("No displays detected in this session").color(palette::TEXT_FAINT),
         );
         return;
     }
 
-    // Gewähltes Display für die Map (egui-Temp pro Stage).
-    let map_id = egui::Id::new(("stage_placement_map_display", stage_id));
-    let mut map_display: u32 = ui
-        .ctx()
-        .data_mut(|d| d.get_temp::<u32>(map_id).unwrap_or(0));
-    if !displays.iter().any(|d| d.id == map_display) {
-        map_display = displays[0].id;
-    }
-    let display = displays.iter().find(|d| d.id == map_display).unwrap();
-    let (disp_px_w, disp_px_h) = display.pixel_size();
-
-    // Display-Picker + Placement-Zeilen der eigenen Stage auf diesem Display.
-    ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("stage_placement_display_combo")
-            .selected_text(format!("{} ({}×{} px)", display.name, disp_px_w, disp_px_h))
-            .show_ui(ui, |ui| {
-                for d in &displays {
-                    let (w, h) = d.pixel_size();
-                    ui.selectable_value(
-                        &mut map_display,
-                        d.id,
-                        format!("{} ({}×{} px)", d.name, w, h),
-                    );
-                }
-            });
-        ui.ctx().data_mut(|d| d.insert_temp(map_id, map_display));
-
-        let has_placement = app
-            .stages
-            .stages()
+    let current = route.as_ref().and_then(|r| r.device.as_ref());
+    let current_label = match current {
+        Some(DeviceRef::Display { id, .. }) => displays
             .iter()
-            .find(|s| s.id == stage_id)
-            .map(|s| s.placements.iter().any(|p| p.display == map_display))
-            .unwrap_or(false);
-        if !has_placement && ui.button("Place stage on this display").clicked() {
-            let stage_w = app
-                .stages
-                .stages()
-                .iter()
-                .find(|s| s.id == stage_id)
-                .map(|s| s.geometry.width.max(1.0) as u32)
-                .unwrap_or(disp_px_w);
-            let stage_h = app
-                .stages
-                .stages()
-                .iter()
-                .find(|s| s.id == stage_id)
-                .map(|s| s.geometry.height.max(1.0) as u32)
-                .unwrap_or(disp_px_h);
-            if let Some(stage) = app
-                .stages
-                .stages_mut()
-                .iter_mut()
-                .find(|s| s.id == stage_id)
-            {
-                stage.placements.push(StagePlacement {
-                    display: map_display,
-                    x: 0,
-                    y: 0,
-                    width: stage_w.min(disp_px_w),
-                    height: stage_h.min(disp_px_h),
-                });
-            }
-        }
-    });
-
-    // Eigene Placement(s) auf diesem Display editieren (X/Y/W/H in Gerätepixeln).
-    let mut remove = false;
-    {
-        let stage = app
-            .stages
-            .stages()
-            .iter()
-            .find(|s| s.id == stage_id)
-            .cloned();
-        if let Some(stage) = stage {
-            if let Some(p) = stage
-                .placements
-                .iter()
-                .find(|p| p.display == map_display)
-                .cloned()
-            {
-                let mut p = p;
-                theme::form_grid("stage_placement_fields").show(ui, |ui| {
-                    theme::field_label(ui, "Position (px)");
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut p.x).speed(1.0).prefix("X "));
-                        ui.add(egui::DragValue::new(&mut p.y).speed(1.0).prefix("Y "));
-                    });
-                    ui.end_row();
-                    theme::field_label(ui, "Size (px)");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut p.width)
-                                .speed(1.0)
-                                .range(1..=30000)
-                                .prefix("W "),
-                        );
-                        ui.add(
-                            egui::DragValue::new(&mut p.height)
-                                .speed(1.0)
-                                .range(1..=30000)
-                                .prefix("H "),
-                        );
-                    });
-                    ui.end_row();
-                });
-                ui.horizontal(|ui| {
-                    if ui.small_button("Remove placement").clicked() {
-                        remove = true;
-                    }
-                    if p.x
-                        != stage
-                            .placements
-                            .iter()
-                            .find(|q| q.display == map_display)
-                            .unwrap()
-                            .x
-                        || p.y
-                            != stage
-                                .placements
-                                .iter()
-                                .find(|q| q.display == map_display)
-                                .unwrap()
-                                .y
-                        || p.width
-                            != stage
-                                .placements
-                                .iter()
-                                .find(|q| q.display == map_display)
-                                .unwrap()
-                                .width
-                        || p.height
-                            != stage
-                                .placements
-                                .iter()
-                                .find(|q| q.display == map_display)
-                                .unwrap()
-                                .height
-                    {
-                        if let Some(st) = app
-                            .stages
-                            .stages_mut()
-                            .iter_mut()
-                            .find(|s| s.id == stage_id)
-                        {
-                            if let Some(q) =
-                                st.placements.iter_mut().find(|q| q.display == map_display)
-                            {
-                                *q = p;
-                            }
-                        }
-                    }
-                });
-            }
-        }
-    }
-    if remove {
-        if let Some(st) = app
-            .stages
-            .stages_mut()
-            .iter_mut()
-            .find(|s| s.id == stage_id)
-        {
-            st.placements.retain(|q| q.display != map_display);
-        }
-    }
-
-    // Mini-Map: ganzes Display + alle Stage-Placements darauf (eigene Stage
-    // akzentuiert, andere gedimmt), Überstand über den Displayrand hinaus
-    // sichtbar (gestrichelt), Drag verschiebt die eigene Stage.
-    let map_size = egui::vec2(ui.available_width(), 190.0);
-    let (map_rect, map_response) = ui.allocate_exact_size(map_size, Sense::click_and_drag());
-    let painter = ui.painter();
-    painter.rect_filled(map_rect, 4.0, palette::PANEL);
-
-    // Transform Display-Pixel → Map: fit + zentriert.
-    let scale = (map_rect.width() - 24.0) / disp_px_w.max(1) as f32;
-    let scale = scale.min((map_rect.height() - 24.0) / disp_px_h.max(1) as f32);
-    let disp_rect = Rect::from_center_size(
-        map_rect.center(),
-        egui::vec2(disp_px_w as f32 * scale, disp_px_h as f32 * scale),
-    );
-    let to_map = |x: i32, y: i32| -> Pos2 {
-        egui::pos2(
-            disp_rect.min.x + x as f32 * scale,
-            disp_rect.min.y + y as f32 * scale,
-        )
+            .find(|d| d.id == *id)
+            .map(|d| format!("{} ({}×{} px)", d.name, d.pixel_size().0, d.pixel_size().1))
+            .unwrap_or_else(|| format!("{} (missing)", current.map_or("", |c| c.label()))),
+        Some(other) => other.label().to_string(),
+        None => "Choose a display…".to_string(),
     };
-    // Display-Fläche (volle native Größe).
-    painter.rect_filled(disp_rect, 2.0, Color32::from_rgb(16, 20, 28));
-    painter.rect_stroke(disp_rect, 2.0, Stroke::new(1.5_f32, palette::ACCENT));
-    painter.text(
-        disp_rect.left_bottom() + egui::vec2(4.0, -4.0),
-        Align2::LEFT_BOTTOM,
-        format!(
-            "{} {}×{} px (Display, voll)",
-            display.name, disp_px_w, disp_px_h
-        ),
-        FontId::proportional(10.0),
-        palette::TEXT_DIM,
-    );
-
-    // Alle Placements aller Stages auf diesem Display, Z-Order = Layer.
-    let mut on_display: Vec<(i32, String, StagePlacement, bool)> = Vec::new();
-    for st in app.stages.stages() {
-        for p in &st.placements {
-            if p.display == map_display {
-                on_display.push((st.layer, st.name.clone(), p.clone(), st.id == stage_id));
-            }
-        }
-    }
-    // Unten zuerst malen: Layer aufsteigend, gleicher Layer: Name absteigend.
-    on_display.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
-    let mut drag_delta: Option<(i32, i32)> = None;
-    for (layer, name, p, is_own) in &on_display {
-        let full = Rect::from_min_size(
-            to_map(p.x, p.y),
-            egui::vec2(p.width as f32 * scale, p.height as f32 * scale),
-        );
-        let color = if *is_own {
-            palette::ACCENT
-        } else {
-            palette::TEXT_DIM
-        };
-        // Überstand außerhalb des Displays: gestrichelt (sichtbar in der Map).
-        painter.rect_stroke(full, 2.0, Stroke::new(1.0_f32, color));
-        // Sichtbarer Teil (Schnitt mit Display) füllen.
-        if let Some((cx, cy, cw, ch)) = p.clip_to_display(disp_px_w, disp_px_h) {
-            let vis = Rect::from_min_size(
-                to_map(cx, cy),
-                egui::vec2(cw as f32 * scale, ch as f32 * scale),
-            );
-            painter.rect_filled(
-                vis,
-                2.0,
-                theme::with_alpha(color, if *is_own { 70 } else { 30 }),
-            );
-        }
-        painter.text(
-            full.left_top() + egui::vec2(3.0, 2.0),
-            Align2::LEFT_TOP,
-            format!(
-                "{name} (L{layer}) {}×{} @ {},{}",
-                p.width, p.height, p.x, p.y
-            ),
-            FontId::proportional(10.0),
-            color,
-        );
-        // Drag auf eigener Stage verschiebt sie (relativ via drag_delta).
-        if *is_own && map_response.dragged() {
-            let press_origin = ui.ctx().input(|i| i.pointer.press_origin());
-            if press_origin.is_some_and(|o| full.contains(o)) {
-                let d = map_response.drag_delta();
-                drag_delta = Some(((d.x / scale).round() as i32, (d.y / scale).round() as i32));
-            }
-        }
-    }
-    if let Some((dx, dy)) = drag_delta {
-        if dx != 0 || dy != 0 {
-            if let Some(st) = app
-                .stages
-                .stages_mut()
-                .iter_mut()
-                .find(|s| s.id == stage_id)
-            {
-                if let Some(p) = st.placements.iter_mut().find(|q| q.display == map_display) {
-                    p.x += dx;
-                    p.y += dy;
+    let mut pick: Option<crate::core::DisplayRefInfo> = None;
+    egui::ComboBox::from_id_salt(("stage_display_combo", stage_id))
+        .selected_text(current_label)
+        .show_ui(ui, |ui| {
+            for d in &displays {
+                let (w, h) = d.pixel_size();
+                if ui
+                    .selectable_label(false, format!("{} ({}×{} px)", d.name, w, h))
+                    .clicked()
+                {
+                    pick = Some(d.clone());
                 }
             }
+        });
+    if let Some(display) = pick {
+        match route_id {
+            Some(id) => {
+                if let Some(r) = app.routes.find_mut(id) {
+                    let (w, h) = display.pixel_size();
+                    r.width = w;
+                    r.height = h;
+                    r.device = Some(DeviceRef::Display {
+                        id: display.id,
+                        name: display.name.clone(),
+                        width: display.width,
+                        height: display.height,
+                    });
+                    r.device_area = DeviceArea::Full;
+                }
+                app.configure_routes();
+            }
+            None => {
+                let id = app.add_route_for_display(&display);
+                let mut updated = stage.clone();
+                if let Some(region) = updated.regions.first_mut() {
+                    region.route = Some(id);
+                } else {
+                    let mut region = Region::full_stage(
+                        updated.geometry.width.max(1.0),
+                        updated.geometry.height.max(1.0),
+                    );
+                    region.route = Some(id);
+                    updated.regions.push(region);
+                }
+                app.configure_stage(updated);
+            }
         }
+        return;
     }
-    map_response.on_hover_text("Map: Display (voll) + Stage-Rechtecke. Ziehen verschiebt die eigene Stage (in Display-Pixeln). Überstand über den Displayrand ist gestrichelt sichtbar und wird abgeschnitten.");
 
-    // Z-Reihenfolge auf diesem Display (oben zuerst).
-    if !on_display.is_empty() {
-        let mut z: Vec<&(i32, String, StagePlacement, bool)> = on_display.iter().collect();
-        z.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    if !stage.placements.is_empty() {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("Z-Order (oben zuerst):")
+                egui::RichText::new("This show still has an old extra placement")
                     .small()
                     .color(palette::TEXT_DIM),
             );
-            for (i, (_, name, _, is_own)) in z.iter().enumerate() {
-                ui.label(
-                    egui::RichText::new(format!("{}{}", if i > 0 { " ‹ " } else { "" }, name))
-                        .small()
-                        .color(if *is_own {
-                            palette::ACCENT
-                        } else {
-                            palette::TEXT
-                        }),
-                );
+            if ui.small_button("Remove").clicked() {
+                let mut updated = stage.clone();
+                updated.placements.clear();
+                app.configure_stage(updated);
             }
         });
+    }
+
+    let Some(route) = route else {
+        return;
+    };
+    let mut updated = route.clone();
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut updated.rear_projection, "Mirror horizontally");
+        ui.checkbox(&mut updated.mirror_vertical, "Mirror vertically");
+    });
+
+    // Lage und Größe gibt es nur auf Displays; eine Karte gibt ihr Format vor.
+    let display = match &route.device {
+        Some(DeviceRef::Display { id, .. }) => displays.iter().find(|d| d.id == *id),
+        _ => None,
+    };
+    if let Some(display) = display {
+        let device = display.pixel_size();
+        let (mut x, mut y, mut w, mut h) = route.device_area.rect(device.0, device.1);
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut x)
+                    .range(0..=device.0)
+                    .prefix("X "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut y)
+                    .range(0..=device.1)
+                    .prefix("Y "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut w)
+                    .range(MIN_AREA_SIZE..=device.0.max(MIN_AREA_SIZE))
+                    .prefix("W "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut h)
+                    .range(MIN_AREA_SIZE..=device.1.max(MIN_AREA_SIZE))
+                    .prefix("H "),
+            );
+            if ui.button("Fill Display").clicked() {
+                (x, y, w, h) = (0, 0, device.0, device.1);
+            }
+        });
+        let mut rect = (x, y, w, h);
+
+        let (map_rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), 190.0),
+            Sense::click_and_drag(),
+        );
+        let scale = ((map_rect.width() - 8.0) / device.0.max(1) as f32)
+            .min((map_rect.height() - 8.0) / device.1.max(1) as f32)
+            .max(0.0001);
+        let display_rect = Rect::from_center_size(
+            map_rect.center(),
+            egui::vec2(device.0 as f32 * scale, device.1 as f32 * scale),
+        );
+        let to_screen = |r: (u32, u32, u32, u32)| {
+            Rect::from_min_size(
+                display_rect.min + egui::vec2(r.0 as f32 * scale, r.1 as f32 * scale),
+                egui::vec2(r.2 as f32 * scale, r.3 as f32 * scale),
+            )
+        };
+        let handle_of = |r: Rect| Rect::from_center_size(r.max, egui::vec2(14.0, 14.0));
+
+        // Ziehen rechnet vom Startzustand aus, damit nichts durch Runden wegdriftet.
+        let drag_id = egui::Id::new(("stage_display_drag", stage_id));
+        let pointer = ui.input(|i| (i.pointer.press_origin(), i.pointer.interact_pos()));
+        if response.drag_started() {
+            if let (Some(origin), _) = pointer {
+                let resize = handle_of(to_screen(rect)).contains(origin);
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(drag_id, (rect, resize)));
+            }
+        }
+        if response.dragged() {
+            let start = ui
+                .ctx()
+                .data_mut(|d| d.get_temp::<((u32, u32, u32, u32), bool)>(drag_id));
+            if let (Some((start, resize)), (Some(origin), Some(now))) = (start, pointer) {
+                let delta = (now - origin) / scale;
+                rect = if resize {
+                    resized_area(start, (delta.x, delta.y), device)
+                } else {
+                    moved_area(start, (delta.x, delta.y), device)
+                };
+            }
+        }
+        if response.double_clicked() {
+            rect = (0, 0, device.0, device.1);
+        }
+        updated.device_area = area_from_rect(rect, device);
+
+        let painter = ui.painter();
+        painter.rect_filled(display_rect, 2.0, palette::LIST_BG);
+        painter.rect_stroke(display_rect, 2.0, Stroke::new(1.0_f32, palette::BORDER));
+        let color = Color32::from_rgb(route.color[0], route.color[1], route.color[2]);
+        let area = to_screen(rect);
+        painter.rect_filled(area, 2.0, with_alpha(color, 70));
+        painter.rect_stroke(area, 2.0, Stroke::new(1.5_f32, color));
+        painter.rect_filled(handle_of(area).shrink(3.0), 1.0, color);
+        painter.text(
+            area.center(),
+            Align2::CENTER_CENTER,
+            &stage.name,
+            FontId::proportional(12.0),
+            palette::TEXT,
+        );
+        response.on_hover_text("Drag to move, drag the corner to resize, double-click to fill");
+    }
+
+    if updated != route {
+        if let Some(r) = app.routes.find_mut(route.id) {
+            *r = updated;
+        }
+        app.configure_routes();
     }
 }
 
@@ -1585,7 +1574,7 @@ fn draw_key_fill(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
         .collect();
     if routes.is_empty() {
         ui.label(
-            egui::RichText::new("No routes yet – create one in Settings → Video → Output Routing")
+            egui::RichText::new("No outputs yet – add a region with a new output first")
                 .color(palette::TEXT_FAINT),
         );
         return;
@@ -1712,5 +1701,54 @@ fn draw_key_fill(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                 r.alpha = false;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod display_area_tests {
+    use super::*;
+
+    const DEVICE: (u32, u32) = (1920, 1080);
+
+    #[test]
+    fn whole_device_is_full_and_anything_else_a_part() {
+        assert_eq!(area_from_rect((0, 0, 1920, 1080), DEVICE), DeviceArea::Full);
+        assert!(matches!(
+            area_from_rect((10, 0, 1000, 1080), DEVICE),
+            DeviceArea::Part { x: 10, .. }
+        ));
+    }
+
+    #[test]
+    fn moving_stays_on_the_device() {
+        let rect = (100, 100, 800, 600);
+        assert_eq!(moved_area(rect, (50.0, -20.0), DEVICE), (150, 80, 800, 600));
+        assert_eq!(moved_area(rect, (-500.0, -500.0), DEVICE), (0, 0, 800, 600));
+        assert_eq!(
+            moved_area(rect, (5000.0, 5000.0), DEVICE),
+            (1120, 480, 800, 600)
+        );
+        // Der volle Bereich hat keinen Spielraum.
+        assert_eq!(
+            moved_area((0, 0, 1920, 1080), (50.0, 50.0), DEVICE),
+            (0, 0, 1920, 1080)
+        );
+    }
+
+    #[test]
+    fn resizing_keeps_position_and_limits() {
+        let rect = (100, 100, 800, 600);
+        assert_eq!(
+            resized_area(rect, (100.0, 50.0), DEVICE),
+            (100, 100, 900, 650)
+        );
+        assert_eq!(
+            resized_area(rect, (5000.0, 5000.0), DEVICE),
+            (100, 100, 1820, 980)
+        );
+        assert_eq!(
+            resized_area(rect, (-5000.0, -5000.0), DEVICE),
+            (100, 100, MIN_AREA_SIZE, MIN_AREA_SIZE)
+        );
     }
 }

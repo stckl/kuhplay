@@ -333,6 +333,11 @@ pub fn present_on_device(
     } else {
         rotated
     };
+    let oriented = if route.mirror_vertical {
+        mirror_vertical(&oriented)
+    } else {
+        oriented
+    };
     // 3) Skalierung.
     let (sw, sh) = (oriented.width.max(1) as f32, oriented.height.max(1) as f32);
     let (dwf, dhf) = (f(dw), f(dh));
@@ -428,6 +433,16 @@ pub fn rotate(frame: &VideoFrame, rotation: ScreenRotation) -> VideoFrame {
             out
         }
     }
+}
+
+/// Spiegelt ein Frame vertikal.
+pub fn mirror_vertical(frame: &VideoFrame) -> VideoFrame {
+    let stride = frame.width as usize * 4;
+    let mut rgba = Vec::with_capacity(frame.rgba.len());
+    for row in frame.rgba.chunks_exact(stride.max(1)).rev() {
+        rgba.extend_from_slice(row);
+    }
+    VideoFrame::new(frame.width, frame.height, rgba)
 }
 
 /// Spiegelt ein Frame horizontal (Rückprojektion).
@@ -666,6 +681,12 @@ mod tests {
         let out = present_on_device(&frame, &route, 1000, 1000);
         assert_eq!(pixel(&out, 250, 500), [255, 0, 0], "Quelle x≈710 rot");
         assert_eq!(pixel(&out, 750, 500), [0, 0, 255], "Quelle x≈1210 blau");
+    }
+
+    #[test]
+    fn mirror_vertical_swaps_rows() {
+        let frame = VideoFrame::new(1, 2, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(mirror_vertical(&frame).rgba, [5, 6, 7, 8, 1, 2, 3, 4]);
     }
 
     #[test]

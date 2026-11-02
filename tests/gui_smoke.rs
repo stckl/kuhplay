@@ -726,14 +726,15 @@ fn workspace_settings_window_renders_nav_and_pages() {
         assert!(output_has_text(&out, page), "Nav fehlt: {page}");
     }
     assert!(!output_has_text(&out, "not implemented yet"));
-    // Seite Video: drei Reiter (Stages/Routing/Devices).
+    // Seite Video: zwei Reiter (Stages/Devices).
     app.ui.workspace_settings_page = SettingsPage::Video;
     let mut out = render_frame(&ctx, &mut app);
     for _ in 0..2 {
         out = render_frame(&ctx, &mut app);
     }
     assert!(output_has_text(&out, "Video Outputs (Stages)"));
-    assert!(output_has_text(&out, "Output Routing"));
+    assert!(!output_has_text(&out, "Output Routing"));
+    assert!(output_has_text(&out, "Output Devices"));
 }
 
 // ------------------------------------------------------------------
@@ -1933,50 +1934,6 @@ fn viewport_window_embedded_fallback_renders() {
     assert!(open, "Flag bleibt ohne Close-Request offen");
 }
 
-/// Output-Routing-Tab: Device-Karte rendert die Route als Rechteck mit
-/// Bereichsangabe (nur wenn im Testprozess Displays erkannt werden).
-#[test]
-fn output_routing_device_map_renders_route_area() {
-    use kuhplay::core::{DeviceArea, DeviceRef, OutputRoute};
-    use kuhplay::gui::workspace_settings::VideoTab;
-    let ctx = egui::Context::default();
-    let mut app = demo_app();
-    if app.displays.is_empty() {
-        return; // headless ohne WindowServer-Displays
-    }
-    let d = app.displays[0].clone();
-    let mut route = OutputRoute::new("LED Wand", 800, 600);
-    route.device = Some(DeviceRef::Display {
-        id: d.id,
-        name: d.name.clone(),
-        width: d.width,
-        height: d.height,
-    });
-    route.device_area = DeviceArea::Part {
-        x: 100,
-        y: 50,
-        width: 800,
-        height: 600,
-    };
-    app.routes.add(route).unwrap();
-    app.configure_routes();
-    app.ui.workspace_settings_open = true;
-    app.ui.workspace_settings_page = SettingsPage::Video;
-    app.ui.video_tab = VideoTab::Routing;
-    let mut out = egui::FullOutput::default();
-    for _ in 0..3 {
-        out = render_frame(&ctx, &mut app);
-    }
-    assert!(
-        output_has_text(&out, "LED Wand"),
-        "Route fehlt auf der Karte/Tabelle"
-    );
-    assert!(
-        output_has_text(&out, "800×600 px"),
-        "Part-Bereichsangabe fehlt"
-    );
-}
-
 /// Multi-Output 2×2: 4 Regionen im Raster (row-major), Stage-Größe
 /// 2w−overlap_x × 2h−overlap_y, 4 Routen.
 #[test]
@@ -2431,8 +2388,8 @@ fn stage_editor_shows_display_placements_section() {
     }
     // section_label rendert in Großbuchstaben.
     assert!(
-        output_has_text(&out, "DISPLAYS (STAGE 1:1"),
-        "Placement-Section fehlt im Stage-Editor"
+        output_has_text(&out, "DISPLAY"),
+        "Display-Section fehlt im Stage-Editor"
     );
     if app.displays.is_empty() {
         // CI/Runner ohne Display: Hinweis-Zeile.
@@ -2441,10 +2398,11 @@ fn stage_editor_shows_display_placements_section() {
             "Display-Hinweis fehlt (keine Displays in dieser Umgebung)"
         );
     } else {
-        // Mit Displays: Combo mit Pixelmaßen oder „Place stage“-Button.
+        // Mit Displays: Combo mit Pixelmaßen, kein Button zum Platzieren.
+        assert!(!output_has_text(&out, "Place stage on this display"));
         let combo_or_button = out.shapes.iter().any(|shape| {
             matches!(shape.shape, egui::Shape::Text(ref t)
-                if t.galley.job.text.contains("px)") || t.galley.job.text.contains("Place stage"))
+                if t.galley.job.text.contains("px)"))
         });
         assert!(combo_or_button, "Display-Combo/Place-Button fehlt");
     }
@@ -2613,4 +2571,13 @@ fn toolbar_buttons_share_one_line_and_toolbox_ends_above_inspector() {
         .expect("Sidebar-Panel");
     assert_eq!(toolbox.rect.bottom(), sidebar.rect.bottom());
     assert_eq!(toolbox.rect.top(), sidebar.rect.top());
+}
+
+/// Die Farbe eines Ausgangs lässt sich ändern und geht an die Engine.
+#[test]
+fn route_color_can_be_changed() {
+    let mut app = demo_app();
+    let id = app.add_route();
+    app.set_route_color(id, [1, 2, 3]);
+    assert_eq!(app.routes.find(id).map(|r| r.color), Some([1, 2, 3]));
 }
