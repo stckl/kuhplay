@@ -291,7 +291,7 @@ Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
 
 ---
 
-## CEF-Prototyp (HTML5-Renderer wie OBS/CasparCG) — angebunden, Abnahme offen
+## CEF ist einziger HTML5-Renderer (wry entfernt) — Live-Abnahme offen
 
 - `src/bin/kuhplay-cef.rs` (Feature `cef`, `cef-rs` 156): windowless Offscreen-Rendering,
   OnPaint → BGRA-premultiplied → RGBA straight alpha, `windowless_frame_rate = 60`,

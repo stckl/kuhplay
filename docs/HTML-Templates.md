@@ -161,7 +161,7 @@ Target auf diesen Cue und Payload `{"name":"Dr. Koch","title":"Vortrag …"}`.
 - [ ] `100vw/100vh`, nur relative Einheiten (`vw/vh/%/vmin`), kein festes `px`-Layout
 - [ ] `window.kuhplay.onShowControlData` gesetzt, Default-Daten eingebettet
 - [ ] `render()` pure, idempotent
-- [ ] `canvas[data-kuhplay-capture]` für Windows/Linux vorhanden (optional auf macOS)
+- [x] ~~`canvas[data-kuhplay-capture]`~~ obsolet: CEF rendert jedes DOM via OnPaint (kein Canvas nötig)
 - [ ] Läuft standalone im Browser ohne Fehler (Konsole sauber)
 - [ ] Datenstruktur dokumentiert (Felder, Typen, Defaults) – am besten als
       JSON-Beispiel im Kommentar oder in der Show als Data-Cue
