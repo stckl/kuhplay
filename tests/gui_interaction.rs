@@ -3063,10 +3063,10 @@ fn click_on_number_text_moves_playhead_and_go_starts_that_cue() {
     assert_eq!(carts.go_chained().map(|o| o.index), Some(2));
 }
 
-/// Der Grid-Button meldet jede Stage an die Engine: Das Grid gehört zur Stage,
-/// ein reines ConfigureRoutes kommt dort nie an.
+/// Der Grid-Button schaltet das Stage-Grid und meldet jede Stage an die Engine;
+/// die Raster einzelner Regionen bleiben davon unberührt.
 #[test]
-fn test_grid_toggle_reaches_the_engine_for_all_regions() {
+fn test_grid_toggle_reaches_the_engine_for_all_stages() {
     let (mut app, cmd_rx, _evt) = hotkey_app();
     while cmd_rx.try_recv().is_ok() {}
     let stages = app.stages.stages().len();
@@ -3081,5 +3081,6 @@ fn test_grid_toggle_reaches_the_engine_for_all_regions() {
         })
         .collect();
     assert_eq!(sent.len(), stages, "jede Stage geht an die Engine");
-    assert!(sent.iter().flat_map(|s| &s.regions).all(|r| r.grid));
+    assert!(sent.iter().all(|s| s.grid));
+    assert!(sent.iter().flat_map(|s| &s.regions).all(|r| !r.grid));
 }

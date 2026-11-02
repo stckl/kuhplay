@@ -261,10 +261,14 @@ Post-wait · Continue**.
     angeordneten, überlappenden Regionen – z. B. 2×2 für eine 8K-Stage auf
     4 4K-Displays). Löschen nur, wenn kein
     Cue die Stage nutzt.
-  - **Ausgänge:** Kein eigener Reiter. Im Stage-Editor wählt jede Region ihren
-    Ausgang; „New output…“ legt einen an, „Edit Output…“ öffnet Device (Display
-    oder Blackmagic), Teilbereich, Testbild und Löschen. Ein Klick auf das
-    Farbfeld ändert die Farbe des Ausgangs.
+  - **Stage und Regionen:** Eine Stage ist nur das Canvas mit Name und
+    Auflösung. Regionen legen sie auf Displays: Ausgang, Position und Größe in
+    echten Display-Pixeln, Drehung in 90°-Schritten, Spiegelung, Crop je Seite,
+    Edge Blends, Grid. „Fill Display“ zieht die Region aufs ganze Display. Die
+    eine Placement-Ansicht zeigt alle Ausgänge mit Lage, Größe, Crop (Umriss der
+    ganzen Stage), Drehung (dicke Linie = Stage-Oberkante) und Edge Blends
+    (schraffiert); Ziehen verschiebt, die Ecke skaliert, Doppelklick füllt.
+    Der Grid-Button im Footer zeigt das Grid der ganzen Stage.
   - **Output Devices:** erkannte Displays mit Auflösung (Pixel und Punkte)
     und Wiederholrate; Hinweis, dass Anordnung/Auflösung in den
     Systemeinstellungen geändert werden.

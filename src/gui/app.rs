@@ -214,8 +214,6 @@ pub struct ShowApp {
     pub displays: Vec<display_info::DisplayInfo>,
     /// Stage-Editor (eigenes Fenster): Stage-ID, oder `None` = zu.
     pub stage_editor_open: Option<Uuid>,
-    /// Route-Editor (eigenes Fenster): Route-ID, oder `None` = zu.
-    pub route_editor_open: Option<Uuid>,
     /// Multi-Output-Assistent („New Stage → Multi-Output Stage…“).
     pub multi_output_wizard: Option<MultiOutputWizard>,
     /// Optionaler Auto-Demo-Modus (automatische GO-Abfolge für Screen-Tests).
@@ -582,7 +580,6 @@ impl ShowApp {
             closed_device_outputs: Default::default(),
             displays,
             stage_editor_open: None,
-            route_editor_open: None,
             multi_output_wizard: None,
             autodemo,
             remote: None,
@@ -1681,13 +1678,16 @@ impl ShowApp {
         self.remote_dirty = true;
     }
 
-    /// Test-Grid über allen Regionen an/aus (Footer-Icon). Wirkt sofort auf
-    /// alle Stages/Routen.
+    /// Test-Grid über der ganzen Stage an/aus (Footer-Icon), für alle Stages.
     pub fn set_test_grid(&mut self, on: bool) {
         self.ui.test_grid = on;
         for stage in self.stages.stages_mut() {
-            for region in &mut stage.regions {
-                region.grid = on;
+            stage.grid = on;
+            // Show-Mode: auch die Raster einzelner Regionen gehen aus.
+            if self.show_mode {
+                for region in &mut stage.regions {
+                    region.grid = false;
+                }
             }
             let _ = self.engine.send(EngineCommand::ConfigureStage {
                 stage: stage.clone(),
@@ -2510,6 +2510,12 @@ impl ShowApp {
         } else {
             doc.stages.clone()
         };
+        // Alte Shows: Stage-Crop, Stage-Edge und Extra-Placements gibt es nicht mehr.
+        for stage in self.stages.stages_mut() {
+            stage.crop = None;
+            stage.edge = crate::core::EdgeBlend::ZERO;
+            stage.placements.clear();
+        }
         self.routes = doc.routes.clone();
         self.screens = if doc.screens.is_empty() {
             ScreenManager::from_displays(&self.displays)
@@ -3426,7 +3432,6 @@ impl ShowApp {
         super::workspace_settings::draw(ctx, self);
         // Stage-Editor, Route-Editor und Multi-Output-Assistent (Video).
         super::stage_editor::draw(ctx, self);
-        super::workspace_settings::draw_route_editor(ctx, self);
         super::workspace_settings::draw_multi_output_wizard(ctx, self);
     }
 

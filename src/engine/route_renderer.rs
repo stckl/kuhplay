@@ -247,6 +247,17 @@ pub fn render_route(
         let Some(frame) = stage_frames.get(&stage.name) else {
             continue;
         };
+        // Stage-Grid: läuft über alle Regionen hinweg, deshalb auf dem Canvas.
+        let gridded;
+        let frame: &VideoFrame = if stage.grid {
+            let mut copy = (**frame).clone();
+            let (w, h) = (copy.width, copy.height);
+            super::pattern::draw_region_grid(&mut copy.rgba, w, h, &stage.name, [255, 255, 255]);
+            gridded = copy;
+            &gridded
+        } else {
+            frame
+        };
         // Buchstaben der Regionen (Lesefolge) für das Region-Grid.
         let letters: std::collections::HashMap<uuid::Uuid, String> =
             regions_in_reading_order(stage.regions.iter())
@@ -681,6 +692,24 @@ mod tests {
         let out = present_on_device(&frame, &route, 1000, 1000);
         assert_eq!(pixel(&out, 250, 500), [255, 0, 0], "Quelle x≈710 rot");
         assert_eq!(pixel(&out, 750, 500), [0, 0, 255], "Quelle x≈1210 blau");
+    }
+
+    #[test]
+    fn stage_grid_is_drawn_across_the_stage_canvas() {
+        let mut stage = Stage::new("S", crate::core::StageGeometry::new(64.0, 64.0));
+        let route = OutputRoute::new("R", 64, 64);
+        let mut region = crate::core::Region::full_stage(64.0, 64.0);
+        region.route = Some(route.id);
+        stage.regions = vec![region];
+        let mut frames = HashMap::new();
+        frames.insert(
+            "S".to_string(),
+            Arc::new(VideoFrame::new(64, 64, [0, 0, 0, 255].repeat(64 * 64))),
+        );
+        let plain = render_route(&route, std::slice::from_ref(&stage), &frames);
+        stage.grid = true;
+        let with_grid = render_route(&route, std::slice::from_ref(&stage), &frames);
+        assert_ne!(plain.rgba, with_grid.rgba);
     }
 
     #[test]

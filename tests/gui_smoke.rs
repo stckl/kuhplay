@@ -355,14 +355,8 @@ fn workspace_settings_video_page_renders_and_edits_stages_and_routes() {
     assert_eq!(app.stage_editor_open, Some(last.id));
     app.stage_editor_open = None;
 
-    // Route anlegen (ohne Device) und Route-Editor oeffnen.
     let route_id = app.add_route();
     assert!(app.routes.find(route_id).is_some());
-    app.route_editor_open = Some(route_id);
-    for _ in 0..2 {
-        render_frame(&ctx, &mut app);
-    }
-    app.route_editor_open = None;
 
     // Multi-Output-Assistent: 3 Projektoren mit 100 px Überlapp.
     app.multi_output_wizard = Some(Default::default());
@@ -2124,29 +2118,14 @@ fn test_grid_toggle_and_show_mode_forces_off() {
     let mut app = demo_app();
     app.set_test_grid(true);
     assert!(app.ui.test_grid);
-    assert!(app
-        .stages
-        .stages()
-        .iter()
-        .flat_map(|s| s.regions.iter())
-        .all(|r| r.grid));
+    assert!(app.stages.stages().iter().all(|s| s.grid));
     app.set_test_grid(false);
-    assert!(app
-        .stages
-        .stages()
-        .iter()
-        .flat_map(|s| s.regions.iter())
-        .all(|r| !r.grid));
+    assert!(app.stages.stages().iter().all(|s| !s.grid));
     // Show-Mode: Grid immer aus.
     app.set_test_grid(true);
     app.set_show_mode(true);
     assert!(!app.ui.test_grid);
-    assert!(app
-        .stages
-        .stages()
-        .iter()
-        .flat_map(|s| s.regions.iter())
-        .all(|r| !r.grid));
+    assert!(app.stages.stages().iter().all(|s| !s.grid));
     app.set_show_mode(false);
 }
 
@@ -2388,8 +2367,8 @@ fn stage_editor_shows_display_placements_section() {
     }
     // section_label rendert in Großbuchstaben.
     assert!(
-        output_has_text(&out, "DISPLAY"),
-        "Display-Section fehlt im Stage-Editor"
+        output_has_text(&out, "PLACEMENT"),
+        "Placement-Ansicht fehlt im Stage-Editor"
     );
     if app.displays.is_empty() {
         // CI/Runner ohne Display: Hinweis-Zeile.
@@ -2400,11 +2379,12 @@ fn stage_editor_shows_display_placements_section() {
     } else {
         // Mit Displays: Combo mit Pixelmaßen, kein Button zum Platzieren.
         assert!(!output_has_text(&out, "Place stage on this display"));
-        let combo_or_button = out.shapes.iter().any(|shape| {
+        // Jedes Display steht mit seinen Pixelmaßen in der Ansicht.
+        let display_label = out.shapes.iter().any(|shape| {
             matches!(shape.shape, egui::Shape::Text(ref t)
-                if t.galley.job.text.contains("px)"))
+                if t.galley.job.text.contains('×') && t.galley.job.text.ends_with(')'))
         });
-        assert!(combo_or_button, "Display-Combo/Place-Button fehlt");
+        assert!(display_label, "Display fehlt in der Placement-Ansicht");
     }
 }
 
@@ -2580,4 +2560,113 @@ fn route_color_can_be_changed() {
     let id = app.add_route();
     app.set_route_color(id, [1, 2, 3]);
     assert_eq!(app.routes.find(id).map(|r| r.color), Some([1, 2, 3]));
+}
+
+/// Bedienung im Stage-Editor über echte Zeigerereignisse: Region ziehen, dann
+/// „Fill Display“ zurück auf das ganze Display. Stage-Einstellungen sind weg.
+#[test]
+fn stage_editor_moves_region_on_display_and_fill_button_restores_it() {
+    use kuhplay::core::DeviceArea;
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut app = demo_app();
+    if app.displays.is_empty() {
+        return; // headless ohne Displays
+    }
+    let stage = app.stages.find("Stage 1").cloned().unwrap();
+    let route_id = stage.regions[0].route.unwrap();
+    let route = app.routes.find(route_id).cloned().unwrap();
+    let (w, h) = (route.width, route.height);
+    // Kleiner als das Display, damit Platz zum Verschieben bleibt.
+    app.routes.find_mut(route_id).unwrap().device_area = DeviceArea::Part {
+        x: 0,
+        y: 0,
+        width: w / 2,
+        height: h / 2,
+    };
+    app.stage_editor_open = Some(stage.id);
+
+    let mut time = 1.0;
+    let mut frame = |app: &mut ShowApp, events: Vec<egui::Event>| {
+        time += 0.05;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 1600.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        ctx.run(raw, |ctx| app.draw_workspace(ctx))
+    };
+    let position = |out: &egui::FullOutput, wanted: &str| {
+        out.shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.job.text.starts_with(wanted) => {
+                Some(egui::Rect::from_min_size(t.pos, t.galley.rect.size()).center())
+            }
+            _ => None,
+        })
+    };
+    let press = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+
+    let _ = frame(&mut app, vec![]);
+    let out = frame(&mut app, vec![]);
+    for gone in [
+        "Layer",
+        "Keep Rendering",
+        "Soft Edge",
+        "Place stage on this display",
+    ] {
+        assert!(
+            !output_has_text(&out, gone),
+            "„{gone}“ gehört nicht mehr zur Stage"
+        );
+    }
+    for wanted in [
+        "Resolution",
+        "Position",
+        "Crop",
+        "Edge Blends",
+        "Rotation",
+        "Mirror",
+    ] {
+        assert!(output_has_text(&out, wanted), "„{wanted}“ fehlt");
+    }
+
+    // Region an ihrer Beschriftung ziehen.
+    let label = position(&out, "A  ").expect("Region in der Placement-Ansicht");
+    let target = label + egui::vec2(40.0, 20.0);
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(label)]);
+    let _ = frame(&mut app, vec![press(label, true)]);
+    let _ = frame(
+        &mut app,
+        vec![egui::Event::PointerMoved(label + egui::vec2(10.0, 5.0))],
+    );
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(target)]);
+    let _ = frame(&mut app, vec![press(target, false)]);
+    let moved = app.routes.find(route_id).unwrap().device_area;
+    let DeviceArea::Part { x, y, width, .. } = moved else {
+        panic!("Region muss ein Teilbereich bleiben: {moved:?}");
+    };
+    assert!(
+        x > 0 && y > 0,
+        "Ziehen muss die Region verschieben: {moved:?}"
+    );
+    assert_eq!(width, w / 2, "Verschieben ändert die Größe nicht");
+
+    // Fill Display: wieder das ganze Display.
+    let out = frame(&mut app, vec![]);
+    let button = position(&out, "Fill Display").expect("Fill-Display-Button");
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(button)]);
+    let _ = frame(&mut app, vec![press(button, true)]);
+    let _ = frame(&mut app, vec![press(button, false)]);
+    let _ = frame(&mut app, vec![]);
+    let route = app.routes.find(route_id).unwrap();
+    assert_eq!(route.device_area, DeviceArea::Full);
 }

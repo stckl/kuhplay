@@ -600,6 +600,10 @@ pub struct Stage {
     /// Unabhängig von den Region→Route-Mappings (additiv bei der Ausgabe).
     #[serde(default)]
     pub placements: Vec<StagePlacement>,
+    /// Test-Grid über der ganzen Stage (Footer-Button). Raster einzelner
+    /// Regionen: [`crate::core::Region::grid`].
+    #[serde(default)]
+    pub grid: bool,
     /// Key/Fill-Ausgabe dieser Stage (pro Stage separat aktivierbar):
     /// Fill-Route (Farbe, flach) + Key-Route (Alpha; Route-Flag `alpha`).
     /// `None` = kein Key/Fill. Geräte: z. B. zwei Decklink-Ports (Fill/Key
@@ -687,6 +691,7 @@ impl Stage {
             edge: EdgeBlend::ZERO,
             soft_edge: true,
             placements: Vec::new(),
+            grid: false,
             key_fill: None,
         }
     }
