@@ -11,7 +11,7 @@ use crate::core::CueStatus;
 
 /// Farbpalette (Dark-Mode).
 ///
-/// Aufräumen Phase 2 (TODO.md): alle Farben als benannte Konstanten, Text-
+/// Aufräumen Phase 2 (docs/TODO-offen.md): alle Farben als benannte Konstanten, Text-
 /// farben mit WCAG-AA-Kontrast (≥ 4,5:1) auf [`palette::PANEL`] – siehe
 /// Unit-Test `text_colors_meet_wcag_aa`. Rot ist ausschließlich „kaputt /
 /// Fehler" ([`palette::ERROR`]) bzw. Panic ([`palette::PANIC`]) – ein
@@ -73,7 +73,7 @@ pub mod palette {
     /// Deckkraft der Cue-Color-Zeilen-Tönung (ganze Zeile leicht
     /// getönt, niedriger Alpha-Wert).
     pub const ROW_TINT: f32 = 0.10;
-    /// Footer-Hintergrund im Show-Mode (TODO.md Phase 6: Show-Mode muss
+    /// Footer-Hintergrund im Show-Mode (docs/TODO-offen.md Phase 6: Show-Mode muss
     /// sofort erkennbar sein – eingefärbter Footer + „SHOW"-Label).
     pub const SHOW_MODE_BG: Color32 = Color32::from_rgb(58, 22, 18);
 }
@@ -113,11 +113,11 @@ pub mod size {
     pub const TRANSPORT_ICON_BUTTON: Vec2 = Vec2::new(26.0, 26.0);
     /// Farbiger Streifen am linken Rand einer Cue-Zeile („Cue Color").
     pub const CUE_COLOR_STRIP: f32 = 3.0;
-    /// Pause/Resume/Stop-Buttons im Active-Cues-Tab (TODO.md Phase 6:
+    /// Pause/Resume/Stop-Buttons im Active-Cues-Tab (docs/TODO-offen.md Phase 6:
     /// gut klickbar, min. 28 px hoch).
     pub const ACTIVE_CUE_BUTTON: Vec2 = Vec2::new(28.0, 28.0);
 
-    /// Einheitliche Abstände (TODO.md Phase 6: nur diese verwenden –
+    /// Einheitliche Abstände (docs/TODO-offen.md Phase 6: nur diese verwenden –
     /// 4/8/12/16 px).
     pub const SPACE_SMALL: f32 = 4.0;
     pub const SPACE_MEDIUM: f32 = 8.0;
@@ -125,7 +125,7 @@ pub mod size {
     pub const SPACE_LARGE: f32 = 16.0;
 }
 
-/// EINE Status-Farben-Quelle (TODO.md Phase 2 + Phase 0b).
+/// EINE Status-Farben-Quelle (docs/TODO-offen.md Phase 2 + Phase 0b).
 ///
 /// Semantik: Standby (auch armiert) ist **neutral** – Rot bedeutet
 /// „kaputt / Problem" (siehe [`palette::ERROR`]). Die Status-Pille in
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn status_color_semantics() {
         // Standby (auch armiert) ist neutral – Rot ist „kaputt"
-        // (TODO.md Phase 2).
+        // (docs/TODO-offen.md Phase 2).
         assert_eq!(status_color(CueStatus::Standby), palette::TEXT);
         assert_eq!(status_color(CueStatus::PreWait), palette::PRE_WAIT);
         assert_eq!(status_color(CueStatus::Playing), palette::PLAYING);
@@ -377,7 +377,7 @@ mod tests {
     }
 
     /// WCAG AA: Textfarben auf Panel-Hintergrund brauchen ≥ 4,5:1
-    /// (TODO.md Phase 2: „ausreichender Kontrast").
+    /// (docs/TODO-offen.md Phase 2: „ausreichender Kontrast").
     #[test]
     fn text_colors_meet_wcag_aa() {
         fn luminance(c: Color32) -> f64 {

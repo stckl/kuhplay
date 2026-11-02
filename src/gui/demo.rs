@@ -1,4 +1,4 @@
-//! Demo-Show für den ersten Start (aus `app.rs` ausgelagert, TODO.md
+//! Demo-Show für den ersten Start (aus `app.rs` ausgelagert, docs/TODO-offen.md
 //! Phase 0b). Öffentlich, damit die GUI-Smoke-Tests (`tests/gui_smoke.rs`)
 //! dieselbe Show headless rendern können.
 

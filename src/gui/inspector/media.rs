@@ -1,4 +1,4 @@
-//! Typ-spezifische Tabs für Medien-/Daten-Cues (TODO.md Phase 4):
+//! Typ-spezifische Tabs für Medien-/Daten-Cues (docs/TODO-offen.md Phase 4):
 //! „Source" (HTML5), „Slides" (Diashow), „Data" (HTML-Data).
 
 use std::path::PathBuf;

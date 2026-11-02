@@ -1,6 +1,6 @@
 //! Inspector (unteres Panel).
 //!
-//! ## Phase 4 (TODO.md): typabhängige Tabs + Kopfzeile
+//! ## Phase 4 (docs/TODO-offen.md): typabhängige Tabs + Kopfzeile
 //!
 //! * **Kopfzeile** über den Tabs: Typ-Icon, Cue-Nummer und Name des
 //!   selektierten Cues (bei Mehrfachauswahl „N cues selected").
@@ -146,7 +146,7 @@ fn draw_header(ui: &mut egui::Ui, app: &ShowApp) {
     });
 }
 
-/// Typabhängige Tab-Liste (TODO.md Phase 4). Tabs, die es
+/// Typabhängige Tab-Liste (docs/TODO-offen.md Phase 4). Tabs, die es
 /// in KuhPlay (noch) nicht gibt, fehlen statt leer angezeigt zu werden.
 pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
     use InspectorTab::*;

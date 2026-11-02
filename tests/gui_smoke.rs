@@ -732,7 +732,7 @@ fn workspace_settings_window_renders_nav_and_pages() {
 }
 
 // ------------------------------------------------------------------
-// Phase 2 (TODO.md): Status-Semantik, Broken-✕ + Tooltip,
+// Phase 2 (docs/TODO-offen.md): Status-Semantik, Broken-✕ + Tooltip,
 // Cue-Color als Zeilen-Tönung + Streifen, Fortschrittsbalken,
 // Pre-Wait-Countdown
 // ------------------------------------------------------------------
@@ -1159,7 +1159,7 @@ fn standby_display_is_neutral_not_red() {
 }
 
 // ------------------------------------------------------------------
-// Phase 4 (TODO.md): Inspector-Restrukturierung – Kopfzeile,
+// Phase 4 (docs/TODO-offen.md): Inspector-Restrukturierung – Kopfzeile,
 // typabhängige Tabs, Timecode-Zeitfelder, Submodule
 // ------------------------------------------------------------------
 
@@ -1370,7 +1370,7 @@ fn find_bar_renders_above_cue_list_when_open() {
 // Phase 6: Show-Mode-Polish, Leerzustände, Active-Cues-Details
 // ------------------------------------------------------------------
 
-/// Show-Mode muss sofort erkennbar sein (TODO.md Phase 6): eingefärbter
+/// Show-Mode muss sofort erkennbar sein (docs/TODO-offen.md Phase 6): eingefärbter
 /// Footer + „SHOW"-Label + farbiger Masthead-Rahmen.
 #[test]
 fn show_mode_is_immediately_visible() {
@@ -1403,7 +1403,7 @@ fn show_mode_is_immediately_visible() {
     app.set_show_mode(false);
 }
 
-/// Leere Cue-Liste zeigt einen Hinweis (TODO.md Phase 6).
+/// Leere Cue-Liste zeigt einen Hinweis (docs/TODO-offen.md Phase 6).
 #[test]
 fn empty_cue_list_shows_drop_hint() {
     let ctx = egui::Context::default();
@@ -1417,7 +1417,7 @@ fn empty_cue_list_shows_drop_hint() {
     );
 }
 
-/// Inspector ohne Selektion: „No cue selected" zentriert (TODO.md Phase 6).
+/// Inspector ohne Selektion: „No cue selected" zentriert (docs/TODO-offen.md Phase 6).
 #[test]
 fn inspector_without_selection_shows_centered_hint() {
     let ctx = egui::Context::default();
@@ -1447,7 +1447,7 @@ fn inspector_without_selection_shows_centered_hint() {
     assert!(centered, "„No cue selected“ nicht zentriert im Inspector");
 }
 
-/// Active-Cues-Tab (TODO.md Phase 6): Typ-Icon + Nummer/Name + Zeiten;
+/// Active-Cues-Tab (docs/TODO-offen.md Phase 6): Typ-Icon + Nummer/Name + Zeiten;
 /// Buttons min. 28 px (Konstante geprüft).
 #[test]
 fn active_cues_rows_show_type_icon_name_and_times() {

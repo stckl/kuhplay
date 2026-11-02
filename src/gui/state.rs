@@ -2,7 +2,7 @@
 //! serde-fähiger Struct – Persistenz des Workspace-Layouts via
 //! `eframe::Storage` (Workspace-Einstellungen bleiben erhalten).
 //!
-//! TODO.md Phase 0b („`ShowApp` ist ein God-Object"): Die UI-Felder wandern
+//! docs/TODO-offen.md Phase 0b („`ShowApp` ist ein God-Object"): Die UI-Felder wandern
 //! aus `ShowApp` in diesen eigenen Struct; `ShowApp::ui` ist die eine Quelle.
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ pub const UI_STATE_STORAGE_KEY: &str = "kuhplay.ui_state";
 /// `eframe::Storage` – benannte Layout-Vorlagen (Snapshots des [`UiState`]).
 pub const UI_TEMPLATES_STORAGE_KEY: &str = "kuhplay.ui_templates";
 
-/// Anzahl der Spalten der Cue-Tabelle (TODO.md Phase 3).
+/// Anzahl der Spalten der Cue-Tabelle (docs/TODO-offen.md Phase 3).
 /// Reihenfolge: Status | Type | Q# | Name | Target | Pre-wait | Duration |
 /// Post-wait | Continue.
 pub const CUE_COLUMN_COUNT: usize = 9;
@@ -36,7 +36,7 @@ pub const CUE_COLUMN_TITLES: [&str; CUE_COLUMN_COUNT] = [
     "",
 ];
 
-/// Persistiertes Spalten-Layout der Cue-Tabelle (TODO.md Phase 3):
+/// Persistiertes Spalten-Layout der Cue-Tabelle (docs/TODO-offen.md Phase 3):
 /// veränderbare Breiten + ein-/ausblendbare Spalten (Rechtsklick
 /// auf den Header). Breiten werden pro Frame aus der Tabelle zurückgelesen
 /// (`TableRow::widths`) und landen so in der Persistenz.
@@ -104,7 +104,7 @@ pub struct UiState {
     pub workspace_settings_page: SettingsPage,
     /// About-Fenster geöffnet.
     pub about_open: bool,
-    /// „Keyboard Shortcuts"-Fenster geöffnet (TODO.md Phase 5).
+    /// „Keyboard Shortcuts"-Fenster geöffnet (docs/TODO-offen.md Phase 5).
     pub shortcuts_open: bool,
     /// „File Target Search"-Fenster geöffnet (Tools-Menü).
     pub target_search_open: bool,
@@ -118,7 +118,7 @@ pub struct UiState {
     /// Test-Grid über allen Regionen der Stages an (Footer-Icon; im Show-Mode
     /// immer aus).
     pub test_grid: bool,
-    /// Find-Leiste über der Cue-Liste (TODO.md Phase 5; reiner
+    /// Find-Leiste über der Cue-Liste (docs/TODO-offen.md Phase 5; reiner
     /// Laufzeit-Zustand, wird nicht persistiert).
     #[serde(skip)]
     pub find: FindState,

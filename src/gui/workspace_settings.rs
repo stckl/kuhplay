@@ -4,7 +4,7 @@
 //! Video, Network, MIDI, Key Map). Die Stages/Screens-Verwaltung
 //! lebt auf der Seite „Video" – der Screen-Editor
 //! ([`super::screen_editor`]) ist hierher aus der Sidebar gewandert
-//! (TODO.md Phase 1). Network und MIDI zeigen die aktuelle
+//! (docs/TODO-offen.md Phase 1). Network und MIDI zeigen die aktuelle
 //! Konfiguration nur an, geändert wird sie über Umgebungsvariablen.
 //!
 //! Geöffnet wird das Fenster über das Zahnrad im Footer bzw. das Menü

@@ -1536,7 +1536,7 @@ fn audition_mode_strips_stage_from_video_commands() {
 }
 
 // ------------------------------------------------------------------
-// Phase-0-Tests (TODO.md Items 1–6 + 8): Cart-Events über alle Carts,
+// Phase-0-Tests (docs/TODO-offen.md Items 1–6 + 8): Cart-Events über alle Carts,
 // Hotkey-Gate (Textfeld vs. Slider), Esc während Texteingabe, ⌘↑/⌘↓,
 // Fehleranzeige im Footer, eindeutige Q-Nummern, Delete stoppt Cue.
 // ------------------------------------------------------------------
@@ -2315,7 +2315,7 @@ fn context_menu_delete_requests_delete_without_removing() {
 }
 
 // ------------------------------------------------------------------
-// Phase 1 (TODO.md): Footer-Warnindikator (Klick springt zum ersten
+// Phase 1 (docs/TODO-offen.md): Footer-Warnindikator (Klick springt zum ersten
 // kaputten Cue), Toolbox-Buttons legen Cues an, Zahnrad/Panel-Toggles
 // im Footer, Menü „Workspace → Workspace Settings …".
 // ------------------------------------------------------------------
@@ -2596,7 +2596,7 @@ fn cmd_f_toggles_find_bar_and_cmd_g_advances_to_next_match() {
     );
 }
 
-/// ⌫ löscht den selektierten Cue – nur im Edit-Mode (TODO.md Phase 5).
+/// ⌫ löscht den selektierten Cue – nur im Edit-Mode (docs/TODO-offen.md Phase 5).
 #[test]
 fn delete_key_removes_selected_cue_only_in_edit_mode() {
     let (mut app, _cmd_rx, _evt) = hotkey_app();
@@ -2794,7 +2794,7 @@ fn menus_show_shortcuts_from_central_table() {
 // Phase 6: Datei-Drop aus dem Finder legt passende Cues an
 // ------------------------------------------------------------------
 
-/// Drag & Drop von Dateien (TODO.md Phase 6): Endung → Cue-Typ, Datei als
+/// Drag & Drop von Dateien (docs/TODO-offen.md Phase 6): Endung → Cue-Typ, Datei als
 /// Target, neuer Cue selektiert; im Show-Mode und bei unbekannten
 /// Endungen passiert nichts.
 #[test]

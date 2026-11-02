@@ -2,7 +2,7 @@
 //! (docs/UI.md §5.4). Der globale Transport sitzt im Masthead.
 //!
 //! Screens/Stages liegen nicht mehr hier, sondern in den Workspace Settings
-//! → Video (TODO.md Phase 1).
+//! → Video (docs/TODO-offen.md Phase 1).
 //!
 //! ## Active Cues
 //!
@@ -315,7 +315,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
     };
     let centered = egui::Layout::left_to_right(egui::Align::Center);
 
-    // Links: Pause/Resume-Button (Vektor-Icon, TODO.md Phase 6:
+    // Links: Pause/Resume-Button (Vektor-Icon, docs/TODO-offen.md Phase 6:
     // min. 28 px hoch – gut klickbar).
     let mut left_ui = child(ui, button_rect(inner.left() + button.x / 2.0), centered);
     match status {

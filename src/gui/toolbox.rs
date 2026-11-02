@@ -1,6 +1,6 @@
 //! Toolbox: linke Leiste mit den Cue-Typ-Buttons – die EINZIGE
 //! Button-Quelle für neue Cues (die Masthead-Toolbar entfällt,
-//! TODO.md Phase 1).
+//! docs/TODO-offen.md Phase 1).
 //!
 //! Listenzeilen mit Icon + Beschriftung (Typ-Name), gruppiert (Media /
 //! Fade / Control / Data). Breite ~136 px; einklappbar über View-Menü / ⌘K.

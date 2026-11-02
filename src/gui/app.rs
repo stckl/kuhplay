@@ -72,7 +72,7 @@ pub enum SidebarTab {
     ActiveCues,
 }
 
-/// Tab-Auswahl des Inspectors (typabhängige Tabs, TODO.md Phase 4).
+/// Tab-Auswahl des Inspectors (typabhängige Tabs, docs/TODO-offen.md Phase 4).
 ///
 /// Serde per Varianten-Name – neue Varianten sind abwärtskompatibel
 /// (alte gespeicherte Zustände deserialisieren weiter).
@@ -113,7 +113,7 @@ pub enum InspectorTab {
 }
 
 impl InspectorTab {
-    /// Anzeigename des Tabs (Begriffe, TODO.md Phase 4).
+    /// Anzeigename des Tabs (Begriffe, docs/TODO-offen.md Phase 4).
     pub fn label(self) -> &'static str {
         match self {
             InspectorTab::Basics => "Basics",
@@ -152,7 +152,7 @@ pub struct ShowApp {
     /// Audition-Mode: Video-Cues spielen ohne Stage-Ziel (Audio normal).
     pub audition_mode: bool,
     /// Reiner UI-Zustand (Panel-Sichtbarkeit, Tabs, Fenster) – serde-fähig
-    /// für die Layout-Persistenz via `eframe::Storage` (TODO.md Phase 0b).
+    /// für die Layout-Persistenz via `eframe::Storage` (docs/TODO-offen.md Phase 0b).
     pub ui: super::state::UiState,
     /// Workspace-Templates („Workspace Templates"): benannte
     /// Layout-Vorlagen, Persistenz über eigenen Storage-Key.
@@ -194,7 +194,7 @@ pub struct ShowApp {
     /// Akkumulierte aktive Zeit pausierter Cues.
     banked: HashMap<Uuid, Duration>,
     /// Startzeitpunkte von Cues in Pre-Wait (Countdown in der Pre-Wait-
-    /// Spalte, TODO.md Phase 2).
+    /// Spalte, docs/TODO-offen.md Phase 2).
     prewait_started: HashMap<Uuid, Instant>,
     /// Letzter gesendeter Scrub-Seek pro Cue (Zeitstempel, Fraktion) –
     /// Throttle gegen ffmpeg-Neustart-Spam beim Ziehen im Active-Cues-Balken.
@@ -312,7 +312,7 @@ struct AutodemoState {
     count: u32,
 }
 
-/// Ein kaputter Cue (Eintrag des Broken-Cache, TODO.md Phase 2).
+/// Ein kaputter Cue (Eintrag des Broken-Cache, docs/TODO-offen.md Phase 2).
 #[derive(Debug, Clone)]
 struct BrokenCue {
     /// Cart-Index.
@@ -1285,7 +1285,7 @@ impl ShowApp {
         list.select(Some(at));
     }
 
-    /// Legt aus einer Datei (Drag & Drop aus dem Finder, TODO.md Phase 6)
+    /// Legt aus einer Datei (Drag & Drop aus dem Finder, docs/TODO-offen.md Phase 6)
     /// einen passenden Cue an: Endung → Cue-Typ (siehe [`cue_type_for_file`]),
     /// Datei als Target, Dateiname als Cue-Name; neuer Cue wird selektiert.
     /// Im Show-Mode oder bei unbekannter Endung → `None`.
@@ -1321,7 +1321,7 @@ impl ShowApp {
         let _ = self.carts.active_mut().remove(index);
     }
 
-    /// Löscht einen Cue per ID (Top-Level oder Group-Kind, TODO.md Phase 3
+    /// Löscht einen Cue per ID (Top-Level oder Group-Kind, docs/TODO-offen.md Phase 3
     /// Item 7) – ein laufender Cue wird vorher gestoppt.
     pub fn delete_cue_by_id(&mut self, id: Uuid) {
         let commands = self.carts.stop_running(id);
@@ -1626,7 +1626,7 @@ impl ShowApp {
     }
 
     // ------------------------------------------------------------------
-    // Anzeige-Metadaten für die Cue-Tabelle (TODO.md Phase 2)
+    // Anzeige-Metadaten für die Cue-Tabelle (docs/TODO-offen.md Phase 2)
     // ------------------------------------------------------------------
 
     /// Vergangene Zeit seit Phasenbeginn (Playing/Paused/Post-Wait) – für
@@ -1646,7 +1646,7 @@ impl ShowApp {
     }
 
     /// Verbleibende Pre-Wait-Zeit (Countdown in der Pre-Wait-Spalte,
-    /// TODO.md Phase 2). `None`, wenn der Cue nicht in Pre-Wait ist.
+    /// docs/TODO-offen.md Phase 2). `None`, wenn der Cue nicht in Pre-Wait ist.
     pub fn pre_wait_remaining(&self, cue: &Cue) -> Option<Duration> {
         if cue.status != CueStatus::PreWait {
             return None;
@@ -1677,7 +1677,7 @@ impl ShowApp {
     }
 
     /// Baut die Anzeige-Metadaten für die Cue-Tabelle (Broken-Cache,
-    /// Phasen-Zeiten, Pre-Wait-Countdown; TODO.md Phase 2). Einmalig pro
+    /// Phasen-Zeiten, Pre-Wait-Countdown; docs/TODO-offen.md Phase 2). Einmalig pro
     /// Frame aufrufen (verwaltet dabei auch die Pre-Wait-Zeitpunkte).
     pub fn cue_row_meta(&mut self) -> HashMap<Uuid, cue_table::CueRowMeta> {
         self.reconcile_prewait_timings();
@@ -3065,7 +3065,7 @@ impl ShowApp {
         self.remote_dirty = true;
     }
 
-    /// Globale Hotkeys (TODO.md Phase 5): liest die zentrale
+    /// Globale Hotkeys (docs/TODO-offen.md Phase 5): liest die zentrale
     /// Tabelle [`shortcuts::ALL`] – Space = GO, Esc = Panic, ↑/↓ = Playhead,
     /// ⌘+↑/↓ = Cue auswählen, ⇧⌘+↑/↓ = Playhead, ⌥⌘+↑/↓ = Cue verschieben,
     /// ⌘+Ziffer = neue Cues, ⌘F/⌘G = Find, ⇧⌘D = Duplicate, ⌘D = Nummern löschen, ⌘I/L/K = Panels, ⌘N/O/S/⇧⌘S/Q = Datei.
@@ -3091,7 +3091,7 @@ impl ShowApp {
         // außerhalb des Closures dispatchen.
         let mut matched: Vec<ShortcutAction> = Vec::new();
         ctx.input(|i| {
-            // Eine zentrale Tabelle (TODO.md Phase 5): Menüanzeige,
+            // Eine zentrale Tabelle (docs/TODO-offen.md Phase 5): Menüanzeige,
             // Shortcuts-Fenster und dieses Verhalten lesen alle aus
             // `shortcuts::ALL` – so kann nichts auseinanderlaufen.
             for sc in shortcuts::ALL {
@@ -3298,7 +3298,7 @@ impl ShowApp {
         }
     }
 
-    /// Find (⌘F/⌘G, TODO.md Phase 5): nächster Treffer – Playhead +
+    /// Find (⌘F/⌘G, docs/TODO-offen.md Phase 5): nächster Treffer – Playhead +
     /// Selektion springen dorthin (Auto-Scroll scrollt zur Cursor-Zeile).
     /// Public für headless GUI-Tests.
     pub fn find_next(&mut self) {
@@ -3320,7 +3320,7 @@ impl ShowApp {
     /// Textfelder sollen die Tasten selbst bekommen). Nutzt die
     /// Textfeld-Registrierung des vorherigen Frames (siehe
     /// [`ShowApp::text_field_ids`]) – plus den Zellen-Editor der Cue-Tabelle
-    /// (TODO.md Phase 3: Esc bricht den Inline-Edit ab statt Panic).
+    /// (docs/TODO-offen.md Phase 3: Esc bricht den Inline-Edit ab statt Panic).
     pub fn text_field_focused(&self, ctx: &egui::Context) -> bool {
         let Some(focused) = ctx.memory(|m| m.focused()) else {
             return false;
@@ -3455,7 +3455,7 @@ impl ShowApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(palette::LIST_BG))
             .show(ctx, |ui| {
-                // Find-Leiste über der Cue-Liste (TODO.md Phase 5, ⌘F).
+                // Find-Leiste über der Cue-Liste (docs/TODO-offen.md Phase 5, ⌘F).
                 if self.ui.find.open {
                     cue_table::draw_find_bar(
                         ui,
@@ -3469,7 +3469,7 @@ impl ShowApp {
                 let row_meta = self.cue_row_meta();
                 // Tabelle zeichnen; strukturelle Aktionen (Löschen,
                 // Duplizieren, Gruppieren, Drag & Drop) werden NACH dem
-                // Rendern ausgeführt (TODO.md Phase 3).
+                // Rendern ausgeführt (docs/TODO-offen.md Phase 3).
                 let actions = cue_table::draw(
                     ui,
                     self.carts.active_mut(),
@@ -3539,7 +3539,7 @@ impl ShowApp {
             }
         }
 
-        // „Keyboard Shortcuts"-Fenster (Help-Menü, TODO.md Phase 5):
+        // „Keyboard Shortcuts"-Fenster (Help-Menü, docs/TODO-offen.md Phase 5):
         // rendert dieselbe zentrale Tabelle wie Menüs und Hotkeys.
         shortcuts::draw_window(ctx, &mut self.ui.shortcuts_open);
 
@@ -3628,7 +3628,7 @@ impl eframe::App for ShowApp {
             self.draw_update_window(ctx);
         }
         // Theme wird einmalig in `main` (CreationContext) gesetzt – nicht
-        // jeden Frame (TODO.md Phase 0b).
+        // jeden Frame (docs/TODO-offen.md Phase 0b).
         self.swap_text_field_registry();
         // Engine-Events sofort sichtbar machen – im 500-ms-Leerlauf-Takt
         // würde ein Statuswechsel sonst bis zu 500 ms verzögert erscheinen.
@@ -3638,7 +3638,7 @@ impl eframe::App for ShowApp {
         self.poll_remote_commands();
         self.handle_hotkeys(ctx);
 
-        // Datei-Drop aus dem Finder (TODO.md Phase 6): Audio-/Video-/
+        // Datei-Drop aus dem Finder (docs/TODO-offen.md Phase 6): Audio-/Video-/
         // Bild-Dateien legen passende Cues im aktiven Cart an.
         let dropped: Vec<egui::DroppedFile> = ctx.input(|i| i.raw.dropped_files.clone());
         for file in &dropped {

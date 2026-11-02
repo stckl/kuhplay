@@ -5,7 +5,7 @@
 //! Aufklapp-Dreieck bei Gruppen) | Q# | Name | Target | Pre-wait |
 //! Duration (Action) | Post-wait | Continue-Mode.
 //!
-//! ## Interaktion (TODO.md Phase 3)
+//! ## Interaktion (docs/TODO-offen.md Phase 3)
 //!
 //! * Klick auf eine Zeile: selektiert den Cue (auch Group-Kinder,
 //!   UUID-Selektion – Item 7).
@@ -30,7 +30,7 @@
 //! * `editable == false` (Show-Mode): Playhead-Klicks, Doppelklick,
 //!   Drag & Drop und Kontextmenü sind deaktiviert (Sicherheitsfunktion).
 //!
-//! ## Status-Semantik (TODO.md Phase 2)
+//! ## Status-Semantik (docs/TODO-offen.md Phase 2)
 //!
 //! * Standby (auch armiert): **neutral** – die Zeile ist nur über den
 //!   Playhead-Pfeil + dezente Zeilenhervorhebung markiert. Rot bedeutet
@@ -113,7 +113,7 @@ struct RowRef {
     child: Option<usize>,
 }
 
-/// Pro Cue vorberechnete Anzeige-Daten (TODO.md Phase 2).
+/// Pro Cue vorberechnete Anzeige-Daten (docs/TODO-offen.md Phase 2).
 ///
 /// Wird vom Aufrufer (`ShowApp::cue_row_meta`) einmal pro Frame gebaut –
 /// so bleibt diese Tabelle ohne App-Borrow headless testbar (die
@@ -161,7 +161,7 @@ pub struct CueTableActions {
     pub move_into_group: Option<(usize, usize)>,
 }
 
-/// Inline-Edit-Feld einer Zelle (Doppelklick, TODO.md Phase 3).
+/// Inline-Edit-Feld einer Zelle (Doppelklick, docs/TODO-offen.md Phase 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EditField {
     Number,
@@ -240,7 +240,7 @@ pub fn draw(
     let hidden = columns.hidden;
     let mut actions = CueTableActions::default();
 
-    // Find (TODO.md Phase 5): bei aktiver Suche werden Nicht-Treffer-Zeilen
+    // Find (docs/TODO-offen.md Phase 5): bei aktiver Suche werden Nicht-Treffer-Zeilen
     // abgedunkelt ( „markiert“ ). `hit_ids` = IDs aller treffenden Cues.
     let hit_ids: Option<std::collections::HashSet<Uuid>> = {
         let q = if find.open { find.query.trim() } else { "" };
@@ -289,7 +289,7 @@ pub fn draw(
         move |cue_id: Uuid, field: EditField| base_id.with(("cell_edit", cue_id, field));
 
     // Auto-Scroll: Bei Playhead-Wechsel die Standby-Zeile sichtbar machen
-    // (TODO.md Phase 3; `scroll_to_row` ist eine TableBuilder-Option und
+    // (docs/TODO-offen.md Phase 3; `scroll_to_row` ist eine TableBuilder-Option und
     // wird nur auf Wechsel-Frames gesetzt).
     let scroll_state_id = egui::Id::new("kuhplay_cue_table_scroll_cursor");
     let mut scroll_to: Option<usize> = None;
@@ -1157,7 +1157,7 @@ pub fn draw(
         );
     }
 
-    // Leerzustand (TODO.md Phase 6): leere Cue-Liste zeigt einen Hinweis
+    // Leerzustand (docs/TODO-offen.md Phase 6): leere Cue-Liste zeigt einen Hinweis
     // (Dateien per Drag & Drop oder Cues über die Toolbox hinzufügen).
     if rows.is_empty() {
         ui.vertical_centered(|ui| {
@@ -1214,7 +1214,7 @@ pub fn draw(
 }
 
 /// Spalten-Definition aus dem persistierten Layout: feste Spalten
-/// veränderbar (`initial` + `resizable`, TODO.md Phase 3), Name füllt den
+/// veränderbar (`initial` + `resizable`, docs/TODO-offen.md Phase 3), Name füllt den
 /// Rest (ausdrücklich NICHT resizable – sonst würde die Breite nach dem
 /// ersten Frame „einfrieren"), versteckte Spalten kollabieren auf 0.
 fn column_spec(index: usize, layout: &CueColumnLayout) -> egui_extras::Column {
@@ -1378,13 +1378,13 @@ fn editable_field_at(
 
 /// Malt den Zeilen-Hintergrund einer Zelle: Playhead-Zeile hervorheben
 /// (unter der Selektion – Selektion unabhängig vom Playhead) und
-/// Cue-Color als Tönung über die ganze Zeile (TODO.md Phase 2).
+/// Cue-Color als Tönung über die ganze Zeile (docs/TODO-offen.md Phase 2).
 ///
 /// Lückenlos wie egui_extras' eigene Zell-Hintergründe: um halbes
 /// `item_spacing` expandiert. Mit dem Painter des äußeren Ui malen, damit
 /// die Expansion nicht am Zell-Clip scheitert und der Hintergrund unter
 /// dem Zell-Text landet.
-/// Tooltip-Text für das Typ-Icon einer Zeile (TODO.md Phase 6: Tooltips
+/// Tooltip-Text für das Typ-Icon einer Zeile (docs/TODO-offen.md Phase 6: Tooltips
 /// für jedes Icon-only-Element).
 fn cue_type_tooltip(cue: &Cue) -> String {
     format!("{} cue", cue.cue_type.label())
@@ -1502,7 +1502,7 @@ fn target_display(cue: &Cue) -> String {
 }
 
 // ------------------------------------------------------------------
-// Find (TODO.md Phase 5): Suchleiste über der Cue-Liste
+// Find (docs/TODO-offen.md Phase 5): Suchleiste über der Cue-Liste
 // ------------------------------------------------------------------
 
 /// Stabile Widget-ID der Find-Leiste (⌘F requested den Fokus darauf).
@@ -1522,7 +1522,7 @@ pub struct FindHit {
 }
 
 /// Matcht ein Cue den Suchbegriff? Case-insensitive `contains` über
-/// Q-Nummer, Name und Notes (TODO.md Phase 5). Leerer Begriff matcht
+/// Q-Nummer, Name und Notes (docs/TODO-offen.md Phase 5). Leerer Begriff matcht
 /// nichts (damit die Liste nicht komplett „leer markiert" wird).
 pub fn cue_matches(cue: &Cue, query: &str) -> bool {
     let q = query.trim().to_lowercase();
@@ -1581,7 +1581,7 @@ pub fn find_next_hit(list: &mut CueList, find: &mut FindState) {
     find.current += 1;
 }
 
-/// Zeichnet die Find-Leiste über der Cue-Liste (TODO.md Phase 5).
+/// Zeichnet die Find-Leiste über der Cue-Liste (docs/TODO-offen.md Phase 5).
 ///
 /// Enter = nächster Treffer (⌘G = Find Next; ⌘G landet in
 /// `handle_hotkeys` auf derselben Funktion), Esc schließt die Leiste.
@@ -1801,7 +1801,7 @@ mod tests {
     #[test]
     fn column_spec_hides_and_sizes_columns() {
         let mut layout = CueColumnLayout::default();
-        // Sichtbar + fest: initial + resizable (TODO.md Phase 3).
+        // Sichtbar + fest: initial + resizable (docs/TODO-offen.md Phase 3).
         assert!(is_resizable(&column_spec(col::STATUS, &layout)));
         assert!(is_resizable(&column_spec(col::DURATION, &layout)));
         // Name: remainder und NICHT resizable (füllt den Restplatz).

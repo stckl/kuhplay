@@ -1,7 +1,7 @@
 //! Footer (ganz unten im Fenster): Edit/Show-Segmentschalter,
 //! Warnungs-Indikator (kaputte Cues), Fehlerzeile, Cue-Anzahl sowie
 //! Icon-Toggles für Sidebar/Inspector und das Zahnrad für die
-//! Workspace Settings (TODO.md Phase 1).
+//! Workspace Settings (docs/TODO-offen.md Phase 1).
 //!
 //! Im Show-Mode werden alle Edit-Funktionen deaktiviert
 //! (Sicherheitsfunktion gegen versehentliche Änderungen während der Show).
@@ -178,7 +178,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 app.ui.sidebar_visible = !app.ui.sidebar_visible;
             }
             if app.show_mode {
-                // Show-Mode sofort erkennbar (TODO.md Phase 6): „SHOW"-Label
+                // Show-Mode sofort erkennbar (docs/TODO-offen.md Phase 6): „SHOW"-Label
                 // als Pill + der Footer selbst ist eingefärbt (Panel-Frame).
                 ui.separator();
                 egui::Frame::none()

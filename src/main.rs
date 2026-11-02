@@ -53,7 +53,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             // Theme + Phosphor-Icons einmalig setzen (CreationContext,
-            // nicht jeden Frame – TODO.md Phase 0b).
+            // nicht jeden Frame – docs/TODO-offen.md Phase 0b).
             kuhplay::gui::theme::apply_theme(&cc.egui_ctx);
             // UI-Layout aus dem Persistenz-Storage laden (falls vorhanden).
             let mut app = match cc.storage {

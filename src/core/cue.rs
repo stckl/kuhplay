@@ -158,7 +158,7 @@ impl CueType {
 }
 
 /// Ordnet einer Datei anhand der Extension einen passenden Cue-Typ zu
-/// (TODO.md Phase 6: Drag & Drop aus dem Finder legt passende Cues an).
+/// (docs/TODO-offen.md Phase 6: Drag & Drop aus dem Finder legt passende Cues an).
 ///
 /// Audio-Endungen → Audio-Cue, Video-Endungen → Video-Cue, Bild-Endungen
 /// → Diashow-Cue (ein Bild = eine Slide). Unbekannt → `None`.
@@ -662,7 +662,7 @@ pub struct Cue {
     #[serde(default = "default_armed")]
     pub is_armed: bool,
     /// Group-Cues: Kinder ein-/ausgeklappt (Aufklapp-Dreieck,
-    /// TODO.md Phase 3). Default: ausgeklappt.
+    /// docs/TODO-offen.md Phase 3). Default: ausgeklappt.
     #[serde(default)]
     pub collapsed: bool,
 }
@@ -1338,7 +1338,7 @@ pub fn format_timecode(d: Duration) -> String {
 }
 
 /// Parst einen Timecode zu einer [`Duration`] (Eingabe in den
-/// Zeit-Spalten, TODO.md Phase 3: Inline-Edit).
+/// Zeit-Spalten, docs/TODO-offen.md Phase 3: Inline-Edit).
 ///
 /// Akzeptiert:
 /// * `MM:SS` / `MM:SS.mmm` (z. B. `01:04`, `00:01.500`),

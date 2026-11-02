@@ -51,7 +51,7 @@ pub struct GoOutcome {
 pub struct CueList {
     cues: Vec<Cue>,
     /// Selektion: UUIDs der selektierten Cues (inkl. Group-Kinder,
-    /// TODO.md Phase 3 Item 7). Reihenfolge = Klick-Reihenfolge; die
+    /// docs/TODO-offen.md Phase 3 Item 7). Reihenfolge = Klick-Reihenfolge; die
     /// „primäre" Selektion (Inspector) ist der zuletzt geklickte Cue.
     /// UUID-basiert: Selektion überlebt Einfügen/Löschen/Verschieben.
     #[serde(default)]
@@ -134,7 +134,7 @@ impl CueList {
     }
 
     /// Entfernt einen Cue anhand seiner ID – Top-Level-Cue oder Group-Kind
-    /// (TODO.md Phase 3 Item 7: Kinder sind selektierbar/löschbar).
+    /// (docs/TODO-offen.md Phase 3 Item 7: Kinder sind selektierbar/löschbar).
     /// Rückgabe: `true`, wenn ein Cue entfernt wurde.
     pub fn remove_by_id(&mut self, id: Uuid) -> bool {
         if let Some(index) = self.index_of_id(id) {
@@ -251,7 +251,7 @@ impl CueList {
     }
 
     // ------------------------------------------------------------------
-    // Selektion (UUID-basiert, Mehrfachauswahl; TODO.md Phase 3)
+    // Selektion (UUID-basiert, Mehrfachauswahl; docs/TODO-offen.md Phase 3)
     // ------------------------------------------------------------------
 
     /// Setzt die Selektion auf einen einzelnen Top-Level-Cue
@@ -412,7 +412,7 @@ impl CueList {
     }
 
     // ------------------------------------------------------------------
-    // Edit-Operationen (Kontextmenü / Drag & Drop; TODO.md Phase 3)
+    // Edit-Operationen (Kontextmenü / Drag & Drop; docs/TODO-offen.md Phase 3)
     // ------------------------------------------------------------------
 
     /// Verschiebt einen Top-Level-Cue an die Position `to` (Drag & Drop
@@ -529,7 +529,7 @@ impl CueList {
         Some(group_id)
     }
 
-    /// Group-Cue ein-/ausklappen (Aufklapp-Dreieck, TODO.md Phase 3).
+    /// Group-Cue ein-/ausklappen (Aufklapp-Dreieck, docs/TODO-offen.md Phase 3).
     pub fn set_collapsed(&mut self, index: usize, collapsed: bool) {
         if let Some(cue) = self.cues.get_mut(index) {
             if cue.cue_type == CueType::Group {
@@ -1941,7 +1941,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Phase 3 (TODO.md): UUID-Selektion, Duplicate, Group, Move, Collapse
+    // Phase 3 (docs/TODO-offen.md): UUID-Selektion, Duplicate, Group, Move, Collapse
     // ------------------------------------------------------------------
 
     #[test]
@@ -1958,7 +1958,7 @@ mod tests {
         assert_eq!(list.selected_index(), Some(2));
         assert_eq!(list.selection_len(), 1);
 
-        // Group-Kind selektierbar (TODO.md Item 7, UUID-Selektion).
+        // Group-Kind selektierbar (docs/TODO-offen.md Item 7, UUID-Selektion).
         list.select_id(Some(child_id));
         assert!(list.is_selected(child_id));
         assert_eq!(list.selected().unwrap().number, "2.1");

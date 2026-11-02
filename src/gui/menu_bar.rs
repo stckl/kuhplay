@@ -6,7 +6,7 @@
 //!   siehe `docs/BACKLOG.md`.
 //! * Tastenkürzel kommen ALLE aus der zentralen Tabelle
 //!   [`super::shortcuts`] (`menu_label`) – Menüanzeige, Shortcuts-Fenster
-//!   und `ShowApp::handle_hotkeys` lesen dieselbe Quelle (TODO.md
+//!   und `ShowApp::handle_hotkeys` lesen dieselbe Quelle (docs/TODO-offen.md
 //!   Phase 5), sie können nie inkonsistent sein.
 
 use egui::vec2;

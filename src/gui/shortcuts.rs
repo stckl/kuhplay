@@ -1,4 +1,4 @@
-//! Zentrale Tastenkürzel-Tabelle (TODO.md Phase 5).
+//! Zentrale Tastenkürzel-Tabelle (docs/TODO-offen.md Phase 5).
 //!
 //! **Eine Quelle der Wahrheit:** Menüs zeigen ihre Kürzel über
 //! [`menu_label`] aus dieser Tabelle an, [`ShowApp::handle_hotkeys`]
@@ -522,7 +522,7 @@ pub fn menu_label(label: &str, action: ShortcutAction) -> String {
     }
 }
 
-/// „Keyboard Shortcuts"-Fenster (Help-Menü, TODO.md Phase 5): rendert
+/// „Keyboard Shortcuts"-Fenster (Help-Menü, docs/TODO-offen.md Phase 5): rendert
 /// die Tabelle gruppiert – dieselbe Quelle wie Menüs und `handle_hotkeys`.
 pub fn draw_window(ctx: &egui::Context, open: &mut bool) {
     if !*open {
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn minimum_shortcut_set_is_covered() {
-        // TODO.md Phase 5: Space=GO, Esc=Panic, ↑/↓=Playhead, ⌘-Zahlen,
+        // docs/TODO-offen.md Phase 5: Space=GO, Esc=Panic, ↑/↓=Playhead, ⌘-Zahlen,
         // Pause/Resume/Reset All, ⌘I/⌘K/⌘L, ⌘F, Delete, ⌘D, Group.
         for action in [
             ShortcutAction::Go,
