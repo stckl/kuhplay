@@ -213,11 +213,12 @@ impl CueList {
     /// oder Pfeiltasten in der UI). Wird auf `0..=len` geklemmt – `len`
     /// bedeutet „Playhead hinter dem letzten Cue" (GO triggert nichts).
     ///
-    /// Ein bereits beendeter Cue wird wieder bereit, damit GO genau ihn startet
-    /// und nicht zum nächsten noch ungespielten springt.
+    /// Beendete Cues ab dem Playhead werden wieder bereit: GO läuft von hier in
+    /// Listenreihenfolge weiter und springt nicht über schon gespielte Cues.
+    /// Laufende Cues bleiben unberührt.
     pub fn set_cursor(&mut self, index: usize) {
         self.cursor = index.min(self.cues.len());
-        if let Some(cue) = self.cues.get_mut(self.cursor) {
+        for cue in self.cues.iter_mut().skip(self.cursor) {
             if matches!(
                 cue.status,
                 CueStatus::Completed | CueStatus::Stopped | CueStatus::Error
@@ -1546,6 +1547,38 @@ mod tests {
 
         list.set_cursor(0);
         assert_eq!(list.cursor(), 0);
+    }
+
+    #[test]
+    fn go_continues_in_order_after_playhead_was_set_back() {
+        let mut list = CueList::new();
+        for number in ["1", "2", "3", "4"] {
+            list.add(audio(number));
+        }
+        list.go();
+        list.go();
+        list.go();
+        for cue in &mut list.cues_mut()[..3] {
+            cue.status = CueStatus::Completed;
+        }
+
+        list.set_cursor(0);
+        let order: Vec<usize> = (0..4).filter_map(|_| list.go().map(|o| o.index)).collect();
+        assert_eq!(order, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn set_cursor_keeps_running_cues_and_cues_before_the_playhead() {
+        let mut list = CueList::new();
+        for number in ["1", "2", "3"] {
+            list.add(audio(number));
+        }
+        list.cues_mut()[0].status = CueStatus::Completed;
+        list.cues_mut()[2].status = CueStatus::Playing;
+
+        list.set_cursor(1);
+        assert_eq!(list.cues()[0].status, CueStatus::Completed);
+        assert_eq!(list.cues()[2].status, CueStatus::Playing);
     }
 
     #[test]
