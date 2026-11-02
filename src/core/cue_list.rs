@@ -622,6 +622,19 @@ impl CueList {
     /// `Start`), ohne den Playhead zu bewegen. Liefert `None`, wenn kein
     /// Cue mit dieser Nummer existiert oder der Cue nicht triggerbar ist
     /// (nicht armed / nicht in Standby).
+    /// Startet einen Cue per ID unabhängig vom Playhead (Trigger). Rückgabe:
+    /// Engine-Kommandos.
+    pub fn trigger_id(&mut self, id: Uuid) -> Vec<EngineCommand> {
+        let mut commands = Vec::new();
+        if let Some(cue) = self.find_cue(id) {
+            let number = cue.number.clone();
+            if !number.is_empty() {
+                self.trigger_by_number(&number, &mut commands);
+            }
+        }
+        commands
+    }
+
     pub fn go_to_number(&mut self, number: &str) -> Option<GoOutcome> {
         let index = self.find_index_by_number(Some(number))?;
         let mut commands = Vec::new();

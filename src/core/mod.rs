@@ -85,7 +85,7 @@ pub use cart::CartManager;
 pub use companion::{CompanionAction, CompanionTrigger, COMPANION_DEFAULT_PORT};
 pub use cue::{
     cue_type_for_file, format_timecode, parse_timecode, ContinueMode, ControlAction, Cue,
-    CueStatus, CueType, GroupMode, LoopMode, CUE_COLORS,
+    CueStatus, CueTrigger, CueType, GroupMode, LoopMode, CUE_COLORS,
 };
 pub use cue_list::{CueList, GoOutcome};
 pub use error::{ShowError, ShowResult};

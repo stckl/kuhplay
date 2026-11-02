@@ -68,6 +68,11 @@ pub enum RemoteCommand {
     },
     /// Status anfordern (Antwort: [`RemoteEvent::Status`]).
     GetStatus,
+    /// Rohe MIDI Note On (Channel 1–16, Note 0–127) – für Cue-MIDI-Trigger.
+    MidiNote {
+        channel: u8,
+        note: u8,
+    },
     /// Externer Timecode (LTC/MTC/OSC-Eingang): chasing Cues springen mit,
     /// Timecode-Trigger-Cues feuern (siehe `CueList::receive_timecode`).
     ReceiveTimecode {

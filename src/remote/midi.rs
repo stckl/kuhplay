@@ -105,7 +105,13 @@ pub fn midi_bytes_to_command(bytes: &[u8], map: &MidiNoteMap) -> Option<RemoteCo
     if velocity == 0 {
         return None; // Note-On mit Velocity 0 = Note-Off
     }
-    map.command_for_note(note)
+    map.command_for_note(note).or_else(|| {
+        // Unbekannte Note → rohe MidiNote an die App (Cue-MIDI-Trigger).
+        Some(RemoteCommand::MidiNote {
+            channel: (status & 0x0F) + 1,
+            note,
+        })
+    })
 }
 
 /// Fehler beim MIDI-Start (in der App per Graceful Degradation nur geloggt).
@@ -225,8 +231,11 @@ mod tests {
             midi_bytes_to_command(&[0x90, 40, 100], &map),
             Some(RemoteCommand::Reset)
         ));
-        // Alte Default-Noten sind jetzt nicht mehr gemappt.
-        assert!(midi_bytes_to_command(&[0x90, 0, 100], &map).is_none());
+        // Alte Default-Noten sind jetzt nicht mehr gemappt → MidiNote.
+        assert!(matches!(
+            midi_bytes_to_command(&[0x90, 0, 100], &map),
+            Some(RemoteCommand::MidiNote { note: 0, .. })
+        ));
     }
 
     #[test]
@@ -257,8 +266,14 @@ mod tests {
         assert!(midi_bytes_to_command(&[0x80, 0, 100], &map).is_none());
         // Control-Change (0xB0) → kein Command.
         assert!(midi_bytes_to_command(&[0xB0, 0, 100], &map).is_none());
-        // Nicht gemappte Note.
-        assert!(midi_bytes_to_command(&[0x90, 60, 100], &map).is_none());
+        // Nicht gemappte Note → rohe MidiNote (Cue-Trigger).
+        assert!(matches!(
+            midi_bytes_to_command(&[0x90, 60, 100], &map),
+            Some(RemoteCommand::MidiNote {
+                channel: 1,
+                note: 60
+            })
+        ));
         // Zu kurz / kaputt.
         assert!(midi_bytes_to_command(&[], &map).is_none());
         assert!(midi_bytes_to_command(&[0x90], &map).is_none());
