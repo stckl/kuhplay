@@ -376,49 +376,116 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
 
     let mut patch = app.audio_patch.clone();
     let mut changed = false;
+    // Block M: Spaltenbreite hängt nicht vom Gerätenamen ab. Pro Gerätegruppe
+    // eine feste Breite (Checkbox-Spalten à ~26 px); der Gerätename wird auf
+    // diese Breite gekürzt („…“, voller Name im Tooltip) und steht über der
+    // Gruppe; dazwischen Trenner.
+    const CELL_W: f32 = 26.0;
+    let groups: Vec<(Option<String>, usize)> = {
+        let mut g: Vec<(Option<String>, usize)> = Vec::new();
+        for (device, _) in &columns {
+            match g.last_mut() {
+                Some((d, n)) if *d == *device => *n += 1,
+                _ => g.push((device.clone(), 1)),
+            }
+        }
+        g
+    };
+    let group_width = |device: &Option<String>| -> f32 {
+        groups
+            .iter()
+            .find(|(d, _)| d == device)
+            .map(|(_, n)| *n as f32 * CELL_W)
+            .unwrap_or(CELL_W)
+    };
+    let short_name = |device: &Option<String>| -> String {
+        let full = match device {
+            None => "System Default".to_string(),
+            Some(n) => n.clone(),
+        };
+        // auf Gruppenbreite kürzen (ca. 7 px pro Zeichen)
+        let max_chars = (group_width(device) / 7.0) as usize;
+        if full.chars().count() > max_chars && max_chars > 2 {
+            let mut t: String = full.chars().take(max_chars.saturating_sub(1)).collect();
+            t.push('…');
+            t
+        } else {
+            full
+        }
+    };
     ui.add_enabled_ui(!app.show_mode, |ui| {
         egui::ScrollArea::both()
             .max_height(ui.available_height() - 40.0)
             .show(ui, |ui| {
                 egui::Grid::new("settings_audio_patch_matrix")
-                    .num_columns(columns.len() + 1)
-                    .spacing(egui::vec2(6.0, 3.0))
+                    .num_columns(columns.len() + 1 + groups.len().saturating_sub(1))
+                    .spacing(egui::vec2(4.0, 3.0))
                     .striped(true)
                     .show(ui, |ui| {
-                        // Kopfzeile 1: Gerätename (je Gruppe nur in erster Spalte).
+                        // Kopfzeile 1: Gerätename über der Gruppe ( gekürzt, Tooltip = voll).
                         ui.label(egui::RichText::new("Channel").strong());
-                        let mut prev: Option<Option<&str>> = None;
+                        let mut prev: Option<Option<String>> = None;
                         for (device, _) in &columns {
-                            let name = device.as_deref();
-                            if prev == Some(name) {
-                                ui.label("");
-                            } else {
-                                let label = match name {
+                            if prev.as_ref() != Some(device) {
+                                let full = match device {
                                     None => "System Default".to_string(),
-                                    Some(name) => name.to_string(),
+                                    Some(n) => n.clone(),
                                 };
-                                ui.label(egui::RichText::new(label).strong());
+                                let short = short_name(device);
+                                let truncated = full != short;
+                                let resp = ui.label(egui::RichText::new(short).strong());
+                                if truncated {
+                                    resp.on_hover_text(full);
+                                }
+                                prev = Some(device.clone());
+                            } else {
+                                ui.label("");
                             }
-                            prev = Some(name);
                         }
+                        // Trenner-Spalten eigens zeichnen ist im Grid unhandlich –
+                        // stattdessen pro Gruppe letzter Spalte etwas Abstand:
                         ui.end_row();
-                        // Kopfzeile 2: Ausgangsnummern.
+                        // Kopfzeile 2: Ausgangsnummern (kurz, nie breitewirksam).
                         ui.label(egui::RichText::new("Out").small());
-                        for (_, output) in &columns {
-                            ui.label(
-                                egui::RichText::new(output.to_string())
-                                    .size(theme::size::LABEL_TEXT)
-                                    .color(theme::palette::TEXT_DIM),
-                            );
+                        for (device, output) in &columns {
+                            let is_last_of_group = groups
+                                .iter()
+                                .find(|(d, _)| d == device)
+                                .map(|(_, n)| {
+                                    let start = columns
+                                        .iter()
+                                        .position(|(d2, _)| d2 == device)
+                                        .unwrap_or(0);
+                                    start + *n - 1
+                                })
+                                .map(|end| {
+                                    columns
+                                        .iter()
+                                        .position(|(d2, o2)| d2 == device && o2 == output)
+                                        .unwrap_or(0)
+                                        == end
+                                })
+                                .unwrap_or(false);
+                            let label = egui::RichText::new(output.to_string())
+                                .size(theme::size::LABEL_TEXT)
+                                .color(theme::palette::TEXT_DIM);
+                            if is_last_of_group {
+                                ui.horizontal(|ui| {
+                                    ui.label(label);
+                                    ui.add_space(10.0); // optischer Trenner (M3)
+                                });
+                            } else {
+                                ui.label(label);
+                            }
                         }
                         ui.end_row();
-                        // Eine Zeile pro KuhPlay-Kanal.
+                        // Eine Zeile pro KuhPlay-Kanal; Checkbox-Spalten schmal.
                         for (i, channel) in patch.channels.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(format!("Ch {}", i + 1)).strong());
                                 let r = ui.add(
                                     egui::TextEdit::singleline(&mut channel.name)
-                                        .desired_width(140.0),
+                                        .desired_width(120.0),
                                 );
                                 app.text_field_ids.insert(r.id);
                             });
@@ -427,7 +494,8 @@ fn draw_channel_patch(ui: &mut egui::Ui, app: &mut ShowApp, device_channels: Opt
                                     .outputs
                                     .iter()
                                     .any(|o| o.device == *device && o.output == *output);
-                                if ui.checkbox(&mut checked, "").changed() {
+                                let cb = egui::Checkbox::new(&mut checked, "");
+                                if ui.add(cb).changed() {
                                     if checked {
                                         channel.outputs.push(ChannelOutput {
                                             device: device.clone(),
@@ -898,5 +966,49 @@ pub fn draw_multi_output_wizard(ctx: &egui::Context, app: &mut ShowApp) {
         app.multi_output_wizard = Some(w);
     } else {
         app.multi_output_wizard = None;
+    }
+}
+
+#[cfg(test)]
+mod block_m_tests {
+    use super::*;
+    use crate::engine::spawn_mock_engine;
+
+    /// Block M5: 60-Zeichen-Gerätename wird in der Kopfzeile gekürzt („…“),
+    /// der volle Name darf nicht gerendert werden (Spaltenbreite bleibt schmal).
+    #[test]
+    fn device_name_is_truncated_not_widening() {
+        let ctx = egui::Context::default();
+        crate::gui::icons::install(&ctx);
+        let mut app = ShowApp::new(spawn_mock_engine());
+        app.ui.workspace_settings_open = true;
+        app.ui.workspace_settings_page = SettingsPage::Audio;
+        let long_name = "A".repeat(60);
+        app.audio_devices = Some(AudioDeviceList {
+            devices: vec![crate::engine::audio_backend::OutputDevice {
+                name: long_name.clone(),
+                channels: 2,
+                sample_rate: 48000,
+            }],
+            default_name: None,
+        });
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
+        for _ in 0..2 {
+            out = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
+        }
+        let has = |needle: &str| {
+            out.shapes.iter().any(|shape| {
+                matches!(shape.shape, egui::Shape::Text(ref t) if t.galley.job.text.contains(needle))
+            })
+        };
+        assert!(!has(&long_name), "voller Name gerendert");
+        assert!(has("…"), "gekürzter Name mit … erwartet");
     }
 }
