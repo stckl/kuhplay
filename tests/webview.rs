@@ -349,6 +349,45 @@ fn engine_webview_frame_landet_im_frame_store_and_composites() {
 
 #[cfg(unix)]
 #[test]
+fn engine_requests_only_one_snapshot_until_the_answer_arrives() {
+    let dir = tempfile::tempdir().unwrap();
+    // Dieses Fake beantwortet Snapshots nie.
+    let script = write_fake_webview(dir.path(), None, false);
+    let (evt_tx, _evt_rx) = crossbeam_channel::unbounded();
+    let mut engine = RealMediaEngine::new(
+        new_frame_store(),
+        new_opacity_store(),
+        new_stage_frame_store(),
+        new_route_frame_store(),
+        evt_tx,
+    )
+    .with_webview_bin(script);
+    engine
+        .handle(EngineCommand::ConfigureStage {
+            stage: Stage::new("Main", StageGeometry::new(100.0, 100.0)),
+        })
+        .unwrap();
+    engine
+        .handle(EngineCommand::PlayHtml {
+            cue_id: uuid::Uuid::new_v4(),
+            source: HtmlSource::Inline("<h1>hi</h1>".into()),
+            stage: Some("Main".to_string()),
+            layer: 1,
+            duration: Some(Duration::from_secs(60)),
+            pre_wait: Duration::ZERO,
+            post_wait: Duration::ZERO,
+        })
+        .unwrap();
+    for _ in 0..40 {
+        engine.tick();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let log = std::fs::read_to_string(dir.path().join("requests.log")).unwrap();
+    assert_eq!(log.matches("\"snapshot\"").count(), 1, "{log}");
+}
+
+#[cfg(unix)]
+#[test]
 fn engine_webview_snapshot_backoff_bei_fehlern() {
     let dir = tempfile::tempdir().unwrap();
     // Fake antwortet auf snapshot mit einem Fehler (z. B. Seite ohne Canvas).

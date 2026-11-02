@@ -96,9 +96,12 @@ objc2-app-kit = { version = "0.2", optional = true, features = [
     "NSBitmapImageRep",
 ] }
 objc2-web-kit = { version = "0.2", optional = true, features = [
+    "WKPreferences",
     "WKSnapshotConfiguration",
+    "WKWebViewConfiguration",
 ] }
 block2 = { version = "0.5", optional = true }
+objc2-05 = { package = "objc2", version = "0.5", optional = true }
 
 # Zukünftige Media-Anbindung (noch nicht einkompiliert, bewusst commented):
 # gstreamer = "0.23"       # Video/Audio, Hardware-Decoding (Decklink, NDI)
@@ -114,6 +117,7 @@ webview = [
     "dep:objc2-app-kit",
     "dep:objc2-web-kit",
     "dep:block2",
+    "dep:objc2-05",
 ]
 # Native DeckLink-Ausgabe direkt über das Blackmagic SDK 16.0
 # (third_party/decklink-sdk-16.0, nur Include-Header eingecheckt). Ohne SDK

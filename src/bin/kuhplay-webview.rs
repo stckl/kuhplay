@@ -54,18 +54,27 @@ fn main() {
                 Err(_) => break,
             }
         }
+        // Eingabe zu = die App ist weg (auch nach Absturz): mitbeenden.
+        let _ = tx.send(r#"{"close":true}"#.to_string());
     });
 
-    let event_loop = EventLoop::new();
-    // Offscreen-Fenster: sichtbar (sonst throttled macOS rAF/JS-Timer der
-    // WebView → Standbild), aber außerhalb jedes Screens — es erscheint nicht
-    // auf dem Desktop. Der Snapshot geht per WKWebView takeSnapshot in die Stage.
+    #[allow(unused_mut)]
+    let mut event_loop = EventLoop::new();
+    // Kein Dock-Symbol und kein Fokus: Der Helper ist kein eigenes Programm.
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+        event_loop.set_activation_policy(ActivationPolicy::Accessory);
+    }
+    // Offscreen-Fenster: Es erscheint nicht auf dem Desktop, die Drosselung schaltet
+    // keep_running_when_inactive ab. Der Snapshot geht per takeSnapshot in die Stage.
     let window = WindowBuilder::new()
         .with_title("KuhPlay WebView")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 720.0))
         .with_position(tao::dpi::Position::new(tao::dpi::PhysicalPosition::new(
             -10000, -10000,
         )))
+        .with_focused(false)
         .with_decorations(false)
         .with_resizable(false)
         // Key/Fill: HTML default = transparenter Hintergrund (Seite ohne
@@ -78,6 +87,8 @@ fn main() {
         .with_transparent(true)
         .build(&window)
         .expect("webview must build");
+    #[cfg(target_os = "macos")]
+    keep_running_when_inactive(&webview);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -167,6 +178,33 @@ fn handle_message(line: &str, webview: &WebView, window: &tao::window::Window) -
 /// Verarbeitet einen Snapshot-Request. macOS: nativ über WKWebView
 /// `takeSnapshot` (sichtbarer Bereich in WebView-Größe); andere Plattformen:
 /// kooperativ über ein Page-Canvas in der Wunschgröße.
+/// Das Fenster liegt außerhalb jedes Screens: Ohne das drosselt WebKit die Timer
+/// der Seite auf einen Lauf pro Sekunde.
+#[cfg(target_os = "macos")]
+fn keep_running_when_inactive(webview: &WebView) {
+    use objc2_05::{msg_send, runtime::NSObjectProtocol, sel};
+    use objc2_web_kit::WKInactiveSchedulingPolicy;
+    use wry::WebViewExtMacOS;
+
+    let wk = webview.webview();
+    unsafe {
+        let preferences = wk.configuration().preferences();
+        // Gibt es erst ab macOS 14.
+        if preferences.respondsToSelector(sel!(setInactiveSchedulingPolicy:)) {
+            preferences.setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);
+        }
+        // Nicht öffentlich, aber die einzigen Schalter gegen die 1-Hz-Timer
+        // verdeckter Seiten. Fehlen sie in einer macOS-Version, bleibt es gedrosselt.
+        if preferences.respondsToSelector(sel!(_setHiddenPageDOMTimerThrottlingEnabled:)) {
+            let _: () = msg_send![&*preferences, _setHiddenPageDOMTimerThrottlingEnabled: false];
+        }
+        if preferences.respondsToSelector(sel!(_setPageVisibilityBasedProcessSuppressionEnabled:)) {
+            let _: () =
+                msg_send![&*preferences, _setPageVisibilityBasedProcessSuppressionEnabled: false];
+        }
+    }
+}
+
 fn handle_snapshot(webview: &WebView, window: &tao::window::Window, width: u32, height: u32) {
     #[cfg(target_os = "macos")]
     {
@@ -178,7 +216,7 @@ fn handle_snapshot(webview: &WebView, window: &tao::window::Window, width: u32, 
         if window.inner_size().to_logical::<f64>(window.scale_factor()) != target {
             window.set_inner_size(target);
         }
-        native_snapshot(webview);
+        native_snapshot(webview, width, height);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -193,13 +231,13 @@ fn handle_snapshot(webview: &WebView, window: &tao::window::Window, width: u32, 
 /// Alles auf dem Main-Thread (IPC-Handler); der Completion-Handler
 /// antwortet asynchron mit PNG → [`emit_frame_from_png`].
 #[cfg(target_os = "macos")]
-fn native_snapshot(webview: &WebView) {
+fn native_snapshot(webview: &WebView, width: u32, height: u32) {
     use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
     use objc2_foundation::{NSDictionary, NSError};
     use wry::WebViewExtMacOS;
 
     let wk = webview.webview();
-    let block = block2::RcBlock::new(|image: *mut NSImage, error: *mut NSError| {
+    let block = block2::RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
         if !error.is_null() {
             let msg = unsafe { &*error }.localizedDescription().to_string();
             emit(&serde_json::json!({ "error": format!("snapshot: {msg}") }));
@@ -222,7 +260,7 @@ fn native_snapshot(webview: &WebView) {
                 })
         };
         match png {
-            Some(data) => emit_frame_from_png(data.bytes()),
+            Some(data) => emit_frame_from_png(data.bytes(), Some((width, height))),
             None => emit(&serde_json::json!({ "error": "snapshot: png encode failed" })),
         }
     });
@@ -262,7 +300,7 @@ fn js_snapshot(webview: &WebView, width: u32, height: u32) {
         };
         if let Some(b64) = inner.strip_prefix("data:image/png;base64,") {
             match base64::engine::general_purpose::STANDARD.decode(b64) {
-                Ok(png) => emit_frame_from_png(&png),
+                Ok(png) => emit_frame_from_png(&png, None),
                 Err(err) => {
                     emit(&serde_json::json!({ "error": format!("snapshot: base64: {err}") }))
                 }
@@ -282,12 +320,20 @@ fn js_snapshot(webview: &WebView, width: u32, height: u32) {
 }
 
 /// Dekodiert PNG → RGBA und emitted `{"frame": {…}}` (base64-kodiert).
-fn emit_frame_from_png(png: &[u8]) {
+///
+/// `size`: Wunschgröße. Retina liefert doppelt so viele Pixel wie die Stage hat;
+/// das Bild wird dann auf die Stage-Pixel verkleinert.
+fn emit_frame_from_png(png: &[u8], size: Option<(u32, u32)>) {
     let Ok(img) = image::load_from_memory(png) else {
         emit(&serde_json::json!({ "error": "snapshot: png decode failed" }));
         return;
     };
-    let rgba = img.to_rgba8();
+    let mut rgba = img.to_rgba8();
+    if let Some((w, h)) = size {
+        if w > 0 && h > 0 && (rgba.width() > w || rgba.height() > h) {
+            rgba = image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Triangle);
+        }
+    }
     let (w, h) = rgba.dimensions();
     let b64 = base64::engine::general_purpose::STANDARD.encode(rgba.into_raw());
     emit(&serde_json::json!({

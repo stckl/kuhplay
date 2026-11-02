@@ -244,6 +244,10 @@ struct ActiveHtml {
     /// Fehlgeschlagene Snapshots in Folge (Backoff, siehe
     /// [`WEBVIEW_MAX_SNAPSHOT_FAILURES`]).
     snapshot_failures: u32,
+    /// Seit wann ein Snapshot unterwegs ist. Es läuft immer nur einer: Dauert
+    /// ein Bild länger als das Intervall, stauten sich sonst die Anfragen und
+    /// das Bild hinkte immer weiter hinterher.
+    snapshot_pending_since: Option<Duration>,
 }
 
 /// Snapshot-Intervall für WebView-Compositing (HTML5-Cues auf Stages).
@@ -256,6 +260,9 @@ const WEBVIEW_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(33);
 /// Snapshot) – Fehler werden nicht endlos wiederholt.
 /// Backoff nach Snapshot-Fehlern (Retry statt Dauer-Stopp).
 const WEBVIEW_SNAPSHOT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Bleibt die Antwort so lange aus, gilt der Snapshot als verloren.
+const WEBVIEW_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Default-Snapshot-Größe, wenn der Cue keiner Stage zugeordnet ist.
 const WEBVIEW_SNAPSHOT_DEFAULT: (u32, u32) = (1280, 720);
@@ -2344,6 +2351,7 @@ impl MediaEngine for RealMediaEngine {
                     // Snapshots erst nach bestätigtem Load anfordern.
                     next_snapshot_at: None,
                     snapshot_failures: 0,
+                    snapshot_pending_since: None,
                 },
             );
             out.push(EngineEvent::HtmlLoaded { cue_id });
@@ -2358,8 +2366,12 @@ impl MediaEngine for RealMediaEngine {
             // Fälligen Snapshot anfordern (nach Load). Bei Fehlern kein
             // dauerhaftes Stoppen, sondern Backoff – sonst friert das HTML
             // nach ein paar Snapshot-Fehlern ein (z. B. Offscreen-Fenster).
-            if let Some(due) = html.next_snapshot_at {
+            let snapshot_free = html
+                .snapshot_pending_since
+                .is_none_or(|since| now.saturating_sub(since) >= WEBVIEW_SNAPSHOT_TIMEOUT);
+            if let Some(due) = html.next_snapshot_at.filter(|_| snapshot_free) {
                 if now >= due {
+                    html.snapshot_pending_since = Some(now);
                     let (w, h) = match &html.stage {
                         Some(stage) => canvas_size(&self.stages, stage),
                         None => WEBVIEW_SNAPSHOT_DEFAULT,
@@ -2384,6 +2396,7 @@ impl MediaEngine for RealMediaEngine {
                         rgba,
                     } => {
                         html.snapshot_failures = 0;
+                        html.snapshot_pending_since = None;
                         let frame = Arc::new(VideoFrame::new(width, height, rgba));
                         self.frames.lock().unwrap().insert(*cue_id, frame);
                     }
@@ -2395,6 +2408,7 @@ impl MediaEngine for RealMediaEngine {
                     }
                     super::webview_backend::WebviewEvent::Error(message) => {
                         if message.starts_with("snapshot:") {
+                            html.snapshot_pending_since = None;
                             // Snapshot-Fehler: einmal melden, dann Backoff (Retry).
                             html.snapshot_failures += 1;
                             if html.snapshot_failures == 1 {
