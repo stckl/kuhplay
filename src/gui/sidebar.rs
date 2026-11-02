@@ -192,6 +192,16 @@ fn total_runtime(
     }
 }
 
+/// Spielzeit eines In/Out- oder Slice-Plans.
+fn planned_runtime(cue: &crate::core::Cue) -> Option<Duration> {
+    (!cue.slices.is_empty()).then(|| {
+        cue.slices
+            .iter()
+            .map(|slice| slice.duration().saturating_mul(slice.play_count.max(1)))
+            .sum()
+    })
+}
+
 /// Zeitanzeige einer Zeile: Restzeit, ohne bekanntes Ende die gelaufene Zeit.
 fn active_time_text(elapsed: Option<Duration>, total: Option<Duration>) -> String {
     match (elapsed, total) {
@@ -215,7 +225,9 @@ fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
                 duration: cue.duration,
                 elapsed: app.elapsed_of(cue),
                 media: app.media_duration_of(cue),
-                total: total_runtime(cue.duration, app.media_duration_of(cue), cue.loop_mode),
+                total: planned_runtime(cue).or_else(|| {
+                    total_runtime(cue.duration, app.media_duration_of(cue), cue.loop_mode)
+                }),
             });
         }
     }

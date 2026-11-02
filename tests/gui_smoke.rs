@@ -2753,3 +2753,96 @@ fn stage_editor_moves_region_and_one_to_one_button_resets_it() {
         "Raster 1:1"
     );
 }
+
+/// Video-Cue: Die Waveform erscheint, und ein Klick darauf setzt den Startpunkt,
+/// ohne das Ende zu verkürzen.
+#[test]
+fn video_cue_waveform_click_sets_in_and_keeps_the_end() {
+    use kuhplay::engine::video_backend::VideoBackend;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("clip.mkv");
+    let made = std::process::Command::new(VideoBackend::ffmpeg_binary())
+        .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc=s=64x64:r=25:d=4")
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=4"])
+        .args(["-c:v", "mpeg4", "-c:a", "ac3"])
+        .arg(&path)
+        .status();
+    if !made.is_ok_and(|s| s.success()) {
+        return; // ffmpeg fehlt
+    }
+
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut app = demo_app();
+    let index = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .position(|c| c.cue_type == CueType::Video)
+        .expect("Video-Cue");
+    app.carts.active_mut().select(Some(index));
+    app.carts.active_mut().cues_mut()[index].target_path = Some(path.display().to_string());
+    app.ui.inspector_visible = true;
+    app.ui.inspector_tab = kuhplay::gui::InspectorTab::TimeLoops;
+
+    let mut time = 1.0;
+    let mut frame = |app: &mut ShowApp, events: Vec<egui::Event>| {
+        time += 0.05;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 900.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        ctx.run(raw, |ctx| app.draw_workspace(ctx))
+    };
+    // Warten, bis die Berechnung im Hintergrund fertig ist.
+    let mut out = frame(&mut app, vec![]);
+    for _ in 0..200 {
+        if !output_has_text(&out, "reading audio…") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        out = frame(&mut app, vec![]);
+    }
+    let _ = frame(&mut app, vec![]);
+    let out = frame(&mut app, vec![]);
+    assert!(
+        !output_has_text(&out, "no waveform"),
+        "Video braucht eine Waveform"
+    );
+    let label = out
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.job.text == "Waveform" => Some(t.pos),
+            _ => None,
+        })
+        .expect("Waveform-Zeile");
+
+    let target = label + egui::vec2(500.0, 12.0);
+    let press = |pressed: bool| egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(target)]);
+    let _ = frame(&mut app, vec![press(true)]);
+    let _ = frame(&mut app, vec![press(false)]);
+    let _ = frame(&mut app, vec![]);
+
+    let cue = &app.carts.active().cues()[index];
+    assert_eq!(cue.slices.len(), 1, "Klick muss den Startpunkt setzen");
+    assert!(cue.slices[0].start > Duration::ZERO);
+    assert!(
+        cue.slices[0].end > Duration::from_secs(3),
+        "Das Ende bleibt am Clip-Ende: {:?}",
+        cue.slices[0]
+    );
+}

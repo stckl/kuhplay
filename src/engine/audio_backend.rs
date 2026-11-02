@@ -705,7 +705,7 @@ impl Drop for FfmpegAudio {
 }
 
 /// Hat die Datei eine Tonspur? (Reine Video-Dateien sollen keinen ffmpeg starten.)
-fn has_audio_stream(path: &str) -> bool {
+pub(super) fn has_audio_stream(path: &str) -> bool {
     std::process::Command::new(super::video_backend::VideoBackend::ffprobe_binary())
         .args([
             "-v",

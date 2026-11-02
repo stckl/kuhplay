@@ -1033,3 +1033,40 @@ fn fade_applies_to_target_cue_not_self() {
         "Fade-Cue selbst darf keine Opacity bekommen"
     );
 }
+
+/// In und Out gelten auch für Videos: Es läuft nur der gewählte Abschnitt.
+#[test]
+fn video_plays_only_between_in_and_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("clip.mkv");
+    let made =
+        std::process::Command::new(kuhplay::engine::video_backend::VideoBackend::ffmpeg_binary())
+            .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=s=64x64:r=25:d=10")
+            .args(["-c:v", "mpeg4"])
+            .arg(&path)
+            .status();
+    if !made.is_ok_and(|s| s.success()) {
+        return; // ffmpeg fehlt
+    }
+    let engine = spawn_real_engine();
+    let cue_id = Uuid::new_v4();
+    let mut command = play_cmd(cue_id, &path, None);
+    if let EngineCommand::Play { slices, .. } = &mut command {
+        slices.push(kuhplay::core::MediaSlice::new(
+            Duration::from_secs(5),
+            Duration::from_millis(5500),
+            1,
+        ));
+    }
+    let started = std::time::Instant::now();
+    engine.commands.send(command).unwrap();
+    let finished = wait_for_event(
+        &engine.events,
+        |e| matches!(e, EngineEvent::Finished { cue_id: id, .. } if *id == cue_id),
+        Duration::from_secs(5),
+    );
+    assert!(finished.is_some(), "Abschnitt muss enden");
+    let elapsed = started.elapsed().as_secs_f32();
+    assert!((0.3..4.0).contains(&elapsed), "statt 10 s: {elapsed} s");
+}

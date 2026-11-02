@@ -73,8 +73,63 @@ pub enum WaveformError {
 /// gleichmäßige Aufteilung aller Samples (leere Buckets → `(0.0, 0.0)`).
 /// Hinweis: dekodiert das ganze File in den Speicher (Mono-f32) – für die
 /// Vorschau üblicher Dateien unkritisch.
+///
+/// Was der eingebaute Decoder nicht kann (Video-Container, AC3, …), liest ffmpeg.
+/// Ein Video ohne Ton bekommt eine flache Linie mit seiner Dauer: In und Out lassen
+/// sich dann trotzdem setzen.
 pub fn compute_waveform(path: &Path, buckets: usize) -> Result<Waveform, WaveformError> {
     let buckets = buckets.max(1);
+    if let Err(err) = std::fs::metadata(path) {
+        return Err(WaveformError::Open(path.display().to_string(), err));
+    }
+    match compute_native(path, buckets) {
+        Ok(waveform) if waveform.duration > Duration::ZERO => Ok(waveform),
+        Ok(_) | Err(_) => compute_with_ffmpeg(path, buckets),
+    }
+}
+
+/// Abtastrate der ffmpeg-Vorschau: Für Peaks reicht wenig, das spart Zeit und Speicher.
+const FFMPEG_PREVIEW_RATE: u32 = 8000;
+
+fn compute_with_ffmpeg(path: &Path, buckets: usize) -> Result<Waveform, WaveformError> {
+    let name = path.display().to_string();
+    if !super::audio_backend::has_audio_stream(&name) {
+        let info =
+            super::video_backend::probe(&name).map_err(|_| WaveformError::NoTrack(name.clone()))?;
+        return Ok(Waveform {
+            buckets: vec![(0.0, 0.0); buckets],
+            duration: info.duration.ok_or(WaveformError::NoTrack(name))?,
+            sample_rate: FFMPEG_PREVIEW_RATE,
+        });
+    }
+    let output = std::process::Command::new(super::video_backend::VideoBackend::ffmpeg_binary())
+        .args(["-nostdin", "-v", "error", "-i"])
+        .arg(path)
+        .args(["-map", "0:a:0", "-vn", "-ac", "1", "-ar"])
+        .arg(FFMPEG_PREVIEW_RATE.to_string())
+        .args(["-f", "f32le", "pipe:1"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| WaveformError::Decode(e.to_string()))?;
+    let mono: Vec<f32> = output
+        .stdout
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    if mono.is_empty() {
+        return Err(WaveformError::Decode(format!(
+            "ffmpeg: no samples in {name}"
+        )));
+    }
+    Ok(Waveform {
+        buckets: peak_buckets(&mono, buckets),
+        duration: Duration::from_secs_f64(mono.len() as f64 / f64::from(FFMPEG_PREVIEW_RATE)),
+        sample_rate: FFMPEG_PREVIEW_RATE,
+    })
+}
+
+fn compute_native(path: &Path, buckets: usize) -> Result<Waveform, WaveformError> {
     let file = std::fs::File::open(path)
         .map_err(|e| WaveformError::Open(path.display().to_string(), e))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -142,7 +197,23 @@ pub fn compute_waveform(path: &Path, buckets: usize) -> Result<Waveform, Wavefor
         }
     }
 
-    // Buckets: gleichmäßige Aufteilung, min/max pro Bucket (geclampt).
+    let total = mono.len();
+    let out = peak_buckets(&mono, buckets);
+    // Fallback: Dauer aus der Mono-Sample-Anzahl (total ist bereits Mono).
+    let duration = if duration.is_zero() && sample_rate > 0 {
+        Duration::from_secs_f64(total as f64 / sample_rate as f64)
+    } else {
+        duration
+    };
+    Ok(Waveform {
+        buckets: out,
+        duration,
+        sample_rate,
+    })
+}
+
+/// Gleichmäßige Aufteilung in Buckets, min/max pro Bucket (geclampt).
+fn peak_buckets(mono: &[f32], buckets: usize) -> Vec<(f32, f32)> {
     let total = mono.len();
     let mut out = Vec::with_capacity(buckets);
     for i in 0..buckets {
@@ -170,17 +241,18 @@ pub fn compute_waveform(path: &Path, buckets: usize) -> Result<Waveform, Wavefor
         }
         out.push((min, max));
     }
-    // Fallback: Dauer aus der Mono-Sample-Anzahl (total ist bereits Mono).
-    let duration = if duration.is_zero() && sample_rate > 0 {
-        Duration::from_secs_f64(total as f64 / sample_rate as f64)
-    } else {
-        duration
-    };
-    Ok(Waveform {
-        buckets: out,
-        duration,
-        sample_rate,
-    })
+    out
+}
+
+/// Stand einer Peak-Berechnung für die Oberfläche.
+#[derive(Debug, Clone)]
+pub enum WaveformState {
+    /// Fertig.
+    Ready(Arc<Waveform>),
+    /// Läuft im Hintergrund.
+    Pending,
+    /// Datei nicht lesbar.
+    Failed,
 }
 
 /// Thread-sicherer Cache: Pfad → Peaks (GUI-seitig für den Inspector).
@@ -190,6 +262,7 @@ pub fn compute_waveform(path: &Path, buckets: usize) -> Result<Waveform, Wavefor
 #[derive(Debug, Default, Clone)]
 pub struct WaveformCache {
     inner: Arc<Mutex<HashMap<PathBuf, Option<Arc<Waveform>>>>>,
+    pending: Arc<Mutex<std::collections::HashSet<PathBuf>>>,
 }
 
 impl WaveformCache {
@@ -212,6 +285,26 @@ impl WaveformCache {
         w
     }
 
+    /// Für die Oberfläche: rechnet im Hintergrund, damit ein langes Video das
+    /// Fenster nicht blockiert (auch nicht während einer Show).
+    pub fn request(&self, path: &Path, buckets: usize) -> WaveformState {
+        if let Some(cached) = self.inner.lock().unwrap().get(path) {
+            return cached
+                .clone()
+                .map_or(WaveformState::Failed, WaveformState::Ready);
+        }
+        if self.pending.lock().unwrap().insert(path.to_path_buf()) {
+            let cache = self.clone();
+            let path = path.to_path_buf();
+            std::thread::spawn(move || {
+                let waveform = compute_waveform(&path, buckets).ok().map(Arc::new);
+                cache.inner.lock().unwrap().insert(path.clone(), waveform);
+                cache.pending.lock().unwrap().remove(&path);
+            });
+        }
+        WaveformState::Pending
+    }
+
     /// Anzahl gecachter Einträge (für Tests).
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap().len()
@@ -231,6 +324,83 @@ impl WaveformCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn generated(dir: &Path, name: &str, args: &[&str]) -> Option<PathBuf> {
+        let path = dir.join(name);
+        let status =
+            std::process::Command::new(crate::engine::video_backend::VideoBackend::ffmpeg_binary())
+                .args(["-nostdin", "-v", "error", "-y"])
+                .args(args)
+                .arg(&path)
+                .status()
+                .ok()?;
+        status.success().then_some(path)
+    }
+
+    #[test]
+    fn video_with_sound_gets_a_waveform_through_ffmpeg() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = [
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=s=64x64:r=25:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=2:sample_rate=48000",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "ac3",
+        ];
+        let Some(path) = generated(dir.path(), "a.mkv", &args) else {
+            return;
+        };
+        let waveform = compute_waveform(&path, 100).unwrap();
+        assert!(waveform.peak() > 0.02, "Peak {}", waveform.peak());
+        assert!((1.5..2.5).contains(&waveform.duration.as_secs_f32()));
+    }
+
+    #[test]
+    fn video_without_sound_gets_a_flat_line_with_its_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = [
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=s=64x64:r=25:d=2",
+            "-c:v",
+            "mpeg4",
+        ];
+        let Some(path) = generated(dir.path(), "a.mp4", &args) else {
+            return;
+        };
+        let waveform = compute_waveform(&path, 100).unwrap();
+        assert_eq!(waveform.peak(), 0.0);
+        assert!((1.5..2.5).contains(&waveform.duration.as_secs_f32()));
+    }
+
+    #[test]
+    fn request_computes_in_the_background() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.wav");
+        write_sine_wav(&path, 0.2, 0.5);
+        let cache = WaveformCache::new();
+        let started = std::time::Instant::now();
+        let mut state = cache.request(&path, 10);
+        while matches!(state, WaveformState::Pending) {
+            assert!(started.elapsed().as_secs() < 5, "Berechnung hängt");
+            std::thread::sleep(Duration::from_millis(5));
+            state = cache.request(&path, 10);
+        }
+        assert!(matches!(state, WaveformState::Ready(_)));
+        let missing = dir.path().join("fehlt.wav");
+        while matches!(cache.request(&missing, 10), WaveformState::Pending) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(cache.request(&missing, 10), WaveformState::Failed));
+    }
 
     /// Schreibt eine Mono-WAV (16-bit) mit Sinus, Amplitude `amp`, `secs` lang.
     fn write_sine_wav(path: &Path, secs: f32, amp: f32) {
