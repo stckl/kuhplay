@@ -72,7 +72,12 @@ Arbeite **inkrementell in den unten beschriebenen Phasen**. Nach jeder Phase mus
 
 ## 3. Phasen
 
-### Phase 0 – Gefundene Fehler beheben (zuerst!)
+### Phase 0 – Gefundene Fehler beheben (zuerst!) — ERLEDIGT 2026-11-02
+
+Alle 8 Punkte sind umgesetzt (find_cue_any über alle Carts, Esc-Gate über
+text_field_active, ⌘↑/⌘↓ nach shortcuts.rs, last_error im Footer, next_free_number,
+stop_running vor dem Löschen, Gruppen-Kinder per UUID selektierbar, Space-Gate
+nur Textfelder). Siehe Commits/Review-Blöcke; Regressionstests in tests/.
 
 Diese Fehler wurden beim Code-Review gefunden. Für **jeden** zuerst einen
 fehlschlagenden Test schreiben, dann fixen.
