@@ -314,6 +314,10 @@ pub struct Region {
     /// Raster-Overlay (Testbild) nur über dieser Region.
     #[serde(default)]
     pub grid: bool,
+    /// Key-Signal statt Bild: gibt die Alpha der Stage aus. Zusammen mit einer
+    /// normalen Region (Fill) auf einem anderen Ausgang ergibt das Key/Fill.
+    #[serde(default)]
+    pub key: bool,
 }
 
 fn default_true() -> bool {
@@ -333,6 +337,7 @@ impl Region {
             blend: EdgeBlend::ZERO,
             auto_blend: true,
             grid: false,
+            key: false,
         }
     }
 

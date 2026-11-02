@@ -99,7 +99,7 @@ Alles läuft über Umgebungsvariablen beim Start.
 | `KUHPLAY_MIDI_MAP` | Noten, z. B. `go=36,panic=37,pause=38,resume=39,reset=40` | Noten 0–4 |
 | `KUHPLAY_MIDI_OUT_DEVICE` | MIDI-Ausgabegerät für MIDI-Cues (Teilstring) | erstes Output-Device |
 | `KUHPLAY_DECKLINK_DEVICE`, `_STAGE`, `_WIDTH`, `_HEIGHT`, `_FPS` | DeckLink-Ausgabe direkt über das Blackmagic SDK 16.0 (Build mit `--features decklink`): Die Stage liefert über ihre Region das Route-Bild auf die Karte, Scheduled Playback mit late/dropped-Zählern | aus |
-| `KUHPLAY_DECKLINK_KEY_DEVICE` | Zweiter DeckLink-Port für Key/Fill: Key-Route der Stage (Alpha) als Luma auf SDI | aus |
+| `KUHPLAY_DECKLINK_KEY_DEVICE` | Zweiter DeckLink-Port für Key/Fill: Die Key-Region der Stage geht als Graubild (Alpha) auf diesen Port | aus |
 
 **DeckLink-Hardware (SDI/HDMI):** Ausgabe läuft direkt über das Blackmagic SDK
 (Header unter `third_party/decklink-sdk-16.0/`, nur Include-Dateien eingecheckt,

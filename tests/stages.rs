@@ -202,3 +202,22 @@ fn video_playback_with_stage_reference_runs_normally() {
         .iter()
         .any(|e| matches!(e, EngineEvent::Finished { cue_id } if *cue_id == id)));
 }
+
+/// Das alte Key/Fill-Paar einer Stage wird zur Key-Region mit dem Crop der Fill-Region.
+#[test]
+fn old_key_fill_pair_becomes_a_key_region() {
+    let (fill, key) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    let mut stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(100.0, 100.0));
+    let mut region = kuhplay::core::Region::new(10.0, 0.0, 50.0, 100.0);
+    region.route = Some(fill);
+    stage.regions = vec![region];
+    stage.key_fill = Some(kuhplay::core::KeyFillRoutes { fill, key });
+
+    assert_eq!(stage.migrate_key_fill(), Some(key));
+    assert!(stage.key_fill.is_none());
+    assert_eq!(stage.regions.len(), 2);
+    let added = &stage.regions[1];
+    assert!(added.key);
+    assert_eq!((added.x, added.width), (10.0, 50.0));
+    assert_eq!(stage.fill_and_key_routes(), (Some(fill), Some(key)));
+}

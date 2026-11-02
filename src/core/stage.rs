@@ -696,6 +696,41 @@ impl Stage {
         }
     }
 
+    /// Ausgänge für eine einzelne Karte: erste Bild-Region und erste Key-Region.
+    pub fn fill_and_key_routes(&self) -> (Option<Uuid>, Option<Uuid>) {
+        let first = |key: bool| {
+            self.regions
+                .iter()
+                .filter(|r| r.key == key)
+                .find_map(|r| r.route)
+        };
+        (first(false), first(true))
+    }
+
+    /// Alte Shows: Das Key/Fill-Paar der Stage wird zu einer Key-Region. Liefert
+    /// die Route, die als Key rendern muss. Bestehende Regionen auf Key-Routen
+    /// markiert der Aufrufer anhand der Route.
+    pub fn migrate_key_fill(&mut self) -> Option<Uuid> {
+        let pair = self.key_fill.take()?;
+        if let Some(region) = self.regions.iter_mut().find(|r| r.route == Some(pair.key)) {
+            region.key = true;
+        } else {
+            let source = self
+                .regions
+                .iter()
+                .find(|r| r.route == Some(pair.fill))
+                .or_else(|| self.regions.first());
+            let mut region = source.cloned().unwrap_or_else(|| {
+                crate::core::Region::full_stage(self.geometry.width, self.geometry.height)
+            });
+            region.id = Uuid::new_v4();
+            region.route = Some(pair.key);
+            region.key = true;
+            self.regions.push(region);
+        }
+        Some(pair.key)
+    }
+
     /// Validiert die Stage (inkl. Geometrie).
     pub fn validate(&self) -> ShowResult<()> {
         if self.name.trim().is_empty() {

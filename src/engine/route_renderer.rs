@@ -476,7 +476,8 @@ pub fn auto_blends(regions: &[Region]) -> Vec<EdgeBlend> {
     let mut out = vec![EdgeBlend::ZERO; regions.len()];
     for (i, a) in regions.iter().enumerate() {
         for (j, b) in regions.iter().enumerate() {
-            if i == j {
+            // Key und Fill zeigen dasselbe Bild, sie blenden nicht ineinander.
+            if i == j || a.key != b.key {
                 continue;
             }
             let overlap_w = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
@@ -692,6 +693,18 @@ mod tests {
         let out = present_on_device(&frame, &route, 1000, 1000);
         assert_eq!(pixel(&out, 250, 500), [255, 0, 0], "Quelle x≈710 rot");
         assert_eq!(pixel(&out, 750, 500), [0, 0, 255], "Quelle x≈1210 blau");
+    }
+
+    #[test]
+    fn key_and_fill_regions_do_not_blend_into_each_other() {
+        let fill = Region::new(0.0, 0.0, 100.0, 100.0);
+        let mut key = Region::new(50.0, 0.0, 100.0, 100.0);
+        key.key = true;
+        let blends = auto_blends(&[fill.clone(), key]);
+        assert_eq!(blends[0], EdgeBlend::ZERO);
+
+        let neighbour = Region::new(50.0, 0.0, 100.0, 100.0);
+        assert_ne!(auto_blends(&[fill, neighbour])[0], EdgeBlend::ZERO);
     }
 
     #[test]

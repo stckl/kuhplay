@@ -75,10 +75,6 @@ pub fn draw(ctx: &egui::Context, app: &mut ShowApp) {
                     });
                     ui.separator();
                     ui.scope(|ui| draw_display_view(ui, app, stage_id));
-                    ui.separator();
-                    egui::CollapsingHeader::new("Key/Fill").show(ui, |ui| {
-                        draw_key_fill(ui, app, stage_id);
-                    });
                 });
         },
     );
@@ -188,6 +184,9 @@ fn draw_region_list(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
                                 .as_ref()
                                 .map_or("No display", |device| device.label()),
                         );
+                        if region.key {
+                            ui.label(egui::RichText::new("KEY").small().strong());
+                        }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Delete").clicked() {
@@ -238,6 +237,43 @@ fn add_region(ui: &egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
     stage.regions.push(region);
     app.configure_stage(stage.clone());
     set_selected_region(ui, &stage, region_id);
+}
+
+/// Key-Gegenstück: gleicher Crop wie die Region, möglichst auf einem anderen
+/// Display.
+fn add_key_region(ui: &egui::Ui, app: &mut ShowApp, stage_id: Uuid, fill_id: Uuid) {
+    let Some(mut stage) = stage_of(app, stage_id) else {
+        return;
+    };
+    let Some(fill) = stage.regions.iter().find(|r| r.id == fill_id).cloned() else {
+        return;
+    };
+    let fill_device = fill
+        .route
+        .and_then(|id| app.routes.find(id))
+        .and_then(|route| route.device.clone());
+    let displays = display_infos(app);
+    let display = displays
+        .iter()
+        .find(|d| !matches!(&fill_device, Some(DeviceRef::Display { id, .. }) if *id == d.id))
+        .or_else(|| displays.first());
+    let route_id = match display {
+        Some(display) => app.add_route_for_display(display),
+        None => app.add_route(),
+    };
+    if let Some(route) = app.routes.find_mut(route_id) {
+        route.alpha = true;
+    }
+    app.configure_routes();
+    let mut key = fill;
+    key.id = Uuid::new_v4();
+    key.route = Some(route_id);
+    key.key = true;
+    key.grid = false;
+    let key_id = key.id;
+    stage.regions.push(key);
+    app.configure_stage(stage.clone());
+    set_selected_region(ui, &stage, key_id);
 }
 
 /// Löscht eine Region samt ihrem Ausgang, wenn keine andere Region ihn nutzt.
@@ -321,6 +357,13 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
                 }
             });
         ui.end_row();
+        theme::field_label(ui, "Signal");
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut reg.key, false, "Fill");
+            ui.selectable_value(&mut reg.key, true, "Key")
+                .on_hover_text("Outputs the stage's alpha as a grayscale key signal");
+        });
+        ui.end_row();
         if on_display {
             theme::field_label(ui, "Position");
             ui.horizontal(|ui| {
@@ -339,19 +382,24 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
         }
         theme::field_label(ui, if on_display { "Size" } else { "Format" });
         ui.horizontal(|ui| {
-            let (max_w, max_h) = if on_display { device } else { (30000, 30000) };
+            // Darf größer als das Display sein, der Rest wird dort abgeschnitten.
             ui.add(
                 egui::DragValue::new(&mut w)
-                    .range(MIN_AREA_SIZE..=max_w.max(MIN_AREA_SIZE))
+                    .range(MIN_AREA_SIZE..=30000)
                     .prefix("W "),
             );
             ui.add(
                 egui::DragValue::new(&mut h)
-                    .range(MIN_AREA_SIZE..=max_h.max(MIN_AREA_SIZE))
+                    .range(MIN_AREA_SIZE..=30000)
                     .prefix("H "),
             );
-            if on_display && ui.button("Fill Display").clicked() {
-                (x, y, w, h) = (0, 0, device.0, device.1);
+            if on_display
+                && ui
+                    .button("1:1")
+                    .on_hover_text("Original pixel size at the top left of the display")
+                    .clicked()
+            {
+                (x, y, w, h) = one_to_one(&reg, r.rotation);
             }
         });
         ui.end_row();
@@ -428,6 +476,12 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
         ui.label(egui::RichText::new(hint).small().color(palette::TEXT_DIM));
     }
 
+    if !region.key && ui.button("+ Add Key Region").clicked() {
+        add_key_region(ui, app, stage_id, region.id);
+        return;
+    }
+    r.alpha = reg.key;
+
     // Beim Crop bleibt der Maßstab gleich: 1:1 bleibt 1:1.
     if crop != old_crop {
         let before = (reg.width, reg.height);
@@ -448,15 +502,11 @@ fn draw_region_properties(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) 
         };
         (x, y, w, h) = (0, 0, size.0, size.1);
     }
-    if r.device != route.device || on_display {
+    // Die Region beginnt immer auf dem Display.
+    if matches!(r.device, Some(DeviceRef::Display { .. })) {
         let size = device_size(&r, &displays);
-        let on_display_now = matches!(r.device, Some(DeviceRef::Display { .. }));
-        if on_display_now {
-            w = w.clamp(MIN_AREA_SIZE, size.0.max(MIN_AREA_SIZE));
-            h = h.clamp(MIN_AREA_SIZE, size.1.max(MIN_AREA_SIZE));
-            x = x.min(size.0.saturating_sub(w));
-            y = y.min(size.1.saturating_sub(h));
-        }
+        x = x.min(size.0.saturating_sub(w.min(size.0)));
+        y = y.min(size.1.saturating_sub(h.min(size.1)));
     }
     let size = device_size(&r, &displays);
     set_placement(&mut r, (x, y, w, h), size);
@@ -641,7 +691,15 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
     }
     if response.double_clicked() {
         if let Some(p) = origin.or(now).and_then(hit) {
-            change = Some((p.route, (0, 0, p.device.0, p.device.1), p.device));
+            let rect = stage
+                .regions
+                .iter()
+                .find(|r| r.id == p.region)
+                .zip(app.routes.find(p.route))
+                .map(|(region, route)| one_to_one(region, route.rotation));
+            if let Some(rect) = rect {
+                change = Some((p.route, rect, p.device));
+            }
         }
     }
 
@@ -746,8 +804,9 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
             area.center(),
             Align2::CENTER_CENTER,
             format!(
-                "{}  {}×{}{rotation_label}",
+                "{}{}  {}×{}{rotation_label}",
                 letters.get(&region.id).cloned().unwrap_or_default(),
+                if region.key { " KEY" } else { "" },
                 rect.2,
                 rect.3
             ),
@@ -758,8 +817,7 @@ fn draw_display_view(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
             painter.rect_filled(handle_rect(area).shrink(3.0), 1.0, color);
         }
     }
-    response
-        .on_hover_text("Drag to move, drag the corner to resize, double-click to fill the display");
+    response.on_hover_text("Drag to move, drag the corner to resize, double-click for 1:1");
 
     if let Some((route_id, rect, device)) = change {
         if let Some(route) = app.routes.find_mut(route_id) {
@@ -886,6 +944,20 @@ fn displayed_sides(route: &OutputRoute, [l, t, r, b]: [f32; 4]) -> [f32; 4] {
     [dl, dt, dr, db]
 }
 
+/// Original-Pixelgröße der Region oben links auf dem Display. Passt die Stage
+/// nicht zum Display, ragt sie hinaus oder lässt Platz.
+fn one_to_one(region: &Region, rotation: ScreenRotation) -> PixelRect {
+    let (w, h) = (
+        (region.width.round() as u32).max(MIN_AREA_SIZE),
+        (region.height.round() as u32).max(MIN_AREA_SIZE),
+    );
+    if quarter_turned(rotation) {
+        (0, 0, h, w)
+    } else {
+        (0, 0, w, h)
+    }
+}
+
 /// Setzt Lage und Größe auf dem Gerät; das Raster entspricht 1:1 diesen Pixeln.
 fn set_placement(route: &mut OutputRoute, rect: PixelRect, device: (u32, u32)) {
     route.device_area = area_from_rect(rect, device);
@@ -978,157 +1050,6 @@ fn resized_area(rect: PixelRect, delta: (f32, f32), device: (u32, u32)) -> Pixel
         ((w as f32 + delta.0).round().max(0.0) as u32).clamp(MIN_AREA_SIZE, max_w),
         ((h as f32 + delta.1).round().max(0.0) as u32).clamp(MIN_AREA_SIZE, max_h),
     )
-}
-
-/// Section „Key/Fill“: pro Stage aktivierbar; Fill- und Key-Route per Combo.
-/// Die Key-Route bekommt das Flag `alpha` (Route rendert mit Alpha).
-fn draw_key_fill(ui: &mut egui::Ui, app: &mut ShowApp, stage_id: Uuid) {
-    theme::section_label(ui, "Key/Fill (Alpha-Ausgabe)");
-    ui.label(
-        egui::RichText::new(
-            "Pro Stage separat aktiv. Fill = Farbbild (flach), Key = Alpha-Bild (Route-Flag „Key (Alpha)“).              Alpha kommt aus Videos (z. B. ProRes 4444), Bildern (PNG mit Alpha) und HTML (default transparent).              Geräte: zwei Decklink-Ports (Fill/Key als 2× SDI) oder ein key/fill-fähiger Ausgang.",
-        )
-        .small()
-        .color(palette::TEXT_DIM),
-    );
-    ui.add_space(theme::size::SPACE_SMALL);
-
-    let routes: Vec<(uuid::Uuid, String)> = app
-        .routes
-        .routes()
-        .iter()
-        .map(|r| (r.id, format!("{} ({}×{})", r.name, r.width, r.height)))
-        .collect();
-    if routes.is_empty() {
-        ui.label(
-            egui::RichText::new("No outputs yet – add a region with a new output first")
-                .color(palette::TEXT_FAINT),
-        );
-        return;
-    }
-
-    let mut enabled = app
-        .stages
-        .stages()
-        .iter()
-        .find(|s| s.id == stage_id)
-        .and_then(|s| s.key_fill)
-        .is_some();
-    if ui
-        .checkbox(&mut enabled, "Key/Fill output for this stage")
-        .changed()
-    {
-        if let Some(st) = app
-            .stages
-            .stages_mut()
-            .iter_mut()
-            .find(|s| s.id == stage_id)
-        {
-            if enabled {
-                // Default: erste zwei Routen (bzw. eine doppelt ist verboten → nimm erste + zweite).
-                let fill = routes[0].0;
-                let key = routes.get(1).map(|r| r.0).unwrap_or(routes[0].0);
-                st.key_fill = if fill == key {
-                    None
-                } else {
-                    Some(crate::core::KeyFillRoutes { fill, key })
-                };
-                if st.key_fill.is_some() {
-                    // Key-Route als Alpha markieren.
-                    if let Some(r) = app.routes.find_mut(key) {
-                        r.alpha = true;
-                    }
-                }
-            } else {
-                // Beim Deaktivieren Alpha-Flag der Key-Route zurücksetzen.
-                if let Some(kf) = st.key_fill {
-                    if let Some(r) = app.routes.find_mut(kf.key) {
-                        r.alpha = false;
-                    }
-                }
-                st.key_fill = None;
-            }
-        }
-    }
-
-    if !enabled {
-        return;
-    }
-    let mut kf = app
-        .stages
-        .stages()
-        .iter()
-        .find(|s| s.id == stage_id)
-        .and_then(|s| s.key_fill)
-        .unwrap_or(crate::core::KeyFillRoutes {
-            fill: routes[0].0,
-            key: routes[0].0,
-        });
-    theme::form_grid("stage_key_fill").show(ui, |ui| {
-        theme::field_label(ui, "Fill route");
-        egui::ComboBox::from_id_salt("kf_fill")
-            .selected_text(
-                routes
-                    .iter()
-                    .find(|r| r.0 == kf.fill)
-                    .map(|r| r.1.clone())
-                    .unwrap_or_default(),
-            )
-            .show_ui(ui, |ui| {
-                for (id, label) in &routes {
-                    ui.selectable_value(&mut kf.fill, *id, label);
-                }
-            });
-        ui.end_row();
-        theme::field_label(ui, "Key route (alpha)");
-        egui::ComboBox::from_id_salt("kf_key")
-            .selected_text(
-                routes
-                    .iter()
-                    .find(|r| r.0 == kf.key)
-                    .map(|r| r.1.clone())
-                    .unwrap_or_default(),
-            )
-            .show_ui(ui, |ui| {
-                for (id, label) in &routes {
-                    ui.selectable_value(&mut kf.key, *id, label);
-                }
-            });
-        ui.end_row();
-    });
-    if kf.fill == kf.key {
-        ui.label(
-            egui::RichText::new("Fill and key route must differ (two outputs)")
-                .color(palette::ERROR),
-        );
-    }
-    // Änderungen zurückschreiben + Key-Route alpha setzen.
-    if let Some(st) = app
-        .stages
-        .stages_mut()
-        .iter_mut()
-        .find(|s| s.id == stage_id)
-    {
-        if st.key_fill != Some(kf) && kf.fill != kf.key {
-            st.key_fill = Some(kf);
-        }
-    }
-    if let Some(r) = app.routes.find_mut(kf.key) {
-        r.alpha = true;
-    }
-    if let Some(kf_old) = app
-        .stages
-        .stages()
-        .iter()
-        .find(|s| s.id == stage_id)
-        .and_then(|s| s.key_fill)
-    {
-        if kf_old.key != kf.key {
-            if let Some(r) = app.routes.find_mut(kf_old.key) {
-                r.alpha = false;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1233,6 +1154,29 @@ mod display_area_tests {
         let mut route = route_turned(ScreenRotation::Deg0);
         route.mirror_vertical = true;
         assert_eq!(displayed_sides(&route, top), [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn one_to_one_uses_the_regions_pixels_at_the_top_left() {
+        let mut region = Region::full_stage(3840.0, 2160.0);
+        region.x = 100.0;
+        region.width = 2000.0;
+        assert_eq!(
+            one_to_one(&region, ScreenRotation::Deg0),
+            (0, 0, 2000, 2160)
+        );
+        assert_eq!(
+            one_to_one(&region, ScreenRotation::Deg90),
+            (0, 0, 2160, 2000)
+        );
+    }
+
+    #[test]
+    fn oversized_region_stays_at_the_origin_when_moved() {
+        assert_eq!(
+            moved_area((0, 0, 3840, 2160), (500.0, 500.0), DEVICE),
+            (0, 0, 3840, 2160)
+        );
     }
 
     #[test]

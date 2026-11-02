@@ -2517,6 +2517,21 @@ impl ShowApp {
             stage.placements.clear();
         }
         self.routes = doc.routes.clone();
+        // Key/Fill alter Shows: Key ist jetzt eine eigene Region.
+        for stage in self.stages.stages_mut() {
+            if let Some(key_route) = stage.migrate_key_fill() {
+                if let Some(route) = self.routes.find_mut(key_route) {
+                    route.alpha = true;
+                }
+            }
+            for region in &mut stage.regions {
+                let is_key = region
+                    .route
+                    .and_then(|id| self.routes.find(id))
+                    .is_some_and(|route| route.alpha);
+                region.key = is_key;
+            }
+        }
         self.screens = if doc.screens.is_empty() {
             ScreenManager::from_displays(&self.displays)
         } else {

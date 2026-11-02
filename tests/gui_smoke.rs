@@ -2562,10 +2562,70 @@ fn route_color_can_be_changed() {
     assert_eq!(app.routes.find(id).map(|r| r.color), Some([1, 2, 3]));
 }
 
-/// Bedienung im Stage-Editor über echte Zeigerereignisse: Region ziehen, dann
-/// „Fill Display“ zurück auf das ganze Display. Stage-Einstellungen sind weg.
+/// „Add Key Region“ legt ein Key-Gegenstück mit gleichem Crop an.
 #[test]
-fn stage_editor_moves_region_on_display_and_fill_button_restores_it() {
+fn add_key_region_button_creates_a_key_with_the_same_crop() {
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut app = demo_app();
+    let stage = app.stages.find("Stage 1").cloned().unwrap();
+    if app.displays.is_empty() || stage.regions.is_empty() {
+        return; // headless ohne Displays
+    }
+    app.stage_editor_open = Some(stage.id);
+    let mut time = 1.0;
+    let mut frame = |app: &mut ShowApp, events: Vec<egui::Event>| {
+        time += 0.05;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 1600.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        ctx.run(raw, |ctx| app.draw_workspace(ctx))
+    };
+    let _ = frame(&mut app, vec![]);
+    let out = frame(&mut app, vec![]);
+    assert!(
+        !output_has_text(&out, "Key/Fill"),
+        "kein eigener Key/Fill-Bereich"
+    );
+    let button = out
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.job.text == "+ Add Key Region" => {
+                Some(egui::Rect::from_min_size(t.pos, t.galley.rect.size()).center())
+            }
+            _ => None,
+        })
+        .expect("Button fehlt");
+    let press = |pressed: bool| egui::Event::PointerButton {
+        pos: button,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(button)]);
+    let _ = frame(&mut app, vec![press(true)]);
+    let _ = frame(&mut app, vec![press(false)]);
+    let _ = frame(&mut app, vec![]);
+
+    let stage = app.stages.find("Stage 1").cloned().unwrap();
+    assert_eq!(stage.regions.len(), 2);
+    let key = &stage.regions[1];
+    assert!(key.key);
+    assert_eq!(key.width, stage.regions[0].width);
+    assert!(app.routes.find(key.route.unwrap()).unwrap().alpha);
+}
+
+/// Bedienung im Stage-Editor über echte Zeigerereignisse: Region ziehen, dann
+/// der 1:1-Button zurück auf Original-Pixelgröße. Stage-Einstellungen sind weg.
+#[test]
+fn stage_editor_moves_region_and_one_to_one_button_resets_it() {
     use kuhplay::core::DeviceArea;
     let ctx = egui::Context::default();
     icons::install(&ctx);
@@ -2660,13 +2720,36 @@ fn stage_editor_moves_region_on_display_and_fill_button_restores_it() {
     );
     assert_eq!(width, w / 2, "Verschieben ändert die Größe nicht");
 
-    // Fill Display: wieder das ganze Display.
+    // 1:1: Original-Pixelgröße oben links, auch wenn die Stage nicht zum Display passt.
     let out = frame(&mut app, vec![]);
-    let button = position(&out, "Fill Display").expect("Fill-Display-Button");
+    assert!(!output_has_text(&out, "Fill Display"));
+    let button = position(&out, "1:1").expect("1:1-Button");
     let _ = frame(&mut app, vec![egui::Event::PointerMoved(button)]);
     let _ = frame(&mut app, vec![press(button, true)]);
     let _ = frame(&mut app, vec![press(button, false)]);
     let _ = frame(&mut app, vec![]);
     let route = app.routes.find(route_id).unwrap();
-    assert_eq!(route.device_area, DeviceArea::Full);
+    let display = app
+        .displays
+        .iter()
+        .map(kuhplay::core::DisplayRefInfo::from)
+        .find(|d| {
+            matches!(&route.device, Some(kuhplay::core::DeviceRef::Display { id, .. }) if *id == d.id)
+        })
+        .unwrap();
+    let size = display.pixel_size();
+    assert_eq!(
+        route.device_area.rect(size.0, size.1),
+        (
+            0,
+            0,
+            stage.geometry.width as u32,
+            stage.geometry.height as u32
+        )
+    );
+    assert_eq!(
+        (route.width, route.height),
+        (stage.geometry.width as u32, stage.geometry.height as u32),
+        "Raster 1:1"
+    );
 }

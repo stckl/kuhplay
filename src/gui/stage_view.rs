@@ -380,6 +380,12 @@ pub fn draw_device_outputs(app: &mut ShowApp, ctx: &Context) {
                         let Some(frame) = frame else {
                             continue; // Noch kein Route-Bild (Engine startet).
                         };
+                        // Key-Region: Das Display zeigt die Alpha als Graubild.
+                        let frame = if route.alpha {
+                            std::sync::Arc::new(crate::engine::decklink::alpha_to_luma(&frame))
+                        } else {
+                            frame
+                        };
                         // Route-Bild auf den Zielbereich abbilden
                         // (Drehung, Spiegelung, Skalierung).
                         let presented = present_on_device(

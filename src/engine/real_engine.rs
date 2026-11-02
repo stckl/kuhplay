@@ -532,18 +532,12 @@ impl RealMediaEngine {
         // Route-Bild statt Stage-Bild: Die konfigurierte Stage (KUHPLAY_DECKLINK_STAGE)
         // liefert ueber ihre erste Region die Route, deren gerendertes Bild auf
         // die Karte geht. Ohne Route: schwarz (wie vorher ohne Canvas).
-        // Key/Fill: Hat die Stage ein key_fill, geht die Fill-Route auf den
-        // Haupt-Ausgang, die Key-Route (Alpha) als Luma auf den Key-Ausgang.
+        // Key/Fill: Die Bild-Region geht auf den Haupt-Ausgang, die Alpha der
+        // Key-Region als Luma auf den Key-Ausgang.
         let (fill_route, key_route) = self
             .stages
             .get(&self.decklink_stage)
-            .map(|stage| {
-                let first = stage.regions.iter().find_map(|r| r.route);
-                match stage.key_fill {
-                    Some(kf) => (Some(kf.fill), Some(kf.key)),
-                    None => (first, None),
-                }
-            })
+            .map(|stage| stage.fill_and_key_routes())
             .unwrap_or((None, None));
         let route_frames = self.route_frames.clone();
         let frame_of = |route_id: Option<uuid::Uuid>| -> Option<Arc<VideoFrame>> {
