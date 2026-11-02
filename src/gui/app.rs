@@ -185,6 +185,8 @@ pub struct ShowApp {
     started_at: HashMap<Uuid, Instant>,
     /// Medien-Dauer pro Cue (aus `EngineEvent::Started`), Basis fürs Spulen.
     media_durations: HashMap<Uuid, Duration>,
+    /// Länge noch nicht gespielter Medien (für die Anzeige von Anfang an).
+    probed_durations: crate::engine::media_probe::MediaDurations,
     /// Zwischenablage für „Copy/Paste Cue Properties" (JSON der Cue-Felder).
     properties_clipboard: Option<serde_json::Value>,
     /// Akkumulierte aktive Zeit pausierter Cues.
@@ -569,6 +571,7 @@ impl ShowApp {
             text_field_active: false,
             started_at: HashMap::new(),
             media_durations: HashMap::new(),
+            probed_durations: Default::default(),
             properties_clipboard: None,
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
@@ -1644,7 +1647,7 @@ impl ShowApp {
                     loaded: self.loaded_cues.contains(&cue.id),
                     elapsed: self.phase_elapsed_of(cue),
                     pre_wait_remaining: self.pre_wait_remaining(cue),
-                    media_duration: self.media_durations.get(&cue.id).copied(),
+                    media_duration: self.listed_duration_of(cue),
                 },
             );
             for child in &cue.children {
@@ -1656,7 +1659,7 @@ impl ShowApp {
                         loaded: self.loaded_cues.contains(&child.id),
                         elapsed: self.phase_elapsed_of(child),
                         pre_wait_remaining: self.pre_wait_remaining(child),
-                        media_duration: self.media_durations.get(&child.id).copied(),
+                        media_duration: self.listed_duration_of(child),
                     },
                 );
             }
@@ -2391,7 +2394,27 @@ impl ShowApp {
 
     /// Medien-Dauer eines Cues (aus dem Started-Event), falls bekannt.
     pub fn media_duration_of(&self, cue: &Cue) -> Option<Duration> {
-        self.media_durations.get(&cue.id).copied()
+        self.media_durations.get(&cue.id).copied().or_else(|| {
+            let path = cue.target_path.as_deref()?;
+            let is_media = matches!(cue.cue_type, CueType::Audio | CueType::Video);
+            let is_local = !path.starts_with("http://") && !path.starts_with("https://");
+            (is_media && is_local)
+                .then(|| self.probed_durations.request(path))
+                .flatten()
+        })
+    }
+
+    /// Dauer für die Cue-Liste: Bei In/Out oder Slices zählt, was wirklich läuft.
+    fn listed_duration_of(&self, cue: &Cue) -> Option<Duration> {
+        if cue.slices.is_empty() {
+            return self.media_duration_of(cue);
+        }
+        Some(
+            cue.slices
+                .iter()
+                .map(|slice| slice.duration().saturating_mul(slice.play_count.max(1)))
+                .sum(),
+        )
     }
 
     /// Elapsed-Zeit eines aktiven Cues (Playing: laufend akkumuliert,
@@ -3241,6 +3264,9 @@ impl ShowApp {
     /// Public, damit die headless GUI-Tests exakt dasselbe Layout rendern.
     pub fn draw_workspace(&mut self, ctx: &egui::Context) {
         use theme::{palette, size};
+
+        // Neu gelesene Medienlängen auch ohne Mausbewegung anzeigen.
+        ctx.request_repaint_after(Duration::from_millis(500));
 
         #[cfg(target_os = "macos")]
         let native_menu = self.native_menu.is_some();

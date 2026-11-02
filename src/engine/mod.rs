@@ -72,6 +72,7 @@ pub mod decklink_com;
 pub mod decklink_native;
 pub mod frame;
 pub mod media_engine;
+pub mod media_probe;
 pub mod midi_out;
 pub mod mock_engine;
 pub mod output_sink;

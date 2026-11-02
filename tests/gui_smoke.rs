@@ -2846,3 +2846,56 @@ fn video_cue_waveform_click_sets_in_and_keeps_the_end() {
         cue.slices[0]
     );
 }
+
+/// Die Cue-Liste kennt die Dauer eines Videos, bevor es gespielt wurde; bei In/Out
+/// zeigt sie die Länge des Abschnitts.
+#[test]
+fn cue_list_knows_the_duration_before_playing() {
+    use kuhplay::engine::video_backend::VideoBackend;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("clip.mkv");
+    let made = std::process::Command::new(VideoBackend::ffmpeg_binary())
+        .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc=s=64x64:r=25:d=4")
+        .args(["-c:v", "mpeg4"])
+        .arg(&path)
+        .status();
+    if !made.is_ok_and(|s| s.success()) {
+        return; // ffmpeg fehlt
+    }
+    let mut app = demo_app();
+    let index = app
+        .carts
+        .active()
+        .cues()
+        .iter()
+        .position(|c| c.cue_type == CueType::Video)
+        .expect("Video-Cue");
+    let cue = &mut app.carts.active_mut().cues_mut()[index];
+    cue.duration = Duration::ZERO;
+    cue.target_path = Some(path.display().to_string());
+    let id = cue.id;
+
+    let start = std::time::Instant::now();
+    let listed = loop {
+        if let Some(listed) = app.cue_row_meta().get(&id).and_then(|m| m.media_duration) {
+            break listed;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "keine Dauer in der Liste"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!((3.5..4.5).contains(&listed.as_secs_f32()), "{listed:?}");
+
+    app.carts.active_mut().cues_mut()[index]
+        .slices
+        .push(kuhplay::core::MediaSlice::new(
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            1,
+        ));
+    let listed = app.cue_row_meta().get(&id).and_then(|m| m.media_duration);
+    assert_eq!(listed, Some(Duration::from_secs(1)));
+}
