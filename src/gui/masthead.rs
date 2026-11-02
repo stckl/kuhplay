@@ -6,7 +6,8 @@
 //!   Space = GO).
 //! * Daneben: Label „STANDBY", darunter „Q#  Name" groß, darunter das
 //!   Notes-Feld des Standby-Cues.
-//! * Darunter die Toolbar: je ein Icon-Button pro Cue-Typ, ausblendbar im Footer.
+//! * Darunter die Toolbar: eine abgesetzte Leiste mit den Cue-Typen in den
+//!   Gruppen der Toolbox, ausblendbar im Footer.
 //! * Die Transport-Buttons liegen oben in der Sidebar.
 
 use egui::RichText;
@@ -25,30 +26,53 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     }
 }
 
-/// Toolbar: je ein Icon-Button pro Cue-Typ, in der Reihenfolge der Toolbox.
+/// Toolbar: dunklere Leiste, darin je Toolbox-Gruppe ein eigener Block mit
+/// einem Icon-Button pro Cue-Typ.
 fn draw_toolbar(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for (_, types) in super::toolbox::ordered_groups(&app.ui.toolbox_order) {
-            for cue_type in types {
-                let response = ui
-                    .add_enabled_ui(editable, |ui| {
-                        icons::button(
-                            ui,
-                            Icon::for_cue_type(cue_type),
-                            palette::TEXT,
-                            egui::vec2(32.0, 32.0),
-                            editable,
-                        )
-                    })
-                    .inner
-                    .on_hover_text(format!("New {} Cue", cue_type.label()));
-                if response.clicked() {
-                    app.add_cue(cue_type);
+    let groups = super::toolbox::ordered_groups(&app.ui.toolbox_order);
+    egui::Frame::none()
+        .fill(palette::LIST_BG)
+        .stroke(egui::Stroke::new(1.0_f32, palette::BORDER))
+        .rounding(egui::Rounding::same(6.0))
+        .inner_margin(egui::Margin::same(4.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = size::SPACE_MEDIUM;
+                for (group, types) in groups {
+                    egui::Frame::none()
+                        .fill(palette::RAISED)
+                        .rounding(egui::Rounding::same(4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                // Hover muss sich vom helleren Block abheben.
+                                ui.visuals_mut().widgets.hovered.bg_fill =
+                                    egui::Color32::from_rgb(92, 92, 106);
+                                for cue_type in types {
+                                    let response =
+                                        ui.add_enabled_ui(editable, |ui| {
+                                            icons::button(
+                                                ui,
+                                                Icon::for_cue_type(cue_type),
+                                                palette::TEXT,
+                                                size::MASTHEAD_ICON_BUTTON,
+                                                editable,
+                                            )
+                                        })
+                                        .inner
+                                        .on_hover_text(
+                                            format!("{group}: New {} Cue", cue_type.label()),
+                                        );
+                                    if response.clicked() {
+                                        app.add_cue(cue_type);
+                                    }
+                                }
+                            });
+                        });
                 }
-            }
-        }
-    });
+            });
+        });
 }
 
 fn draw_go_row(ui: &mut egui::Ui, app: &mut ShowApp, editable: bool) {

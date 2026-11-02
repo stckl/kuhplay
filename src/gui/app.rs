@@ -1418,6 +1418,8 @@ impl ShowApp {
     pub fn load_ui_state(&mut self, storage: &dyn eframe::Storage) {
         if let Some(json) = storage.get_string(super::state::UI_STATE_STORAGE_KEY) {
             self.ui = super::state::UiState::from_json(&json);
+            // Jeder Start zeigt zuerst, was gerade läuft.
+            self.ui.sidebar_tab = SidebarTab::ActiveCues;
         }
     }
 

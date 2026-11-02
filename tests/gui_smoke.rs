@@ -2504,3 +2504,73 @@ fn playhead_row_shows_filled_triangle() {
         "Playhead-Dreieck fehlt"
     );
 }
+
+/// Active-Cue-Zeile: Pause, Typ-Icon und Stop liegen auf der Zeilenmitte, ein
+/// langer Name bleibt innerhalb der Zeile und läuft nicht in den Stop-Button.
+#[test]
+fn active_cue_row_centers_buttons_and_contains_long_names() {
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut app = demo_app();
+    let long_name = "Ein sehr langer Cue-Name ".repeat(8);
+    let index = app.carts.cursor();
+    app.carts.active_mut().cues_mut()[index].name = long_name;
+    app.go_now();
+    assert_eq!(app.carts.running_count(), 1);
+    app.ui.sidebar_visible = true;
+    app.ui.sidebar_tab = SidebarTab::ActiveCues;
+
+    let raw = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1440.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(raw.clone(), |ctx| app.draw_workspace(ctx));
+    let out = ctx.run(raw, |ctx| app.draw_workspace(ctx));
+
+    let row = out
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Rect(r) if r.rect.height() == 48.0 && r.rect.width() > 100.0 => {
+                Some(r.rect)
+            }
+            _ => None,
+        })
+        .expect("Active-Cue-Zeile fehlt");
+
+    let mut icons_in_row = 0;
+    let mut texts_in_row = 0;
+    for s in &out.shapes {
+        let egui::Shape::Text(t) = &s.shape else {
+            continue;
+        };
+        let rect = egui::Rect::from_min_size(t.pos, t.galley.rect.size());
+        if !row.contains(rect.center()) {
+            continue;
+        }
+        texts_in_row += 1;
+        assert!(
+            rect.right() <= row.right(),
+            "Text „{}“ ragt aus der Zeile: {rect:?} / {row:?}",
+            t.galley.job.text
+        );
+        // Icon-Fonts malen genau ein Zeichen aus dem privaten Unicode-Bereich.
+        if t.galley
+            .job
+            .text
+            .chars()
+            .all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c))
+        {
+            icons_in_row += 1;
+            assert!(
+                (rect.center().y - row.center().y).abs() <= 1.5,
+                "Icon nicht mittig: {rect:?} / {row:?}"
+            );
+        }
+    }
+    assert_eq!(icons_in_row, 3, "Pause, Typ-Icon und Stop");
+    assert!(texts_in_row >= 5, "auch Name und Zeit stehen in der Zeile");
+}

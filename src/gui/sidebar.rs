@@ -1,4 +1,4 @@
-//! Sidebar: Tabs „Lists & Carts" und „Active Cues"
+//! Sidebar: Tabs „Active Cues" und „Lists & Carts"
 //! (docs/UI.md §5.4). Der globale Transport sitzt im Masthead.
 //!
 //! Screens/Stages liegen nicht mehr hier, sondern in den Workspace Settings
@@ -34,8 +34,8 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui,
         &mut app.ui.sidebar_tab,
         &[
-            (SidebarTab::ListsCarts, "Lists & Carts".to_string()),
             (SidebarTab::ActiveCues, format!("Active Cues ({running})")),
+            (SidebarTab::ListsCarts, "Lists & Carts".to_string()),
         ],
     );
     match app.ui.sidebar_tab {
@@ -247,81 +247,104 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         0.0,
         color,
     );
-    // Widgets über dem Balken.
-    // Volle Zeilenhoehe nutzbar (nur horizontal eingerückt): Die Uhr darf
-    // nicht unten abgeschnitten werden.
-    let mut row_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(6.0, 0.0)))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    row_ui.horizontal(|ui| {
-        // Links: Pause/Resume-Button (Vektor-Icon, TODO.md Phase 6:
-        // min. 28 px hoch – gut klickbar).
-        match status {
-            CueStatus::Playing => {
-                if icons::button(ui, Icon::Pause, color, size::ACTIVE_CUE_BUTTON, true)
-                    .on_hover_text("Pause this cue")
-                    .clicked()
-                {
-                    let commands = app.pause_running(id);
-                    app.dispatch(commands);
-                }
-            }
-            CueStatus::Paused => {
-                if icons::button(ui, Icon::Resume, color, size::ACTIVE_CUE_BUTTON, true)
-                    .on_hover_text("Resume this cue")
-                    .clicked()
-                {
-                    let commands = app.resume_running(id);
-                    app.dispatch(commands);
-                }
-            }
-            _ => {}
-        }
-        ui.add_space(size::SPACE_SMALL);
-        // Typ-Icon (jede Active-Cue-Zeile mit Typ-Icon).
-        icons::draw(ui, Icon::for_cue_type(cue_type), 16.0, palette::TEXT_DIM)
-            .on_hover_text(format!("{} cue", cue_type.label()));
-        ui.add_space(size::SPACE_SMALL);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label(RichText::new(format!("{}  {}", number, name)).strong());
-            // Restzeit (docs/UI.md §5.4).
-            let time = match (elapsed, duration) {
-                (Some(e), d) if d > Duration::ZERO => {
-                    let remaining = d.saturating_sub(e);
-                    // Nur Restzeit: „elapsed / −remaining" passt nicht in
-                    // eine Zeile der Sidebar.
-                    format!("−{}", format_timecode(remaining))
-                }
-                (Some(e), _) => format_timecode(e),
-                _ => String::new(),
-            };
-            ui.label(
-                RichText::new(time)
-                    .monospace()
-                    .size(11.0)
-                    .color(palette::TEXT_DIM),
-            );
-        });
-        // Rechts: Stop-Button für diesen einzelnen Cue („Panic this cue").
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::button(
-                ui,
-                Icon::Stop,
-                palette::PANIC,
-                size::ACTIVE_CUE_BUTTON,
-                true,
-            )
-            .on_hover_text("Stop this cue now")
-            .clicked()
+    // Widgets über dem Balken, alle an der Zeilenmitte ausgerichtet. Der Text
+    // bekommt den Platz zwischen den Icons und wird bei Bedarf gekürzt.
+    let inner = rect.shrink2(egui::vec2(6.0, 0.0));
+    let button = size::ACTIVE_CUE_BUTTON;
+    let center_y = rect.center().y;
+    let button_rect =
+        |center_x: f32| egui::Rect::from_center_size(egui::pos2(center_x, center_y), button);
+    let child = |ui: &mut egui::Ui, r: egui::Rect, layout: egui::Layout| {
+        ui.new_child(egui::UiBuilder::new().max_rect(r).layout(layout))
+    };
+    let centered = egui::Layout::left_to_right(egui::Align::Center);
+
+    // Links: Pause/Resume-Button (Vektor-Icon, TODO.md Phase 6:
+    // min. 28 px hoch – gut klickbar).
+    let mut left_ui = child(ui, button_rect(inner.left() + button.x / 2.0), centered);
+    match status {
+        CueStatus::Playing => {
+            if icons::button(&mut left_ui, Icon::Pause, color, button, true)
+                .on_hover_text("Pause this cue")
+                .clicked()
             {
-                let commands = app.stop_running(id);
+                let commands = app.pause_running(id);
                 app.dispatch(commands);
             }
-        });
-    });
+        }
+        CueStatus::Paused => {
+            if icons::button(&mut left_ui, Icon::Resume, color, button, true)
+                .on_hover_text("Resume this cue")
+                .clicked()
+            {
+                let commands = app.resume_running(id);
+                app.dispatch(commands);
+            }
+        }
+        _ => {}
+    }
+
+    // Typ-Icon (jede Active-Cue-Zeile mit Typ-Icon).
+    let icon_x = inner.left() + button.x + size::SPACE_SMALL;
+    let icon_rect =
+        egui::Rect::from_min_size(egui::pos2(icon_x, center_y - 8.0), egui::vec2(16.0, 16.0));
+    let mut icon_ui = child(ui, icon_rect, centered);
+    icons::draw(
+        &mut icon_ui,
+        Icon::for_cue_type(cue_type),
+        16.0,
+        palette::TEXT_DIM,
+    )
+    .on_hover_text(format!("{} cue", cue_type.label()));
+
+    // Rechts: Stop-Button für diesen einzelnen Cue („Panic this cue").
+    let mut stop_ui = child(ui, button_rect(inner.right() - button.x / 2.0), centered);
+    if icons::button(&mut stop_ui, Icon::Stop, palette::PANIC, button, true)
+        .on_hover_text("Stop this cue now")
+        .clicked()
+    {
+        let commands = app.stop_running(id);
+        app.dispatch(commands);
+    }
+
+    // Name und Restzeit (docs/UI.md §5.4) je in einer Hälfte um die Mitte.
+    let text_left = icon_rect.right() + size::SPACE_SMALL;
+    let text_right = (inner.right() - button.x - size::SPACE_SMALL).max(text_left);
+    let name_rect = egui::Rect::from_min_max(
+        egui::pos2(text_left, center_y - 18.0),
+        egui::pos2(text_right, center_y),
+    );
+    let time_rect = egui::Rect::from_min_max(
+        egui::pos2(text_left, center_y),
+        egui::pos2(text_right, center_y + 16.0),
+    );
+    let mut name_ui = child(ui, name_rect, centered);
+    name_ui.add(
+        egui::Label::new(RichText::new(format!("{}  {}", number, name)).strong())
+            .selectable(false)
+            .truncate(),
+    );
+    let time = match (elapsed, duration) {
+        (Some(e), d) if d > Duration::ZERO => {
+            let remaining = d.saturating_sub(e);
+            // Nur Restzeit: „elapsed / −remaining" passt nicht in
+            // eine Zeile der Sidebar.
+            format!("−{}", format_timecode(remaining))
+        }
+        (Some(e), _) => format_timecode(e),
+        _ => String::new(),
+    };
+    let mut time_ui = child(ui, time_rect, centered);
+    time_ui.add(
+        egui::Label::new(
+            RichText::new(time)
+                .monospace()
+                .size(11.0)
+                .color(palette::TEXT_DIM),
+        )
+        .selectable(false)
+        .truncate(),
+    );
     // Spulen („Scrub"): Ziehen/Klick auf der Zeile springt im Medium an
     // die Stelle – Bild und Ton bekommen im selben Engine-Command den Seek.
     let total = if duration > Duration::ZERO {

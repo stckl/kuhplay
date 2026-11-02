@@ -212,8 +212,19 @@ impl CueList {
     /// Setzt den Playhead direkt (Operator-Eingriff: Klick auf die Cue-Nummer
     /// oder Pfeiltasten in der UI). Wird auf `0..=len` geklemmt – `len`
     /// bedeutet „Playhead hinter dem letzten Cue" (GO triggert nichts).
+    ///
+    /// Ein bereits beendeter Cue wird wieder bereit, damit GO genau ihn startet
+    /// und nicht zum nächsten noch ungespielten springt.
     pub fn set_cursor(&mut self, index: usize) {
         self.cursor = index.min(self.cues.len());
+        if let Some(cue) = self.cues.get_mut(self.cursor) {
+            if matches!(
+                cue.status,
+                CueStatus::Completed | CueStatus::Stopped | CueStatus::Error
+            ) {
+                cue.reset_status_recursive();
+            }
+        }
     }
 
     /// Anzahl aktiver Cues (Pre-Wait/Playing/Paused/Post-Wait).
@@ -1535,6 +1546,22 @@ mod tests {
 
         list.set_cursor(0);
         assert_eq!(list.cursor(), 0);
+    }
+
+    #[test]
+    fn go_starts_finished_cue_when_playhead_is_set_back_on_it() {
+        let mut list = CueList::new();
+        list.add(audio("1"));
+        list.add(audio("2"));
+        list.add(audio("3"));
+        list.go();
+        list.go();
+        list.cues_mut()[0].status = CueStatus::Completed;
+        list.cues_mut()[1].status = CueStatus::Stopped;
+
+        list.set_cursor(0);
+        assert_eq!(list.standby().map(|c| c.number.as_str()), Some("1"));
+        assert_eq!(list.go().map(|o| o.index), Some(0));
     }
 
     #[test]

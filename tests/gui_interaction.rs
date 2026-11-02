@@ -2997,3 +2997,68 @@ fn digit_keys_create_the_agreed_cue_types() {
     run_hotkeys(&mut app, &ctx, vec![key_event(egui::Key::Num4, true)], 2.1);
     assert_eq!(app.carts().active().len(), count, "⌘2 und ⌘4 sind frei");
 }
+
+/// Rendert die Tabelle und liefert die Mitte des Zeilentexts `text`.
+fn row_text_center(
+    ctx: &egui::Context,
+    carts: &mut CartManager,
+    text: &str,
+    time: f64,
+) -> egui::Pos2 {
+    let mut columns = CueColumnLayout::default();
+    let (out, _) = render_actions(ctx, carts, &mut columns, vec![], time);
+    find_text_center(&out, text).unwrap_or_else(|| panic!("Text „{text}“ nicht gefunden"))
+}
+
+/// Klicks direkt auf den Zeilentext erreichen die Zeile (Labels dürfen sie
+/// nicht als Textauswahl abfangen).
+#[test]
+fn click_on_row_text_selects_the_row() {
+    let ctx = egui::Context::default();
+    let mut carts = demo_list();
+    let mut time = 1.0;
+    let pos = row_text_center(&ctx, &mut carts, "Cue 2", time);
+    let pos = row_text_center(&ctx, &mut carts, "Cue 2", time).lerp(pos, 0.5);
+    click(&ctx, &mut carts, pos, &mut time);
+    assert_eq!(carts.selected_index(), Some(1));
+}
+
+/// Rechtsklick auf den Zeilentext öffnet das Kontextmenü.
+#[test]
+fn right_click_on_row_text_opens_context_menu() {
+    let ctx = egui::Context::default();
+    let mut carts = demo_list();
+    let mut columns = CueColumnLayout::default();
+    let mut time = 1.0;
+    let _ = row_text_center(&ctx, &mut carts, "Cue 2", time);
+    let pos = row_text_center(&ctx, &mut carts, "Cue 2", time);
+    click_button_mod(
+        &ctx,
+        &mut carts,
+        &mut columns,
+        pos,
+        egui::PointerButton::Secondary,
+        egui::Modifiers::NONE,
+        &mut time,
+    );
+    let mut found = false;
+    for _ in 0..3 {
+        time += 0.05;
+        let (out, _) = render_actions(&ctx, &mut carts, &mut columns, vec![], time);
+        found |= find_text_center(&out, "Set Playhead Here").is_some();
+    }
+    assert!(found, "Rechtsklick auf den Text muss das Menü öffnen");
+}
+
+/// Der Klick auf die Nummer setzt den Playhead, GO startet dann genau diesen Cue.
+#[test]
+fn click_on_number_text_moves_playhead_and_go_starts_that_cue() {
+    let ctx = egui::Context::default();
+    let mut carts = demo_list();
+    let mut time = 1.0;
+    let _ = row_text_center(&ctx, &mut carts, "3", time);
+    let pos = row_text_center(&ctx, &mut carts, "3", time);
+    click(&ctx, &mut carts, pos, &mut time);
+    assert_eq!(carts.cursor(), 2, "Klick auf die Nummer setzt den Playhead");
+    assert_eq!(carts.go_chained().map(|o| o.index), Some(2));
+}

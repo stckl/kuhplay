@@ -170,7 +170,7 @@ impl Default for UiState {
             toolbox_visible: true,
             sidebar_visible: true,
             inspector_visible: true,
-            sidebar_tab: SidebarTab::ListsCarts,
+            sidebar_tab: SidebarTab::ActiveCues,
             inspector_tab: InspectorTab::Basics,
             workspace_settings_open: false,
             workspace_settings_page: SettingsPage::General,
@@ -299,7 +299,7 @@ mod tests {
         let partial = UiState::from_json("{\"toolbox_visible\":false}");
         assert!(partial.masthead_visible);
         assert!(!partial.toolbox_visible);
-        assert_eq!(partial.sidebar_tab, SidebarTab::ListsCarts);
+        assert_eq!(partial.sidebar_tab, SidebarTab::ActiveCues);
     }
 
     /// Phase 4: neue Inspector-Tabs (Time & Loops, Geometry, …) serialisieren

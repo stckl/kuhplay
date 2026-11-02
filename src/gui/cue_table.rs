@@ -229,6 +229,9 @@ pub fn draw(
     columns: &mut CueColumnLayout,
     find: &FindState,
 ) -> CueTableActions {
+    // Zeilentext ist nicht markierbar: Selektierbare Labels würden Klick und
+    // Rechtsklick abfangen, bevor die Zeile sie sieht.
+    ui.style_mut().interaction.selectable_labels = false;
     let ctx = ui.ctx().clone();
     // Painter des äußeren Ui: Zeilen-Hintergründe (Cue-Color-Tönung) werden
     // pro Zelle damit gemalt, landen so unter dem Zell-Text (siehe Modul-Doku).
