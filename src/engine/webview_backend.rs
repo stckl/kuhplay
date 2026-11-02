@@ -64,6 +64,9 @@ pub struct WebviewInstance {
     stdin: ChildStdin,
     rx: Receiver<WebviewEvent>,
     _reader: std::thread::JoinHandle<()>,
+    /// Einmalig gesetzt, wenn der Subprocess gestorben ist (damit genau ein
+    /// Fehler-Event gemeldet wird, danach nur noch None).
+    death_reported: bool,
 }
 
 impl WebviewInstance {
@@ -95,6 +98,7 @@ impl WebviewInstance {
             stdin,
             rx,
             _reader: reader,
+            death_reported: false,
         };
         instance.send_json(&serde_json::json!({ "load": source }))?;
         Ok(instance)
@@ -125,9 +129,22 @@ impl WebviewInstance {
         self.send_json(&serde_json::json!({ "snapshot": { "width": width, "height": height } }))
     }
 
-    /// Non-blocking Poll der Events vom Subprocess.
-    pub fn poll_event(&self) -> Option<WebviewEvent> {
-        self.rx.try_recv().ok()
+    /// Non-blocking Poll der Events vom Subprocess. Ist der Subprocess
+    /// gestorben (z. B. CEF-Runtime fehlt), kommt genau einmal ein
+    /// [`WebviewEvent::Error`] – sonst würde der Cue ewig schwarz bleiben.
+    pub fn poll_event(&mut self) -> Option<WebviewEvent> {
+        if let Ok(event) = self.rx.try_recv() {
+            return Some(event);
+        }
+        if !self.death_reported {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                self.death_reported = true;
+                return Some(WebviewEvent::Error(format!(
+                    "cef subprocess beendet (status: {status}) – CEF-Runtime fehlt oder startet nicht (CEF_PATH / .app-Layout prüfen)"
+                )));
+            }
+        }
+        None
     }
 
     /// Beendet den Subprocess (Drop killt ebenfalls).

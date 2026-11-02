@@ -2196,7 +2196,7 @@ impl MediaEngine for RealMediaEngine {
                 let Some(bin) = self.renderer_bin.clone() else {
                     self.emit(EngineEvent::Error {
                         cue_id: Some(cue_id),
-                        message: "script cue: no webview binary (build with --features webview)"
+                        message: "script cue: no cef binary (build with --features cef)"
                             .to_string(),
                     });
                     return Ok(());

@@ -78,7 +78,10 @@ done
 
 /// Wartet, bis `rx` ein Event liefert, das `pred` erfüllt (max. 2 s).
 #[cfg(unix)]
-fn wait_for_event(inst: &WebviewInstance, pred: impl Fn(&WebviewEvent) -> bool) -> WebviewEvent {
+fn wait_for_event(
+    inst: &mut WebviewInstance,
+    pred: impl Fn(&WebviewEvent) -> bool,
+) -> WebviewEvent {
     for _ in 0..100 {
         while let Some(event) = inst.poll_event() {
             if pred(&event) {
@@ -105,25 +108,25 @@ fn cef_binary_env_override_and_ipc_roundtrip() {
     let mut inst =
         WebviewInstance::spawn(&script, cue_id, &HtmlSource::Inline("<h1>hi</h1>".into())).unwrap();
     assert_eq!(
-        wait_for_event(&inst, |e| *e == WebviewEvent::Loaded),
+        wait_for_event(&mut inst, |e| *e == WebviewEvent::Loaded),
         WebviewEvent::Loaded
     );
     // Das Fake meldet zusätzlich einen Fehler für den Load (Probe).
     assert_eq!(
-        wait_for_event(&inst, |e| matches!(e, WebviewEvent::Error(_))),
+        wait_for_event(&mut inst, |e| matches!(e, WebviewEvent::Error(_))),
         WebviewEvent::Error("probe-loaded".to_string())
     );
 
     inst.eval_js("1+1").unwrap();
     assert_eq!(
-        wait_for_event(&inst, |e| *e == WebviewEvent::JsExecuted),
+        wait_for_event(&mut inst, |e| *e == WebviewEvent::JsExecuted),
         WebviewEvent::JsExecuted
     );
 
     inst.push_json(&serde_json::json!({ "cue": "1.1" }))
         .unwrap();
     assert_eq!(
-        wait_for_event(&inst, |e| *e == WebviewEvent::JsonReceived),
+        wait_for_event(&mut inst, |e| *e == WebviewEvent::JsonReceived),
         WebviewEvent::JsonReceived
     );
 
@@ -254,7 +257,7 @@ fn webview_ipc_snapshot_request_and_frame_event() {
         WebviewInstance::spawn(&script, cue_id, &HtmlSource::Inline("<h1>hi</h1>".into())).unwrap();
     // Snapshot anfordern (Wunschgröße 64×32 – das Fake antwortet 2×2).
     inst.request_snapshot(64, 32).unwrap();
-    let event = wait_for_event(&inst, |e| matches!(e, WebviewEvent::Frame { .. }));
+    let event = wait_for_event(&mut inst, |e| matches!(e, WebviewEvent::Frame { .. }));
     assert_eq!(
         event,
         WebviewEvent::Frame {
@@ -583,4 +586,38 @@ fn e12_script_cue_settle_faengt_spaete_js_fehler() {
     }
     std::env::remove_var("KUHPLAY_SCRIPT_SETTLE_MS");
     assert!(saw_finished, "Finished nach Ablauf der Settle-Frist fehlt");
+}
+
+#[cfg(unix)]
+#[test]
+fn dead_subprocess_reports_error_once() {
+    // /usr/bin/false steigt sofort aus – poll_event muss genau einmal einen
+    // Fehler liefern (statt ewig None, Cue bleibt sonst schwarz).
+    let mut inst = WebviewInstance::spawn(
+        std::path::Path::new("/usr/bin/false"),
+        uuid::Uuid::new_v4(),
+        &kuhplay::core::HtmlSource::Inline("<p>x</p>".into()),
+    )
+    .expect("spawn");
+    let mut errors = 0;
+    for _ in 0..100 {
+        while let Some(event) = inst.poll_event() {
+            if matches!(event, WebviewEvent::Error(_)) {
+                errors += 1;
+            }
+        }
+        if errors > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        errors, 1,
+        "genau ein Error-Event bei totem Subprocess, errors={errors}"
+    );
+    // Danach nur noch None (kein Spam).
+    for _ in 0..10 {
+        assert!(inst.poll_event().is_none());
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

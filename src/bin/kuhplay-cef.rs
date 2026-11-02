@@ -25,7 +25,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
-use cef::args::Args;
 use cef::*;
 use kuhplay::core::HtmlSource;
 
@@ -238,19 +237,46 @@ fn source_to_url(source: &HtmlSource) -> String {
     }
 }
 
+/// Fataler Fehler als `{"error": …}` auf stdout – die Engine zeigt ihn als
+/// Cue-Fehler an, statt dass der Cue schwarz bleibt.
+fn emit_error(msg: &str) {
+    let mut so = std::io::stdout().lock();
+    let _ = writeln!(so, "{}", serde_json::json!({ "error": msg }));
+    let _ = so.flush();
+}
+
 fn main() {
-    // macOS: libcef manuell laden (CEF_PATH env, siehe cef-dll-sys).
+    // macOS: libcef manuell laden – CEF_PATH env oder .app-Layout
+    // (<exe>/../Frameworks/Chromium Embedded Framework.framework).
     #[cfg(target_os = "macos")]
     {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
-        if let Some(dir) = cef::sys::get_cef_dir() {
-            let fw = dir.join(cef::sys::FRAMEWORK_PATH);
-            let fw = fw.canonicalize().unwrap_or(fw);
-            let c = CString::new(fw.as_os_str().as_bytes()).expect("Pfad ohne NUL");
-            if unsafe { cef::sys::cef_load_library(c.as_ptr().cast()) } != 1 {
-                eprintln!("cef_load_library fehlgeschlagen: {}", fw.display());
-                std::process::exit(1);
+        let dir = cef::sys::get_cef_dir().or_else(|| {
+            std::env::current_exe().ok().and_then(|exe| {
+                exe.parent()?
+                    .parent()?
+                    .join("Frameworks")
+                    .canonicalize()
+                    .ok()
+            })
+        });
+        match dir {
+            Some(dir) => {
+                let fw = dir.join(cef::sys::FRAMEWORK_PATH);
+                let fw = fw.canonicalize().unwrap_or(fw);
+                let c = CString::new(fw.as_os_str().as_bytes()).expect("Pfad ohne NUL");
+                if unsafe { cef::sys::cef_load_library(c.as_ptr().cast()) } != 1 {
+                    emit_error(&format!(
+                        "cef_load_library fehlgeschlagen: {}",
+                        fw.display()
+                    ));
+                    return;
+                }
+            }
+            None => {
+                emit_error("CEF nicht gefunden: CEF_PATH setzen oder .app-Layout (Contents/Frameworks) bauen");
+                return;
             }
         }
     }
@@ -283,7 +309,18 @@ fn main() {
     let disp = DispH::new(event_tx.clone());
     let client = OsrClient::new(render, load, disp);
 
-    let args = Args::new();
+    // Switches direkt ueber argv (cef_command_line_create ist vor initialize
+    // nicht sicher nutzbar): ohne Sandbox/ohne GPU läuft CEF auch headless.
+    let mut cstrings: Vec<std::ffi::CString> = vec![std::ffi::CString::new("kuhplay-cef").unwrap()];
+    for sw in ["--no-sandbox", "--disable-gpu"] {
+        cstrings.push(std::ffi::CString::new(sw).unwrap());
+    }
+    let argv: Vec<*const std::ffi::c_char> = cstrings.iter().map(|c| c.as_ptr()).collect();
+    let main_args = cef::MainArgs {
+        argc: argv.len() as i32,
+        argv: argv.as_ptr() as *mut *mut std::ffi::c_char,
+    };
+    let _keep_alive = (cstrings, argv);
     let mut settings = Settings {
         no_sandbox: 1,
         windowless_rendering_enabled: 1,
@@ -304,14 +341,16 @@ fn main() {
 
     let _app = OsrApp::new();
     let rc = initialize(
-        Some(args.as_main_args()),
+        Some(&main_args),
         Some(&settings),
         None,
         std::ptr::null_mut(),
     );
     if rc != 0 {
-        let _ = writeln!(std::io::stderr(), "cef initialize failed: {rc}");
-        std::process::exit(1);
+        emit_error(&format!(
+            "cef initialize failed (rc={rc}) – volle CEF-Distribution noetig (mit icudtl.dat), CEF_PATH/CEF_MAIN_BUNDLE pruefen"
+        ));
+        return;
     }
 
     let window_info = WindowInfo::default().set_as_windowless(std::ptr::null_mut());
@@ -330,9 +369,9 @@ fn main() {
         None,
     );
     let Some(browser) = browser else {
-        let _ = writeln!(std::io::stderr(), "cef create_browser_sync failed");
+        emit_error("cef create_browser_sync failed");
         shutdown();
-        std::process::exit(1);
+        return;
     };
 
     let stdout = std::io::stdout();
