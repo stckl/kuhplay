@@ -448,7 +448,7 @@ fn decode_loop(
         }
 
         // (Re-)Open + Probe + Decoder aufsetzen.
-        let open = open_decoder(&current_path, seek, out_rate, voice_channels, voice);
+        let open = open_decoder(&current_path, seek, out_rate, voice_channels);
         let mut session = match open {
             Ok(session) => session,
             Err(err) => {
@@ -490,30 +490,13 @@ fn decode_loop(
                 break; // Re-Open mit neuem Seek
             }
 
-            let packet = match session.format.next_packet() {
-                Ok(packet) => packet,
-                Err(_) => break, // EOF (oder Demuxer-Fehler) → Session-Ende
+            let Some(block) = session.next_block() else {
+                break; // EOF (oder Fehler) → Session-Ende
             };
-            if packet.track_id() != session.track_id {
+            let (samples, src_rate, src_channels) = (&block.samples, block.rate, block.channels);
+            if samples.is_empty() {
                 continue;
             }
-            let decoded = match session.decoder.decode(&packet) {
-                Ok(decoded) => decoded,
-                Err(err) => {
-                    tracing::warn!(%err, "audio decode error");
-                    break;
-                }
-            };
-            let spec = *decoded.spec();
-            let frames = decoded.frames();
-            if frames == 0 {
-                continue;
-            }
-            let mut buf = SampleBuffer::<f32>::new(frames as u64, spec);
-            buf.copy_interleaved_ref(decoded);
-            let samples = buf.samples();
-            let src_rate = spec.rate;
-            let src_channels = spec.channels.count().max(1);
 
             // Kanäle → Cue-Kanäle (Voice-Layout), dann Rate → Stream-Rate.
             let mono = convert_channels(samples, src_channels, voice_channels);
@@ -590,21 +573,174 @@ fn wait_for_control(control: &crossbeam_channel::Receiver<AudioControl>, state: 
     }
 }
 
-/// Eine geöffnete Decoder-Session.
-struct DecoderSession {
-    format: Box<dyn symphonia::core::formats::FormatReader>,
-    decoder: Box<dyn symphonia::core::codecs::Decoder>,
-    track_id: u32,
+/// Dekodierter Abschnitt: Interleaved-Samples mit Rate und Kanalzahl.
+struct AudioBlock {
+    samples: Vec<f32>,
+    rate: u32,
+    channels: usize,
 }
 
-/// Öffnet Datei, wählt den Audio-Track und seeked an `seek`.
+/// Eine geöffnete Decoder-Session.
+enum DecoderSession {
+    /// Eingebauter Decoder (ohne Extra-Prozess).
+    Native {
+        format: Box<dyn symphonia::core::formats::FormatReader>,
+        decoder: Box<dyn symphonia::core::codecs::Decoder>,
+        track_id: u32,
+    },
+    /// Alles andere dekodiert ffmpeg (MKV, AC3, DTS, WMA, …).
+    Ffmpeg(FfmpegAudio),
+}
+
+impl DecoderSession {
+    /// Nächster Abschnitt (leer = nichts zu spielen), `None` am Ende.
+    fn next_block(&mut self) -> Option<AudioBlock> {
+        match self {
+            Self::Native {
+                format,
+                decoder,
+                track_id,
+            } => {
+                let packet = format.next_packet().ok()?;
+                let empty = AudioBlock {
+                    samples: Vec::new(),
+                    rate: 1,
+                    channels: 1,
+                };
+                if packet.track_id() != *track_id {
+                    return Some(empty);
+                }
+                let decoded = match decoder.decode(&packet) {
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        tracing::warn!(%err, "audio decode error");
+                        return None;
+                    }
+                };
+                let spec = *decoded.spec();
+                let frames = decoded.frames();
+                if frames == 0 {
+                    return Some(empty);
+                }
+                let mut buf = SampleBuffer::<f32>::new(frames as u64, spec);
+                buf.copy_interleaved_ref(decoded);
+                Some(AudioBlock {
+                    samples: buf.samples().to_vec(),
+                    rate: spec.rate,
+                    channels: spec.channels.count().max(1),
+                })
+            }
+            Self::Ffmpeg(audio) => audio.next_block(),
+        }
+    }
+}
+
+/// ffmpeg-Prozess, der die Tonspur als 32-Bit-Float auf stdout liefert. Er rechnet
+/// selbst auf Rate und Kanäle der Voice um (5.1 wird sauber heruntergemischt).
+struct FfmpegAudio {
+    child: std::process::Child,
+    stdout: std::process::ChildStdout,
+    rate: u32,
+    channels: usize,
+    /// Angefangenes Sample vom letzten Lesen (Pipe liefert beliebige Stücke).
+    partial: Vec<u8>,
+}
+
+impl FfmpegAudio {
+    fn open(path: &str, seek: Duration, rate: u32, channels: usize) -> Result<Self, String> {
+        use std::process::{Command, Stdio};
+        let binary = super::video_backend::VideoBackend::ffmpeg_binary();
+        let mut child = Command::new(&binary)
+            .args(["-nostdin", "-v", "error", "-ss"])
+            .arg(format!("{:.3}", seek.as_secs_f64()))
+            .arg("-i")
+            .arg(path)
+            .args(["-map", "0:a:0", "-vn", "-f", "f32le", "-ac"])
+            .arg(channels.to_string())
+            .arg("-ar")
+            .arg(rate.to_string())
+            .arg("pipe:1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("ffmpeg ({binary}): {e}"))?;
+        let stdout = child.stdout.take().ok_or("ffmpeg: no stdout")?;
+        Ok(Self {
+            child,
+            stdout,
+            rate,
+            channels,
+            partial: Vec::new(),
+        })
+    }
+
+    fn next_block(&mut self) -> Option<AudioBlock> {
+        use std::io::Read;
+        let mut bytes = vec![0u8; 16 * 1024];
+        let read = self.stdout.read(&mut bytes).ok()?;
+        if read == 0 {
+            return None;
+        }
+        self.partial.extend_from_slice(&bytes[..read]);
+        let whole = self.partial.len() / 4 * 4;
+        let samples = self.partial[..whole]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        self.partial.drain(..whole);
+        Some(AudioBlock {
+            samples,
+            rate: self.rate,
+            channels: self.channels,
+        })
+    }
+}
+
+impl Drop for FfmpegAudio {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Hat die Datei eine Tonspur? (Reine Video-Dateien sollen keinen ffmpeg starten.)
+fn has_audio_stream(path: &str) -> bool {
+    std::process::Command::new(super::video_backend::VideoBackend::ffprobe_binary())
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            path,
+        ])
+        .output()
+        .is_ok_and(|out| !out.stdout.is_empty())
+}
+
+/// Öffnet die Tonspur: erst der eingebaute Decoder, was der nicht kann, über ffmpeg.
 fn open_decoder(
     path: &str,
     seek: Duration,
-    _out_rate: u32,
-    _out_channels: usize,
-    _voice: &VoiceRef,
+    out_rate: u32,
+    out_channels: usize,
 ) -> Result<DecoderSession, String> {
+    match open_native(path, seek) {
+        Ok(session) => Ok(session),
+        Err(native) if has_audio_stream(path) => {
+            tracing::debug!(%path, %native, "audio via ffmpeg");
+            FfmpegAudio::open(path, seek, out_rate, out_channels).map(DecoderSession::Ffmpeg)
+        }
+        Err(_) => Err(format!("no audio track in {path}")),
+    }
+}
+
+/// Öffnet Datei, wählt den Audio-Track und seeked an `seek`.
+fn open_native(path: &str, seek: Duration) -> Result<DecoderSession, String> {
     let file =
         std::fs::File::open(Path::new(path)).map_err(|e| format!("cannot open {path}: {e}"))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -647,7 +783,7 @@ fn open_decoder(
         );
     }
 
-    Ok(DecoderSession {
+    Ok(DecoderSession::Native {
         format,
         decoder,
         track_id,
@@ -777,6 +913,148 @@ fn mix_voice(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Erzeugt per ffmpeg eine Testdatei; `None`, wenn ffmpeg fehlt.
+    fn generated_media(dir: &Path, name: &str, args: &[&str]) -> Option<String> {
+        let path = dir.join(name);
+        let status =
+            std::process::Command::new(crate::engine::video_backend::VideoBackend::ffmpeg_binary())
+                .args(["-nostdin", "-v", "error", "-y"])
+                .args(args)
+                .arg(&path)
+                .status()
+                .ok()?;
+        status
+            .success()
+            .then(|| path.to_string_lossy().into_owned())
+    }
+
+    fn decoded_samples(session: &mut DecoderSession) -> Vec<f32> {
+        let mut all = Vec::new();
+        while let Some(block) = session.next_block() {
+            all.extend(block.samples);
+        }
+        all
+    }
+
+    const SINE_SURROUND: [&str; 6] = [
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=2:sample_rate=48000",
+        "-af",
+        "pan=5.1|FL=FC|FR=FC|FC=FC|LFE=FC|BL=FC|BR=FC",
+    ];
+
+    #[test]
+    fn mkv_with_ac3_5_1_plays_through_ffmpeg_as_stereo() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut args = SINE_SURROUND.to_vec();
+        args.extend(["-c:a", "ac3"]);
+        let Some(path) = generated_media(dir.path(), "surround.mkv", &args) else {
+            return; // ffmpeg fehlt in dieser Umgebung
+        };
+        let mut session = open_decoder(&path, Duration::ZERO, 44100, 2).unwrap();
+        assert!(matches!(session, DecoderSession::Ffmpeg(_)));
+        let samples = decoded_samples(&mut session);
+        let seconds = samples.len() as f32 / 2.0 / 44100.0;
+        assert!((1.8..2.3).contains(&seconds), "Länge {seconds} s");
+        assert!(
+            samples.iter().any(|s| s.abs() > 0.05),
+            "Ton muss hörbar sein"
+        );
+    }
+
+    #[test]
+    fn common_video_containers_give_sound_and_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let cases: [(&str, &str, &str); 7] = [
+            ("a.mkv", "mpeg4", "ac3"),
+            ("a.avi", "mpeg4", "mp3"),
+            ("a.mov", "mpeg4", "aac"),
+            ("a.mp4", "mpeg4", "aac"),
+            ("a.mpg", "mpeg2video", "mp2"),
+            ("a.ts", "mpeg2video", "mp2"),
+            ("a.wmv", "wmv2", "wmav2"),
+        ];
+        for (name, video, audio) in cases {
+            let args = [
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=s=64x64:r=25:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1:sample_rate=48000",
+                "-c:v",
+                video,
+                "-c:a",
+                audio,
+            ];
+            // Fehlt ein Encoder in dieser ffmpeg-Variante, entfällt nur dieser Fall.
+            let Some(path) = generated_media(dir.path(), name, &args) else {
+                continue;
+            };
+            let mut session = open_decoder(&path, Duration::ZERO, 48000, 2)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let samples = decoded_samples(&mut session);
+            assert!(samples.iter().any(|s| s.abs() > 0.02), "{name}: kein Ton");
+            let info = crate::engine::video_backend::probe(&path)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let duration = info.duration.unwrap_or_default().as_secs_f32();
+            assert!((0.5..1.6).contains(&duration), "{name}: Dauer {duration}");
+        }
+    }
+
+    #[test]
+    fn seek_skips_into_the_ffmpeg_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut args = SINE_SURROUND.to_vec();
+        args.extend(["-c:a", "ac3"]);
+        let Some(path) = generated_media(dir.path(), "surround.mkv", &args) else {
+            return;
+        };
+        let mut session = open_decoder(&path, Duration::from_secs(1), 48000, 2).unwrap();
+        let seconds = decoded_samples(&mut session).len() as f32 / 2.0 / 48000.0;
+        assert!((0.8..1.3).contains(&seconds), "Rest {seconds} s");
+    }
+
+    #[test]
+    fn video_without_sound_reports_no_audio_track() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = [
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=64x64:d=0.2",
+            "-c:v",
+            "mpeg4",
+        ];
+        let Some(path) = generated_media(dir.path(), "silent.mkv", &args) else {
+            return;
+        };
+        let err = open_decoder(&path, Duration::ZERO, 48000, 2).err().unwrap();
+        assert!(err.contains("no audio track"), "{err}");
+    }
+
+    #[test]
+    fn stopped_ffmpeg_audio_leaves_no_process_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut args = SINE_SURROUND.to_vec();
+        args.extend(["-c:a", "ac3"]);
+        let Some(path) = generated_media(dir.path(), "surround.mkv", &args) else {
+            return;
+        };
+        let audio = FfmpegAudio::open(&path, Duration::ZERO, 48000, 2).unwrap();
+        let pid = audio.child.id();
+        drop(audio);
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(!alive, "ffmpeg muss mit der Session enden");
+    }
 
     /// Kanal n → Ausgang n als Bitmaske (Bit n-1).
     const IDENTITY: [u16; AUDIO_CHANNEL_COUNT] = [

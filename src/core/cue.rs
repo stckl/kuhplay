@@ -157,10 +157,12 @@ impl CueType {
 /// → Diashow-Cue (ein Bild = eine Slide). Unbekannt → `None`.
 pub fn cue_type_for_file(path: &std::path::Path) -> Option<CueType> {
     const AUDIO: &[&str] = &[
-        "mp3", "wav", "aif", "aiff", "m4a", "flac", "ogg", "opus", "wma", "mpga", "aac",
+        "mp3", "wav", "aif", "aiff", "m4a", "flac", "ogg", "opus", "wma", "mpga", "aac", "ac3",
+        "eac3", "dts", "mka", "mp2", "wv", "ape",
     ];
     const VIDEO: &[&str] = &[
-        "mp4", "mov", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "wmv", "flv", "3gp",
+        "mp4", "mov", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "wmv", "flv", "3gp", "ts", "mts",
+        "m2ts", "mxf", "ogv", "vob", "m2v", "asf",
     ];
     const IMAGE: &[&str] = &[
         "png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic",

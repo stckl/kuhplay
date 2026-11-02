@@ -196,7 +196,10 @@ pub(super) fn pick_media_file() -> Option<String> {
         .add_filter(
             "Media",
             &[
-                "wav", "mp3", "aac", "flac", "ogg", "m4a", "mp4", "mov", "mkv", "webm", "avi",
+                "wav", "mp3", "aac", "flac", "ogg", "opus", "m4a", "aif", "aiff", "wma", "ac3",
+                "eac3", "dts", "mka", "mp2", "wv", "ape", "mp4", "mov", "mkv", "webm", "avi",
+                "m4v", "mpg", "mpeg", "wmv", "flv", "3gp", "ts", "mts", "m2ts", "mxf", "ogv",
+                "vob", "m2v", "asf",
             ],
         )
         .set_title("Select media file")
