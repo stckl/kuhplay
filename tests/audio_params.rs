@@ -36,6 +36,8 @@ fn play_cmd(cue_id: Uuid, duration_ms: u64) -> EngineCommand {
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 
@@ -184,6 +186,8 @@ fn slices_play_each_segment_with_its_own_play_count() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
 
@@ -253,6 +257,8 @@ fn slices_report_position_within_the_current_segment() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
 
@@ -299,6 +305,8 @@ fn invalid_slice_yields_error_event_and_no_playback() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
 
@@ -334,6 +342,8 @@ fn invalid_route_yields_error_event_and_valid_route_plays() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
     let events = drain(&rx);

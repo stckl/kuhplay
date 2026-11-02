@@ -42,7 +42,60 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.add(egui::DragValue::new(n).range(1..=999));
             }
         });
-        ui.end_row();
+        // In/Out am Cue (Start-/Endzeit im Medium; 0/leer = Anfang/Ende).
+        if matches!(cue.cue_type, CueType::Audio | CueType::Video) {
+            theme::field_label(ui, "Start at (in)");
+            ui.horizontal(|ui| {
+                let mut active = cue.in_point.is_some();
+                if ui.checkbox(&mut active, "").changed() {
+                    cue.in_point = if active { Some(Duration::ZERO) } else { None };
+                }
+                if let Some(in_pt) = &mut cue.in_point {
+                    let mut secs = in_pt.as_secs_f64();
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut secs)
+                                .speed(0.1)
+                                .range(0.0..=36_000.0),
+                        )
+                        .changed()
+                    {
+                        *in_pt = Duration::from_secs_f64(secs);
+                    }
+                }
+            });
+            ui.end_row();
+
+            theme::field_label(ui, "End at (out)");
+            ui.horizontal(|ui| {
+                let mut active = cue.out_point.is_some();
+                if ui.checkbox(&mut active, "").changed() {
+                    cue.out_point = if active { Some(Duration::ZERO) } else { None };
+                }
+                if let Some(out_pt) = &mut cue.out_point {
+                    let mut secs = out_pt.as_secs_f64();
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut secs)
+                                .speed(0.1)
+                                .range(0.0..=36_000.0),
+                        )
+                        .changed()
+                    {
+                        *out_pt = Duration::from_secs_f64(secs);
+                    }
+                }
+            });
+            ui.end_row();
+
+            theme::field_label(ui, "Hold at end");
+            ui.checkbox(
+                &mut cue.hold_last_frame,
+                "keep last frame on stage after the cue ends",
+            )
+            .on_hover_text("Video/image: last frame stays visible instead of black");
+            ui.end_row();
+        }
 
         if matches!(cue.cue_type, CueType::Audio | CueType::Video) {
             // --- Von/Bis (In/Out): spielt nur [From, To) des Mediums ---

@@ -417,6 +417,8 @@ fn slide_nav_on_non_slideshow_cue_errors() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
     engine.advance_time(Duration::ZERO); // Started

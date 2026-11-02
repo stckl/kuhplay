@@ -43,6 +43,10 @@ pub enum EngineCommand {
         stage: Option<String>,
         layer: u32,
         surface: Option<SurfaceGeometry>,
+        /// In-Point im Medium (None = 0).
+        in_point: Option<Duration>,
+        /// Out-Point im Medium (None = Medienende).
+        out_point: Option<Duration>,
     },
     /// Das letzte Bild dieses Cues bleibt nach dem Ende stehen.
     HoldLastFrame { cue_id: Uuid },

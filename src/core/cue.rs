@@ -540,6 +540,12 @@ pub struct Cue {
     /// Loop-Modus der Wiedergabe.
     #[serde(default)]
     pub loop_mode: LoopMode,
+    /// Startzeit im Medium (In-Point); None = ab 0.
+    #[serde(default, with = "crate::core::option_duration_ms")]
+    pub in_point: Option<Duration>,
+    /// Endzeit im Medium (Out-Point); None = bis Ende.
+    #[serde(default, with = "crate::core::option_duration_ms")]
+    pub out_point: Option<Duration>,
     /// Continue-Mode (Auto-Continue/Auto-Follow, Cue Sequences).
     #[serde(default)]
     pub continue_mode: ContinueMode,
@@ -677,6 +683,8 @@ impl Cue {
             fade_opacity: None,
             stop_when_done: false,
             loop_mode: LoopMode::Once,
+            in_point: None,
+            out_point: None,
             kill_others: false,
             hold_last_frame: false,
             stop_previous: false,
@@ -1167,6 +1175,8 @@ impl Cue {
                 stage: self.stage.clone(),
                 layer: self.layer,
                 surface: self.surface,
+                in_point: self.in_point,
+                out_point: self.out_point,
             }),
             CueType::Fade => {
                 // Alte Felder (target_volume/fade_param) migrieren: Opacity -> fade_opacity.
@@ -1479,6 +1489,8 @@ mod tests {
                 stage,
                 layer,
                 surface,
+                in_point: _,
+                out_point: _,
             } => {
                 assert_eq!(cue_id, cue.id);
                 assert_eq!(path.as_deref(), Some("/media/jingle.wav"));

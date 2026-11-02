@@ -2757,6 +2757,8 @@ impl ShowApp {
                 stage: _,
                 layer,
                 surface,
+                in_point,
+                out_point,
             } => EngineCommand::Play {
                 cue_id,
                 path,
@@ -2770,6 +2772,8 @@ impl ShowApp {
                 stage: None,
                 layer,
                 surface,
+                in_point,
+                out_point,
             },
             EngineCommand::PlayHtml {
                 cue_id,

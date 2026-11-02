@@ -36,6 +36,8 @@ fn play_cmd(cue_id: Uuid, duration_ms: u64) -> EngineCommand {
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 

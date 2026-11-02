@@ -190,6 +190,8 @@ fn video_playback_with_stage_reference_runs_normally() {
             stage: Some("Beamer".to_string()),
             layer: 1,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
     engine.advance_time(Duration::from_millis(100)); // Started

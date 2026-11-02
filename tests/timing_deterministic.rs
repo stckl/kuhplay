@@ -45,6 +45,8 @@ fn play_cmd(
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 
@@ -588,6 +590,8 @@ fn play_with_tc(cue_id: Uuid, tc_in: Timecode) -> EngineCommand {
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 

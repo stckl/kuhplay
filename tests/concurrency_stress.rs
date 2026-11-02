@@ -95,6 +95,8 @@ fn play_stop_storm_keeps_engine_alive_and_consistent() {
                     stage: None,
                     layer: 0,
                     surface: None,
+                    in_point: None,
+                    out_point: None,
                 });
                 if i % 2 == 0 {
                     let _ = tx.send(EngineCommand::Stop { cue_id });
@@ -156,6 +158,8 @@ fn rapid_go_burst_over_channel_matches_domain_expectations() {
                 stage: None,
                 layer: 0,
                 surface: None,
+                in_point: None,
+                out_point: None,
             })
             .unwrap();
     }

@@ -30,6 +30,7 @@
 
 pub mod audio;
 pub mod cart;
+pub mod clock_trigger;
 pub mod companion;
 pub mod cue;
 pub mod cue_list;
@@ -47,6 +48,22 @@ pub mod timecode;
 pub mod video_routing;
 
 /// Serde-Hilfsmodul: `Duration` als Millisekunden (JSON-lesbar).
+pub(crate) mod option_duration_ms {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S: Serializer>(d: &Option<Duration>, s: S) -> Result<S::Ok, S::Error> {
+        match d {
+            Some(d) => s.serialize_u64(d.as_millis() as u64),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+        Ok(Option::<u64>::deserialize(d)?.map(Duration::from_millis))
+    }
+}
+
 pub(crate) mod duration_ms {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;

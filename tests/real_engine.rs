@@ -165,6 +165,8 @@ fn play_cmd(cue_id: Uuid, path: &Path, duration: Option<Duration>) -> EngineComm
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 

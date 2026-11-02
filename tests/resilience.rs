@@ -40,6 +40,8 @@ fn play_cmd(cue_id: Uuid, path: Option<String>) -> EngineCommand {
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 

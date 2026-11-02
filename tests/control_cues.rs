@@ -261,6 +261,8 @@ fn engine_devamp_finishes_an_infinite_loop_immediately() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
     engine.advance_time(Duration::from_millis(100)); // Started
@@ -309,6 +311,8 @@ fn engine_devamp_all_finishes_every_playback() {
                 stage: None,
                 layer: 0,
                 surface: None,
+                in_point: None,
+                out_point: None,
             })
             .unwrap();
     }

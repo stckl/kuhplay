@@ -40,6 +40,8 @@ fn play_chasing(cue_id: Uuid, duration: Duration, timecode_in: Timecode) -> Engi
         stage: None,
         layer: 0,
         surface: None,
+        in_point: None,
+        out_point: None,
     }
 }
 
@@ -230,6 +232,8 @@ fn non_chasing_cue_is_unaffected_by_timecode_input() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
     engine.advance_time(Duration::from_millis(2000));
@@ -260,6 +264,8 @@ fn chasing_can_be_enabled_and_disabled_via_command() {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         })
         .unwrap();
     engine.advance_time(Duration::from_millis(1000)); // Started

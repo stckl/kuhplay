@@ -606,6 +606,8 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 // Surface-Geometrie (AoI/Hard-Edge) ist Real-Engine-Compositor;
                 // die Mock-Engine bildet keine Pixel ab und ignoriert sie.
                 surface: _,
+                in_point: _,
+                out_point: _,
             } => {
                 debug!(%cue_id, ?path, ?duration, ?pre_wait, ?post_wait, ?loop_mode, "play");
                 // Slices und Route validieren (defekte Parameter → Error).
@@ -1383,6 +1385,8 @@ mod tests {
             stage: None,
             layer: 0,
             surface: None,
+            in_point: None,
+            out_point: None,
         }
     }
 

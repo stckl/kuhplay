@@ -113,6 +113,10 @@ struct ActivePlayback {
     /// Akkumulierte Laufzeit vor Pausen (nur Html/Diashow; Media: Backend).
     accumulated: Duration,
     paused_since: Option<Duration>,
+    /// In-Point im Medium (Seek nach Play-Start).
+    in_at: Option<Duration>,
+    /// Out-Point im Medium (danach Unit-Ende).
+    out_at: Option<Duration>,
     /// Cue-Duration (0 = bis EOF/Stop).
     duration: Duration,
     loop_mode: LoopMode,
@@ -144,12 +148,21 @@ impl ActivePlayback {
             // Wait-Cue: explizite Dauer (0 = sofortiges Ende), nie Default.
             return self.duration;
         }
-        if !self.plan.is_empty() {
-            return self
-                .plan
+        let unit0 = if !self.plan.is_empty() {
+            self.plan
                 .get(self.plan_index)
                 .copied()
-                .unwrap_or(DEFAULT_PLAYBACK);
+                .unwrap_or(DEFAULT_PLAYBACK)
+        } else {
+            Duration::MAX
+        };
+        // Out-Point begrenzt die Einheit (In/Out).
+        if let Some(out) = self.out_at {
+            let start = self.in_at.unwrap_or(Duration::ZERO);
+            return out.saturating_sub(start).min(unit0);
+        }
+        if !self.plan.is_empty() {
+            return unit0;
         }
         if let PlaybackKind::SlideShow(state) = &self.kind {
             if !self.duration.is_zero() {
@@ -1423,6 +1436,8 @@ impl MediaEngine for RealMediaEngine {
                 stage,
                 layer,
                 surface,
+                in_point,
+                out_point,
             } => {
                 debug!(%cue_id, ?path, ?duration, ?stage, layer, "play (real)");
                 self.release_held(cue_id);
@@ -1496,6 +1511,8 @@ impl MediaEngine for RealMediaEngine {
                     started_at: None,
                     accumulated: Duration::ZERO,
                     paused_since: None,
+                    in_at: in_point,
+                    out_at: out_point,
                     duration: duration.unwrap_or(Duration::ZERO),
                     loop_mode,
                     plan,
@@ -1526,6 +1543,8 @@ impl MediaEngine for RealMediaEngine {
                         stage: None,
                         layer: 0,
                         surface: None,
+                        in_at: None,
+                        out_at: None,
                         received_at: now,
                         pre_wait,
                         started_at: None,
@@ -1964,6 +1983,8 @@ impl MediaEngine for RealMediaEngine {
                         stage,
                         layer,
                         surface: None,
+                        in_at: None,
+                        out_at: None,
                         received_at: now,
                         pre_wait,
                         started_at: None,
@@ -2012,6 +2033,8 @@ impl MediaEngine for RealMediaEngine {
                 match self.preload_slideshow(&show) {
                     Ok(frames) => {
                         let playback = ActivePlayback {
+                            in_at: None,
+                            out_at: None,
                             kind: PlaybackKind::SlideShow(SlideShowState {
                                 show,
                                 frames,
@@ -2449,7 +2472,8 @@ impl MediaEngine for RealMediaEngine {
                     let kind = playback.kind.clone();
                     let path = playback.path.clone();
                     let route = playback.route;
-                    let offset = playback.plan_offset.first().copied().unwrap_or_default();
+                    let offset = playback.plan_offset.first().copied().unwrap_or_default()
+                        + playback.in_at.unwrap_or(Duration::ZERO);
                     match &mut playback.kind {
                         PlaybackKind::Audio | PlaybackKind::Video => {
                             match Self::start_media_backend(

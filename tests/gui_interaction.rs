@@ -1466,6 +1466,8 @@ fn audition_mode_strips_stage_from_video_commands() {
         stage: Some("Stage 1".to_string()),
         layer: 1,
         surface: None,
+        in_point: None,
+        out_point: None,
     };
 
     // Audition AUS → Stage bleibt erhalten.
