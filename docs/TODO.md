@@ -29,6 +29,12 @@ vs. Referenz), `docs/AUFTRAG-fade.md` (Fade – umgesetzt).
 
 ## P3 – Technik/Sonstiges
 
+- [x] Real-World-Tests (`tests/realworld.rs`): echte Medien via ffmpeg/hound durch
+      die Real-Engine – Out-Point endet früh, Opacity-Fade am echten Stage-Canvas
+      (Mitte ist Mix, nie schwarz), Hold-at-end hält letztes Frame; Audio-Fade
+      opt-in via `KUHPLAY_REAL_AUDIO=1` (braucht Audio-Device). `KUHPLAY_AUDIO=off`
+      schaltet das Audio-Backend ab (Video-only, z. B. Sandbox/CI ohne Soundkarte).
+
 - [ ] Headless-Modus (`KUHPLAY_HEADLESS=1`, Remote ohne eframe-Fenster)
 - [ ] GPU-Compositing (wgpu) statt CPU-RGBA-Roundtrip
 - [ ] Bekannte Flakes: `real_engine`-Timing-Tests in Parallel-Läufen (pre-existing,

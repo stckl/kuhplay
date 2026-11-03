@@ -383,14 +383,21 @@ impl RealMediaEngine {
         route_frames: RouteFrameStore,
         events: Sender<EngineEvent>,
     ) -> Self {
-        let audio = match AudioBackend::new() {
-            Ok(backend) => {
-                debug!("audio backend ready (cpal)");
-                Some(backend)
-            }
-            Err(err) => {
-                warn!(%err, "audio backend unavailable – video-only mode");
-                None
+        let audio_off = std::env::var("KUHPLAY_AUDIO")
+            .map(|v| v == "off")
+            .unwrap_or(false);
+        let audio = if audio_off {
+            None
+        } else {
+            match AudioBackend::new() {
+                Ok(backend) => {
+                    debug!("audio backend ready (cpal)");
+                    Some(backend)
+                }
+                Err(err) => {
+                    warn!(%err, "audio backend unavailable – video-only mode");
+                    None
+                }
             }
         };
         let video = VideoBackend::new(frames.clone());
