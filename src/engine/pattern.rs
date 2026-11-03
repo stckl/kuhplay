@@ -481,13 +481,21 @@ type GridShades = ([u8; 3], [u8; 3], [u8; 3], [u8; 3], [u8; 3]);
 
 /// Shades des Rasters aus der Routen-/Screen-Farbe (Linien in der Layerfarbe).
 fn grid_shades_of(color: [u8; 3]) -> GridShades {
-    let dim = [color[0] / 3, color[1] / 3, color[2] / 3];
-    let diag = [
-        (color[0] / 2).max(60),
-        (color[1] / 2).max(60),
-        (color[2] / 2).max(60),
-    ];
-    (dim, color, diag, color, color)
+    // Gleiche Helligkeitsstufen wie das klassische weiße Grid (15/35/60/80/100 %),
+    // auf die Ausgangs-/Routenfarbe skaliert – nicht hart dividiert (zu dunkel).
+    let scale = |f: u16| -> [u8; 3] {
+        [
+            (color[0] as u16 * f / 100) as u8,
+            (color[1] as u16 * f / 100) as u8,
+            (color[2] as u16 * f / 100) as u8,
+        ]
+    };
+    let dim = scale(15);
+    let major = scale(35);
+    let diag = scale(60);
+    let axis = scale(80);
+    let scale_c = color;
+    (dim, major, diag, axis, scale_c)
 }
 
 /// Nur die Rasterlinien (ohne Hintergrund-Füllung) – so zeichnet draw_test_pattern
@@ -1193,11 +1201,11 @@ mod watermark_tests {
             }
         }
         assert!(found, "Kuh in Routenfarbe (rot) sichtbar");
-        // Mittelachse über der Kuh: deckend in Routenfarbe, unverändert.
+        // Mittelachse über der Kuh: 80 % Routenfarbe (altes Helligkeitsraster), unverändert.
         assert_eq!(
             px4(&rgba, w, w / 2, 120),
-            [255, 0, 0, 255],
-            "Achse über Kuh"
+            [204, 0, 0, 255],
+            "Achse über Kuh (80 % Routenfarbe)"
         );
         assert_eq!(px4(&rgba, w, w / 2, 120), px4(&plain, w, w / 2, 120));
         // Ecke außerhalb der Kuh: unverändert.
@@ -1280,5 +1288,35 @@ mod watermark_tests {
             }
             assert!(inside_diff, "Kuh sichtbar bei {kind:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod dump {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn dump_test_pattern_png() {
+        let (w, h) = (640u32, 360u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        let spec = TestPatternSpec {
+            label: "A: Route 1  640x360".to_string(),
+            width: w,
+            height: h,
+            kind: crate::core::TestPatternKind::Grid,
+            color: [255, 80, 0],
+            index: 0,
+            checker_size: 64,
+        };
+        draw_test_pattern(&mut rgba, w, h, &spec);
+        let img = image::RgbaImage::from_raw(w, h, rgba).unwrap();
+        img.save("/tmp/grid_test.png").unwrap();
+        // Region-Grid-Variante
+        let mut rgba2 = vec![0u8; (w * h * 4) as usize];
+        draw_region_grid(&mut rgba2, w, h, "A: Route X", [255, 80, 0]);
+        image::RgbaImage::from_raw(w, h, rgba2)
+            .unwrap()
+            .save("/tmp/region_grid.png")
+            .unwrap();
     }
 }
