@@ -163,6 +163,12 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
             );
             ui.end_row();
 
+            // --- Zeitstrahl: zeigt In/Out (Beschnitt) des Mediums ---
+            let total = media_end.unwrap_or(Duration::from_secs(60));
+            theme::field_label(ui, "Timeline");
+            draw_timeline(ui, &mut cue.in_point, &mut cue.out_point, total);
+            ui.end_row();
+
             // --- Media-Slices (Segment-Plan mit Play-Counts) ---
             theme::field_label(ui, "Slices");
             ui.vertical(|ui| {
@@ -336,6 +342,97 @@ fn draw_waveform(
     painter.vline(in_x, rect.y_range(), mark);
     painter.vline(out_x, rect.y_range(), mark);
     edit
+}
+
+fn fmt_dur(d: Duration) -> String {
+    let ms = d.as_millis();
+    format!(
+        "{}:{:02}.{:02}",
+        ms / 60_000,
+        (ms / 1000) % 60,
+        (ms % 1000) / 10
+    )
+}
+
+/// Zeitstrahl über die volle Breite: graue Gesamtlänge, aktiver Bereich
+/// (In..Out) hervorgehoben, In/Out per Klick/Drag setzbar.
+fn draw_timeline(
+    ui: &mut egui::Ui,
+    in_pt: &mut Option<Duration>,
+    out_pt: &mut Option<Duration>,
+    total: Duration,
+) {
+    let total_s = total.as_secs_f64().max(0.001);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 26.0),
+        egui::Sense::click_and_drag(),
+    );
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let in_s = in_pt.map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let out_s = out_pt
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(total_s)
+        .min(total_s);
+    let to_x = |secs: f64| rect.left() + (secs / total_s) as f32 * rect.width();
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, theme::palette::BACKGROUND);
+    painter.rect_stroke(
+        rect,
+        3.0,
+        egui::Stroke::new(1.0, theme::palette::TEXT_FAINT),
+    );
+    let active = egui::Rect::from_min_max(
+        egui::pos2(to_x(in_s), rect.top() + 4.0),
+        egui::pos2(to_x(out_s), rect.bottom() - 4.0),
+    );
+    painter.rect_filled(active, 2.0, theme::palette::SELECTION);
+    for x in [to_x(in_s), to_x(out_s)] {
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(x - 1.0, rect.top()),
+                egui::pos2(x + 1.0, rect.bottom()),
+            ),
+            0.0,
+            theme::palette::ACCENT,
+        );
+    }
+    for i in 0..=10 {
+        let x = rect.left() + rect.width() * i as f32 / 10.0;
+        painter.line_segment(
+            [
+                egui::pos2(x, rect.bottom() - 5.0),
+                egui::pos2(x, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, theme::palette::TEXT_FAINT),
+        );
+    }
+    if response.dragged() || response.clicked() {
+        let pos = response.interact_pointer_pos().unwrap();
+        let t = ((pos.x - rect.left()) as f64 / rect.width() as f64).clamp(0.0, 1.0) * total_s;
+        let shift = ui.input(|i| i.modifiers.shift);
+        let near_in = (t - in_s).abs() <= (t - out_s).abs();
+        if shift || near_in {
+            *in_pt = Some(Duration::from_secs_f64(t.min(out_s)));
+        } else {
+            *out_pt = Some(Duration::from_secs_f64(t.max(in_s)));
+        }
+    }
+    painter.text(
+        egui::pos2(rect.left() + 4.0, rect.top() + 3.0),
+        egui::Align2::LEFT_TOP,
+        format!("In {}", fmt_dur(in_pt.unwrap_or_default())),
+        egui::FontId::proportional(10.0),
+        theme::palette::TEXT_DIM,
+    );
+    painter.text(
+        egui::pos2(rect.right() - 4.0, rect.top() + 3.0),
+        egui::Align2::RIGHT_TOP,
+        format!("Out {}", fmt_dur(out_pt.unwrap_or(total))),
+        egui::FontId::proportional(10.0),
+        theme::palette::TEXT_DIM,
+    );
 }
 
 #[cfg(test)]

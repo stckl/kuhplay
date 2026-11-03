@@ -350,3 +350,13 @@ Post-wait · Continue**.
   Dann meldet der Footer den Ausfall, und nur ein Neustart hilft.
 * Network und MIDI in den Workspace Settings zeigen die Konfiguration
   nur an. Geändert wird sie über Umgebungsvariablen beim Start.
+
+
+## Testbild-Grid (bewusst so, nicht eigenmächtig ändern)
+
+Das Testbild-Grid (Grid-Testmuster) ist das bewährte Ausrichtungsraster in der
+Ausgangs-/Routenfarbe: 1 px Linien, Mittelachsen, Diagonalen, Eckenkreise,
+Skala, weißer 1 px Rahmen, Mittelkreis, Beschriftung – plus Kuh-Wasserzeichen
+(12 %, `kuh.svg`) im Hintergrund hinter dem Grid. Im Live-Betrieb zum Ausrichten
+von Projektoren/LED-Wänden. Änderungen nur nach Absprache (siehe Modul-Header
+`src/engine/pattern.rs`).

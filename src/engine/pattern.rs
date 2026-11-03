@@ -22,6 +22,12 @@
 //! [`super::kuh_mask`]) liegt in der Screen-/Routenfarbe mit 12 % Deckkraft
 //! **hinter** dem Grid – Reihenfolge: Hintergrund → Kuh → Grid-Linien/Kreis →
 //! Beschriftung. Im normalen Bild (ohne Testbild/Grid) erscheint keine Kuh.
+//!
+//! **Testbild-Grid (bewusst so, nicht eigenmächtig ändern):** Ausrichtungsraster
+//! in der Ausgangs-/Routenfarbe mit 1 px Linien, Mittelachsen, Diagonalen,
+//! Eckenkreisen, Skala, weißem 1 px Rahmen, Mittelkreis und Beschriftung –
+//! plus Kuh-Wasserzeichen im Hintergrund. Bewährt im Live-Betrieb (Ausrichten
+//! von Projektoren/LED-Wänden); Änderungen nur nach Absprache.
 
 use std::sync::OnceLock;
 
@@ -154,6 +160,10 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
     // 3) Grid-Linien (in Screen-Farbe) bzw. Pixelskala ÜBER der Kuh.
     match spec.kind {
         TestPatternKind::Grid => {
+            // VOLLSTÄNDIGES Ausrichtungsraster in der Ausgangs-/Routenfarbe
+            // (1 px Linien, Mittelachsen, Diagonalen, Eckenkreise, Skala) –
+            // dazu Kuh-Wasserzeichen Dahinter, dann Kreis, Beschriftung, Rand.
+            // Nicht „vereinfachen“ – siehe Doku-Hinweis im Modul-Header.
             let (dim, major, diag, axis, scale) = grid_shades_of(spec.color);
             grid_lines(rgba, w, h, dim, major, diag, axis, scale);
         }
