@@ -234,3 +234,60 @@ fn shuffle_group_closes_like_sequential_after_last_child() {
     }
     assert_eq!(list.cues()[0].status, CueStatus::Completed, "group closes");
 }
+
+/// Sequential/Shuffle reihen die Kinder beim GO in die Liste ein. Speichern
+/// und Reset müssen die Gruppe wieder zusammensetzen (vorher ging sie
+/// dabei verloren bzw. Shuffle veränderte die Reihenfolge bleibend).
+#[test]
+fn dissolved_groups_are_restored_for_saving_and_on_reset() {
+    for mode in [GroupMode::Sequential, GroupMode::Shuffle, GroupMode::Loop] {
+        let mut list = CueList::new();
+        let kids: Vec<Cue> = (1..=4)
+            .map(|i| Cue::new(format!("2.{i}"), format!("Kind {i}"), CueType::Wait))
+            .collect();
+        let order: Vec<String> = kids.iter().map(|c| c.number.clone()).collect();
+        list.add(Cue::new("1", "davor", CueType::Wait));
+        list.add(Cue::new_group("2", "Gruppe", mode, kids));
+        list.add(Cue::new("3", "danach", CueType::Wait));
+        list.go(); // Cue 1
+        list.go(); // Gruppe → Kinder eingereiht
+        assert!(
+            list.cues()[1].children.is_empty(),
+            "{mode:?}: Kinder eingereiht"
+        );
+
+        let saved = list.folded();
+        let numbers = |l: &CueList| {
+            l.cues()
+                .iter()
+                .map(|c| c.number.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            numbers(&saved),
+            ["1", "2", "3"],
+            "{mode:?}: gespeicherte Liste"
+        );
+        let saved_kids: Vec<String> = saved.cues()[1]
+            .children
+            .iter()
+            .map(|c| c.number.clone())
+            .collect();
+        assert_eq!(saved_kids, order, "{mode:?}: Kinder in Originalreihenfolge");
+
+        list.reset();
+        assert_eq!(numbers(&list), ["1", "2", "3"], "{mode:?}: nach Reset");
+        let kids_after: Vec<String> = list.cues()[1]
+            .children
+            .iter()
+            .map(|c| c.number.clone())
+            .collect();
+        assert_eq!(kids_after, order, "{mode:?}: Reihenfolge nach Reset");
+        // Erneut startbar.
+        list.go();
+        assert!(
+            list.go().is_some(),
+            "{mode:?}: Gruppe nach Reset wieder startbar"
+        );
+    }
+}

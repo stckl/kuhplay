@@ -861,6 +861,9 @@ impl CueList {
                 // triggert das nächste Kind). Shuffle mischt vorher
                 // deterministisch (seed-basiert, reproduzierbar).
                 let mut children = std::mem::take(&mut self.cues[index].children);
+                // Originalreihenfolge merken: Reset/Speichern bauen die Gruppe
+                // daraus wieder zusammen (auch nach Shuffle).
+                self.cues[index].dissolved_children = children.iter().map(|c| c.id).collect();
                 if mode == GroupMode::Shuffle {
                     shuffle_deterministic(&mut children, group_id_seed(group_id));
                 }
@@ -1319,10 +1322,62 @@ impl CueList {
 
     /// Reset: Playhead auf 0, alle Cues (inkl. Kinder) → Standby.
     pub fn reset(&mut self) {
+        self.fold_dissolved_groups();
         self.cursor = 0;
         for cue in &mut self.cues {
             cue.reset_status_recursive();
         }
+    }
+
+    /// Setzt Sequential/Loop/Shuffle-Gruppen wieder zusammen: Beim GO reiht
+    /// die Liste deren Kinder hinter der Gruppe ein (jedes GO trifft das
+    /// nächste Kind); hier kommen sie in Originalreihenfolge zurück in die
+    /// Gruppe. Der Playhead bleibt beim selben Cue bzw. hinter der Gruppe.
+    pub fn fold_dissolved_groups(&mut self) {
+        let groups: Vec<(Uuid, Vec<Uuid>)> = self
+            .cues
+            .iter()
+            .filter(|c| !c.dissolved_children.is_empty())
+            .map(|c| (c.id, c.dissolved_children.clone()))
+            .collect();
+        if groups.is_empty() {
+            return;
+        }
+        let cursor_id = self.cues.get(self.cursor).map(|c| c.id);
+        for (group_id, order) in groups {
+            let mut children = Vec::with_capacity(order.len());
+            for id in &order {
+                if let Some(i) = self.cues.iter().position(|c| c.id == *id) {
+                    children.push(self.cues.remove(i));
+                }
+            }
+            if let Some(group) = self.cues.iter_mut().find(|c| c.id == group_id) {
+                // Kinder, die die Gruppe noch selbst hält (später ergänzt), dahinter.
+                children.append(&mut group.children);
+                group.children = children;
+                group.dissolved_children.clear();
+            }
+        }
+        self.cursor = cursor_id
+            .and_then(|id| {
+                self.cues.iter().position(|c| c.id == id).or_else(|| {
+                    // Playhead stand auf einem Kind: hinter dessen Gruppe.
+                    self.cues
+                        .iter()
+                        .position(|c| contains_id(&c.children, id))
+                        .map(|g| g + 1)
+                })
+            })
+            .unwrap_or(self.cursor)
+            .min(self.cues.len());
+    }
+
+    /// Kopie mit zusammengesetzten Gruppen – so wird gespeichert, auch wenn
+    /// gerade eine Sequential-Gruppe läuft.
+    pub fn folded(&self) -> CueList {
+        let mut copy = self.clone();
+        copy.fold_dissolved_groups();
+        copy
     }
 }
 

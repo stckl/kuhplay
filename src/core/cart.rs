@@ -88,6 +88,15 @@ impl CartManager {
         &self.carts[self.active]
     }
 
+    /// Kopie zum Speichern: laufende Sequential-Gruppen zusammengesetzt
+    /// (siehe [`CueList::folded`]).
+    pub fn folded(&self) -> CartManager {
+        CartManager {
+            carts: self.carts.iter().map(CueList::folded).collect(),
+            active: self.active,
+        }
+    }
+
     /// Aktiver Cart (mutabel).
     /// Cart per Index (mutabel).
     pub fn cart_mut(&mut self, index: usize) -> &mut CueList {

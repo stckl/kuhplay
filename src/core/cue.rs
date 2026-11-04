@@ -606,6 +606,11 @@ pub struct Cue {
     /// Bereits absolvierte Iterationen (nur für [`GroupMode::Loop`]).
     #[serde(default)]
     pub group_iterations_done: u32,
+    /// Sequential/Loop/Shuffle-Gruppe während des Laufs: Reihenfolge der
+    /// Kinder vor dem Einreihen in die Liste – damit Reset und Speichern die
+    /// Gruppe wieder zusammensetzen (siehe `CueList::fold_dissolved_groups`).
+    #[serde(skip)]
+    pub dissolved_children: Vec<Uuid>,
     /// Aktion (nur für [`CueType::Control`]).
     #[serde(default)]
     pub control_action: ControlAction,
@@ -725,6 +730,7 @@ impl Cue {
             children: Vec::new(),
             parent_group: None,
             group_iterations_done: 0,
+            dissolved_children: Vec::new(),
             control_action: ControlAction::Start,
             control_target: None,
             stage: None,

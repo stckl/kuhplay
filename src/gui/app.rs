@@ -2576,7 +2576,8 @@ impl ShowApp {
     pub fn save_show(&mut self, path: &Path) {
         let doc = ShowDocument {
             name: self.show_name.clone(),
-            carts: self.carts.clone(),
+            // Laufende Sequential-Gruppen zusammengesetzt speichern.
+            carts: self.carts.folded(),
             stages: self.stages.clone(),
             routes: self.routes.clone(),
             screens: self.screens.clone(),

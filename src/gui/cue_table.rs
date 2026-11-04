@@ -1302,9 +1302,20 @@ fn render_cell_editor(
 /// Kleine Markierungen am rechten Rand der Status-Spalte: Flag oben, darunter
 /// Warnung oder geladen.
 fn draw_status_markers(ui: &mut egui::Ui, flagged: bool, meta: Option<&CueRowMeta>) {
-    let right = ui.max_rect().right_top();
-    let top = egui::Rect::from_min_size(right + egui::vec2(-12.0, 3.0), egui::vec2(10.0, 10.0));
-    let bottom = egui::Rect::from_min_size(right + egui::vec2(-12.0, 15.0), egui::vec2(10.0, 10.0));
+    // An der Zeilenmitte ausrichten: eine Markierung allein mittig, Flag und
+    // Warnung/geladen übereinander um die Mitte.
+    let cell = ui.max_rect();
+    let has_second = meta.is_some_and(|m| !m.warnings.is_empty() || m.loaded);
+    let x = cell.right() - 12.0;
+    let marker = |center_y: f32| {
+        egui::Rect::from_min_size(egui::pos2(x, center_y - 5.0), egui::vec2(10.0, 10.0))
+    };
+    let mid = cell.center().y;
+    let (top, bottom) = if flagged && has_second {
+        (marker(mid - 6.0), marker(mid + 6.0))
+    } else {
+        (marker(mid), marker(mid))
+    };
     if flagged {
         let painter = ui.painter();
         let stroke = egui::Stroke::new(1.5, palette::ACCENT);
