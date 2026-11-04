@@ -72,6 +72,9 @@ display-info = "0.5"
 cef = { version = "156", optional = true }
 # Base64 für Frame-Payloads der Renderer-IPC (bereits transitiv im Tree).
 base64 = "0.22"
+# Shared Memory für HTML5-Frames vom CEF-Renderer (kein Base64 über die Pipe,
+# siehe src/engine/webview_backend.rs).
+memmap2 = "0.9"
 # Ortszeit inkl. Sommerzeit für Clock-Trigger (src/core/clock_trigger.rs).
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
@@ -101,6 +104,12 @@ cef = ["dep:cef"]
 [[bin]]
 name = "kuhplay-cef"
 path = "src/bin/kuhplay-cef.rs"
+required-features = ["cef"]
+
+# Legt die CEF-Runtime neben kuhplay-cef (macOS: kuhplay-cef.app mit Helpern).
+[[bin]]
+name = "kuhplay-cef-bundle"
+path = "src/bin/kuhplay-cef-bundle.rs"
 required-features = ["cef"]
 
 # Windows: native DeckLink-COM-API (DeckLinkAPI64.dll, via regsvr32 registriert)

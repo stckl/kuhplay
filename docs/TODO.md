@@ -7,9 +7,9 @@ vs. Referenz), `docs/AUFTRAG-fade.md` (Fade – umgesetzt).
 ## P0 – muss auf dem echten Mac/ZBOOK laufen (braucht Termin/Hardware)
 
 - [ ] **F1.9 Sichtprüfung** am echten Bildschirm (Vergleich Look & Feel) – Termin absprechen.
-- [ ] **CEF-Live-Abnahme:** volle CEF-Distribution ins .app-Bundle (~300 MB), 60 fps
-      1080p/4K mit Alpha messen auf Mac und ZBOOK; Windows/Linux-CEF-Lauf auf dem
-      ZBOOK bauen/testen (MSVC da); CI-Job mit CEF. Doku: `docs/TODO-offen.md`.
+- [ ] **CEF-Abnahme Windows/Linux:** Mac fertig (Bundle, 60 fps 1080p/4K, Alpha).
+      Windows-Paket aus dem Release-Workflow auf dem ZBOOK testen; Installer
+      (DMG/NSIS/deb) von Hand prüfen. Doku: `docs/TODO-offen.md`.
 - [ ] **DeckLink-Hardware-Keying auf einem Port** (framesync in der Karte) – ZBOOK-Test.
 
 ## P1 – Produktlücken (aus Funktionsumfang-Vergleich)

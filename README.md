@@ -30,20 +30,25 @@ Voraussetzungen: [Rust](https://rustup.rs) und für Video-Cues `ffmpeg` samt
 `ffprobe` im `PATH`. Unter Linux zusätzlich die Bibliotheken aus
 `scripts/build-linux.sh`.
 
+Zum Bauen von CEF (HTML5-Renderer, Feature `cef`, default) braucht es
+zusätzlich **CMake** und **Ninja**, unter Windows die MSVC Build Tools.
+
 ```sh
 git clone https://github.com/stckl/kuhplay.git
 cd kuhplay
-cargo run --release   # CEF-Renderer ist default (Feature `cef`)
+cargo build --release
+# HTML5-Renderer samt CEF-Runtime nach target/release/cef/ legen
+# (macOS: kuhplay-cef.app mit Framework und Helper-Apps):
+cargo run --release --bin kuhplay-cef-bundle
+cargo run --release
 ```
 
 ### Release-Build / Dist
 
-```sh
-cargo build --release --locked
-# Ergebnis: target/release/kuhplay + target/release/kuhplay-cef
-# WICHTIG: beide Binaries müssen im selben Ordner liegen (HTML5/WebView-Sibling),
-# alternativ Pfad via KUHPLAY_CEF_BIN setzen.
-```
+`scripts/build-mac.sh`, `scripts/build-windows.ps1` und `scripts/build-linux.sh`
+bauen fertige Pakete nach `dist/` – inklusive CEF (macOS:
+`KuhPlay.app/Contents/Helpers/kuhplay-cef.app`, Windows/Linux: Ordner `cef/`
+neben dem Programm). Ohne CEF: `--no-cef` bzw. `-NoCef`.
 
 Fertige Builds liegen zum Testen bereit:
 - **macOS:** `/Users/stocke/Desktop/KuhPlay-macOS/` (kuhplay + kuhplay-cef)

@@ -67,6 +67,8 @@ pub struct WebviewInstance {
     /// Einmalig gesetzt, wenn der Subprocess gestorben ist (damit genau ein
     /// Fehler-Event gemeldet wird, danach nur noch None).
     death_reported: bool,
+    /// Shared-Memory-Datei der Frames (beim Drop gelöscht).
+    shm_path: std::path::PathBuf,
 }
 
 impl WebviewInstance {
@@ -79,14 +81,33 @@ impl WebviewInstance {
             .spawn()?;
         let stdin = child.stdin.take().expect("stdin ist gepiped");
         let stdout = child.stdout.take().expect("stdout ist gepiped");
-        // Reader-Thread: stdout-Zeilen → Events (App pollt non-blocking).
+        // Frames kommen über Shared Memory (siehe frame_shm); über die Pipe
+        // nur die Meldung, welcher Slot fertig ist.
+        let shm_path = std::env::temp_dir().join(format!(
+            "kuhplay-html-{}-{cue_id}.frames",
+            std::process::id()
+        ));
+        // Reader-Thread: stdout-Zeilen → Events (App pollt non-blocking); er
+        // kopiert gemeldete Bilder gleich aus dem Shared Memory.
         let (tx, rx) = crossbeam_channel::unbounded();
+        let mut shm = super::frame_shm::FrameShmReader::new(shm_path.clone());
         let reader = std::thread::Builder::new()
             .name(format!("kuhplay-webview-rx-{cue_id}"))
             .spawn(move || {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Some(Ok(line)) = lines.next() {
-                    if let Some(event) = parse_event_line(&line) {
+                    let event = match parse_shm_frame(&line) {
+                        Some((width, height, slot)) => {
+                            shm.read(width, height, slot)
+                                .map(|rgba| WebviewEvent::Frame {
+                                    width,
+                                    height,
+                                    rgba,
+                                })
+                        }
+                        None => parse_event_line(&line),
+                    };
+                    if let Some(event) = event {
                         if tx.send(event).is_err() {
                             break; // Receiver weg → Thread endet
                         }
@@ -99,8 +120,19 @@ impl WebviewInstance {
             rx,
             _reader: reader,
             death_reported: false,
+            shm_path,
         };
-        instance.send_json(&serde_json::json!({ "load": source }))?;
+        let path = instance.shm_path.to_string_lossy().into_owned();
+        // Stirbt der Prozess sofort (z. B. CEF-Runtime fehlt), schlägt das
+        // Schreiben fehl – das meldet poll_event dann genau einmal als Fehler.
+        let sent = instance
+            .send_json(&serde_json::json!({ "shm": { "path": path } }))
+            .and_then(|()| instance.send_json(&serde_json::json!({ "load": source })));
+        if let Err(err) = sent {
+            if err.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(err);
+            }
+        }
         Ok(instance)
     }
 
@@ -159,7 +191,19 @@ impl Drop for WebviewInstance {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.shm_path);
     }
+}
+
+/// `{"frame_shm":{"width","height","slot",…}}` → (Breite, Höhe, Slot).
+fn parse_shm_frame(line: &str) -> Option<(u32, u32, u32)> {
+    if !line.contains("\"frame_shm\"") {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let frame = value.get("frame_shm")?;
+    let get = |key: &str| frame.get(key)?.as_u64().map(|v| v as u32);
+    Some((get("width")?, get("height")?, get("slot")?))
 }
 
 /// Parst eine Event-Zeile vom Subprocess. `None` bei unbekannten Messages
@@ -206,8 +250,9 @@ fn parse_frame_event(frame: &serde_json::Value) -> Option<WebviewEvent> {
 }
 
 /// Pfad des CEF-Renderer-Binarys (einziger HTML5-Renderer): `KUHPLAY_CEF_BIN`
-/// (Override) -> `kuhplay-cef` neben dem Executable. `None` = nicht gebaut
-/// (z. B. Build ohne Feature "cef") -> virtueller Fallback in der Engine.
+/// (Override), sonst der erste vorhandene Kandidat aus [`cef_sibling_paths`].
+/// `None` = nicht gebaut (z. B. Build ohne Feature „cef") → virtueller
+/// Fallback in der Engine.
 pub fn cef_binary() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("KUHPLAY_CEF_BIN") {
         if !path.is_empty() {
@@ -220,13 +265,36 @@ pub fn cef_binary() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Kandidaten-Pfade für das CEF-Binary neben dem Hauptprogramm
-/// (Windows zusätzlich `kuhplay-cef.exe`, da `is_file` keine Endung anhängt).
+/// Kandidaten für den Renderer relativ zum Ordner des Hauptprogramms
+/// (`kuhplay-cef-bundle` legt ihn samt CEF-Runtime in einen Ordner `cef/`).
+///
+/// * macOS: `cef/kuhplay-cef.app` daneben (Entwicklung: `target/<profil>/`),
+///   im fertigen KuhPlay.app unter `Contents/Helpers/` bzw.
+///   `Contents/Resources/cef/` (Installer); zuletzt das nackte Binary – es
+///   meldet dann selbst, dass das Framework fehlt.
+/// * Windows/Linux: `cef/kuhplay-cef` daneben; Linux-Paket zusätzlich unter
+///   `../lib/kuhplay/cef/`; zuletzt direkt daneben.
 fn cef_sibling_paths(dir: &std::path::Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    return vec![
+        dir.join("cef/kuhplay-cef.app/Contents/MacOS/kuhplay-cef"),
+        dir.join("../Helpers/kuhplay-cef.app/Contents/MacOS/kuhplay-cef"),
+        dir.join("../Resources/cef/kuhplay-cef.app/Contents/MacOS/kuhplay-cef"),
+        dir.join("kuhplay-cef"),
+    ];
     #[cfg(target_os = "windows")]
-    return vec![dir.join("kuhplay-cef"), dir.join("kuhplay-cef.exe")];
-    #[cfg(not(target_os = "windows"))]
-    vec![dir.join("kuhplay-cef")]
+    return vec![
+        dir.join("cef/kuhplay-cef.exe"),
+        dir.join("kuhplay-cef.exe"),
+        dir.join("kuhplay-cef"),
+    ];
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    vec![
+        dir.join("cef/kuhplay-cef"),
+        dir.join("../lib/kuhplay/cef/kuhplay-cef"),
+        dir.join("../lib/KuhPlay/cef/kuhplay-cef"),
+        dir.join("kuhplay-cef"),
+    ]
 }
 
 #[cfg(test)]
@@ -239,6 +307,28 @@ mod tests {
         assert!(candidates.contains(&std::path::PathBuf::from("/app/kuhplay-cef")));
         #[cfg(target_os = "windows")]
         assert!(candidates.contains(&std::path::PathBuf::from("/app/kuhplay-cef.exe")));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_prefers_the_app_bundle() {
+        let candidates = cef_sibling_paths(std::path::Path::new("/x/MacOS"));
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("/x/MacOS/cef/kuhplay-cef.app/Contents/MacOS/kuhplay-cef")
+        );
+        assert!(candidates.contains(&PathBuf::from(
+            "/x/MacOS/../Helpers/kuhplay-cef.app/Contents/MacOS/kuhplay-cef"
+        )));
+    }
+
+    #[test]
+    fn shm_frame_line_is_recognised() {
+        assert_eq!(
+            parse_shm_frame(r#"{"frame_shm":{"width":4,"height":2,"slot":1,"seq":7}}"#),
+            Some((4, 2, 1))
+        );
+        assert_eq!(parse_shm_frame(r#"{"loaded":true}"#), None);
     }
 
     #[test]

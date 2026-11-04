@@ -28,13 +28,19 @@ binaries_dir = "target/release"
 
 binaries = [
   { path = "kuhplay", main = true },
-  { path = "kuhplay-cef" },  # CEF-Subprocess; CEF-Distribution (libcef/Framework) liegt per CEF_PATH oder neben dem Paket – siehe docs/TODO-offen.md
 ]
 
 # ffmpeg/ffprobe landen neben dem Haupt-Binary im Paket (Dateiname mit Ziel-Triple).
 external_binaries = ["target/release/ffmpeg", "target/release/ffprobe"]
 
-resources = ["LICENSE", "LICENSES.md", "README.md", "icon.png", "target/release/LICENSE-ffmpeg.txt", "target/release/BUILD-ffmpeg.txt"]
+# cef/: HTML5-Renderer samt CEF-Runtime (vorher `kuhplay-cef-bundle` im
+# Workflow) – macOS: Contents/Resources/cef/kuhplay-cef.app, Windows neben der
+# exe, Linux unter /usr/lib/<name>/cef (Suchpfade: webview_backend.rs).
+resources = [
+  "LICENSE", "LICENSES.md", "README.md", "icon.png",
+  "target/release/LICENSE-ffmpeg.txt", "target/release/BUILD-ffmpeg.txt",
+  { src = "target/release/cef", target = "cef" },
+]
 
 icons = ["icon.png"]
 
@@ -47,7 +53,8 @@ languages = ["English"]
 [deb]
 # U2: Abhängigkeiten, die apt automatisch installiert (ffmpeg als LGPL-Quelle
 # siehe H3; zusätzlich wird ffmpeg gebündelt, siehe external_binaries).
-depends = ["ffmpeg", "libgtk-3-0", "libwebkit2gtk-4.1-0", "libasound2", "libva2", "libva-drm2", "libva-x11-2", "libvdpau1"]
+# CEF (Chromium) braucht u. a. NSS, GBM und die X11/ATK-Bibliotheken.
+depends = ["ffmpeg", "libgtk-3-0", "libasound2", "libva2", "libva-drm2", "libva-x11-2", "libvdpau1", "libnss3", "libgbm1", "libxkbcommon0", "libxcomposite1", "libxdamage1", "libxrandr2", "libatk-bridge2.0-0", "libcups2"]
 section = "video"
 priority = "optional"
 

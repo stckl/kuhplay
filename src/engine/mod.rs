@@ -71,6 +71,7 @@ pub mod decklink;
 pub mod decklink_com;
 pub mod decklink_native;
 pub mod frame;
+pub mod frame_shm;
 pub mod kuh_mask;
 pub mod media_engine;
 pub mod media_probe;

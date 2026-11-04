@@ -291,23 +291,26 @@ Use-Case: Bauchbinden/Overlays per Keying ausspielen (Fill + Key/Alpha).
 
 ---
 
-## CEF ist einziger HTML5-Renderer (wry entfernt) — Live-Abnahme offen
+## CEF ist einziger HTML5-Renderer (wry entfernt)
 
 - `src/bin/kuhplay-cef.rs` (Feature `cef`, `cef-rs` 156): windowless Offscreen-Rendering,
-  OnPaint → BGRA-premultiplied → RGBA straight alpha, `windowless_frame_rate = 60`,
-  gleicher JSON-IPC wie `kuhplay-cef` (Engine bleibt unverändert). Auswahl:
-  `KUHPLAY_HTML_RENDERER=cef` oder `KUHPLAY_CEF_BIN=<pfad>`; Default bleibt wry.
-- Build: `cargo check --features cef --all-targets` (macOS) grün. CEF ist default und einziger
-  Renderer (wry entfernt). Startbedingungen macOS: **volle** CEF-Distribution (das von
-  cef-dll-sys geladene Minimal-Paket hat kein icudtl.dat und crasht) – `CEF_PATH` auf das
-  entpackte `Release/` der Standard-Distribution zeigen, ohne .app zusätzlich
-  `CEF_MAIN_BUNDLE` auf ein Bundle mit `Contents/Resources/icudtl.dat`; im fertigen .app
-  liegen Framework + Resources automatisch richtig. Gestorbener Subprocess meldet jetzt
-  genau einmal `EngineEvent::Error` (webview_backend::poll_event), statt dass der Cue
-  schwarz bleibt. **Offen:** .app-Bundle-Layout/Paketierung (~150–300 MB),
-  Live-Abnahme 60 fps 1080p/4K mit Alpha auf Mac und ZBOOK (docs/KONZEPT-html-templates.md §9),
-  Windows/Linux-Lauf (cef-dll-sys braucht zum Cross-Check MSVC/cmake auf dem Zielrechner –
-  auf dem ZBOOK direkt bauen), CI-Job mit CEF.
+  transparenter Hintergrund, OnPaint → BGRA premultiplied → RGBA straight alpha,
+  `windowless_frame_rate = 60`. Start nach CEF-Lehrbuch: Framework laden (macOS),
+  `execute_process` für die Unterprozesse, Bundle-Pfade explizit (sonst SIGTRAP,
+  wenn kuhplay-cef.app in KuhPlay.app steckt), `--use-mock-keychain` (kein
+  Schlüsselbund-Dialog).
+- Bildtransport: Shared Memory (`src/engine/frame_shm.rs`, zwei Slots im Wechsel),
+  CEF schiebt jedes gemalte Bild; über die Pipe nur `{"frame_shm":…}`.
+  Gemessen (Mac, Release): **60 fps bei 1080p und 4K**, über die ganze Engine
+  60 fps bei 1280×720 (vorher Base64/JSON: 15,6 bzw. 0,4 fps).
+- Bündeln: `kuhplay-cef-bundle` legt `cef/` an (macOS `kuhplay-cef.app` mit
+  Framework + Helper-Apps, Windows/Linux libcef + Ressourcen daneben). Build-Skripte,
+  Packager.toml (`resources` → `cef`) und CI/Release-Workflows nutzen es;
+  `tests/cef_renderer.rs` prüft den echten Renderer (SKIP ohne Bundle).
+- Build braucht CMake + Ninja (+ MSVC unter Windows).
+- **Offen:** Windows- und Linux-Lauf nur über CI geprüft (ZBOOK hat keine MSVC
+  Build Tools – Test mit dem Release-Artefakt); DMG/NSIS/deb aus cargo-packager
+  noch nicht von Hand geprüft; Notarisierung (Developer-ID) für andere Macs.
 
 ---
 

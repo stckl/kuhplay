@@ -29,9 +29,10 @@ app=dist/KuhPlay.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/kuhplay "$app/Contents/MacOS/"
-# Die Engine sucht den WebView-Prozess neben dem Haupt-Binary.
+# HTML5-Renderer: kuhplay-cef.app samt CEF-Framework und Helper-Apps nach
+# Contents/Helpers (dort sucht die Engine, siehe webview_backend.rs).
 if [ "$cef" = 1 ]; then
-  cp target/release/kuhplay-cef "$app/Contents/MacOS/"
+  target/release/kuhplay-cef-bundle "$app/Contents/Helpers"
 fi
 # H3: ffmpeg/ffprobe gebündelt ins App-Bundle – schlägt das Mitliefern fehl
 # (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build hier ab.

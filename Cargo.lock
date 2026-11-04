@@ -3070,6 +3070,7 @@ dependencies = [
  "epaint_default_fonts",
  "hound",
  "image",
+ "memmap2",
  "midir",
  "minisign",
  "minisign-verify",

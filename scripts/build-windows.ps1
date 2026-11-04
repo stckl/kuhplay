@@ -1,6 +1,6 @@
 ﻿# Baut KuhPlay für Windows: dist\kuhplay-<version>-windows-<arch>.zip
-# Aufruf: powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 [-NoWebview]
-param([switch]$NoWebview)
+# Aufruf: powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 [-NoCef]
+param([switch]$NoCef)
 
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
@@ -24,8 +24,11 @@ $out = Join-Path 'dist' $name
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Path $out | Out-Null
 Copy-Item 'target\release\kuhplay.exe', 'README.md', 'icon.png' $out
-# Die Engine sucht den WebView-Prozess neben dem Haupt-Binary.
-if (-not $NoCef) { Copy-Item 'target\release\kuhplay-cef.exe' $out }
+# HTML5-Renderer samt CEF-Runtime in cef\ neben der exe.
+if (-not $NoCef) {
+    & 'target\release\kuhplay-cef-bundle.exe' (Join-Path $out 'cef')
+    if ($LASTEXITCODE -ne 0) { throw "kuhplay-cef-bundle fehlgeschlagen ($LASTEXITCODE)." }
+}
 
 # H3: ffmpeg/ffprobe gebündelt neben die exe (vor dem Zip) – schlägt das
 # Mitliefern fehl (Download, Prüfsumme, ffmpeg-Checks), bricht der Release-Build ab.
