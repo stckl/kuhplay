@@ -192,6 +192,8 @@ pub struct ShowApp {
     holding: HashSet<Uuid>,
     /// Länge noch nicht gespielter Medien (für die Anzeige von Anfang an).
     probed_durations: crate::engine::media_probe::MediaDurations,
+    /// Felddefinitionen der HTML-Templates (aus den Template-Dateien gelesen).
+    template_schemas: crate::core::html_template::TemplateSchemaCache,
     /// Zwischenablage für „Copy/Paste Cue Properties" (JSON der Cue-Felder).
     properties_clipboard: Option<serde_json::Value>,
     /// Akkumulierte aktive Zeit pausierter Cues.
@@ -591,6 +593,7 @@ impl ShowApp {
             media_durations: HashMap::new(),
             holding: HashSet::new(),
             probed_durations: Default::default(),
+            template_schemas: Default::default(),
             properties_clipboard: None,
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
@@ -2849,6 +2852,28 @@ impl ShowApp {
     }
 
     /// HTML5-Cue-Ziele des aktiven Carts (für HTML-Data-Cues im Inspector).
+    /// Felddefinition des Templates eines HTML-Cues (`None` = Template
+    /// beschreibt keine Daten; `Some(Err)` = Definition kaputt).
+    pub fn template_schema_of(
+        &self,
+        html_cue: Uuid,
+    ) -> Option<Result<crate::core::html_template::TemplateSchema, String>> {
+        use crate::core::html_template::TemplateSchema;
+        use crate::core::HtmlSource;
+        let cue = self.carts.find_cue_any(html_cue)?;
+        match cue.html_source.as_ref()? {
+            HtmlSource::File(path) => self.template_schemas.for_file(path),
+            HtmlSource::Url(url) => {
+                // file://…/seite.html?view=x → Datei ohne Query/Fragment.
+                let path = url.strip_prefix("file://")?;
+                let path = path.split(['?', '#']).next().unwrap_or(path);
+                self.template_schemas
+                    .for_file(Path::new(&path.replace("%20", " ")))
+            }
+            HtmlSource::Inline(html) => TemplateSchema::from_html(html),
+        }
+    }
+
     pub fn html_targets(&self) -> Vec<(Uuid, String)> {
         self.carts
             .active()

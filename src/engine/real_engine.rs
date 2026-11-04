@@ -275,7 +275,18 @@ struct ActiveHtml {
     /// ein Bild länger als das Intervall, stauten sich sonst die Anfragen und
     /// das Bild hinkte immer weiter hinterher.
     snapshot_pending_since: Option<Duration>,
+    /// Seite geladen (`Loaded`): Daten und Trigger gehen ab jetzt direkt raus.
+    loaded: bool,
+    /// Data-Cues vor dem Laden – werden nach `Loaded` zugestellt, dann `in`.
+    pending_data: Vec<serde_json::Value>,
+    /// Stop mit Out-Animation läuft seit … (Trigger `out` geschickt). Endet bei
+    /// `TriggerDone("out")` oder nach [`HTML_OUT_TIMEOUT`].
+    closing_since: Option<Duration>,
 }
+
+/// Höchstens so lange wartet ein Stop auf die Out-Animation des Templates
+/// (docs/KONZEPT-html-templates.md §5); ein zweites Stop beendet sofort.
+const HTML_OUT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Snapshot-Intervall für WebView-Compositing (HTML5-Cues auf Stages).
 // ~60 fps für HTML5-Cues: CSS/JS-Animationen sollen flüssig laufen
@@ -316,6 +327,10 @@ pub struct RealMediaEngine {
     fades: HashMap<(Uuid, FadeParam), ActiveFade>,
     /// Noch laufende Fades pro Fade-Cue (Finished erst bei 0).
     fade_pending: HashMap<Uuid, u32>,
+    /// Data-Cues für HTML-Cues, die gestartet, aber noch nicht angelegt sind
+    /// (HTML-Instanz entsteht erst im nächsten Tick) – Auto-Continue direkt
+    /// nach dem HTML-Cue darf seine Daten nicht verlieren.
+    pending_html_data: HashMap<Uuid, Vec<serde_json::Value>>,
     /// Stop-when-done: Ziel-Cues pro Fade-Cue (Gruppen-Ziel: mehrere Kinder).
     fade_stop_target: HashMap<Uuid, Vec<Uuid>>,
     /// Aktueller Lautstärke-Wert pro Cue (für from=None und Reset nach Neustart).
@@ -418,6 +433,7 @@ impl RealMediaEngine {
             deferred_stops: Vec::new(),
             fades: HashMap::new(),
             fade_pending: HashMap::new(),
+            pending_html_data: HashMap::new(),
             fade_stop_target: HashMap::new(),
             current_volumes: HashMap::new(),
             chasing: HashMap::new(),
@@ -1701,11 +1717,25 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
             EngineCommand::Stop { cue_id } => {
+                // HTML5 mit geladener Seite: erst Trigger „out" (Animation),
+                // gestoppt wird nach TriggerDone/Timeout – ein zweites Stop
+                // (closing läuft schon) beendet sofort.
+                if let Some(html) = self.html.get_mut(&cue_id) {
+                    if html.closing_since.is_none() && html.loaded {
+                        if let Some(webview) = &mut html.webview {
+                            if webview.trigger("out", serde_json::Value::Null).is_ok() {
+                                html.closing_since = Some(now);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
                 self.hold_on_end.remove(&cue_id);
                 self.release_held(cue_id);
                 self.deferred_stops.retain(|d| d.cue_id != cue_id);
                 // Script-Cue: WebView-Instanz schließen (Drop killt Subprocess).
                 self.scripts.remove(&cue_id);
+                self.pending_html_data.remove(&cue_id);
                 if let Some(playback) = self.active.remove(&cue_id) {
                     Self::stop_backend(&mut self.audio, &mut self.video, cue_id, &playback);
                     self.audio_voices.lock().unwrap().remove(&cue_id);
@@ -1741,6 +1771,7 @@ impl MediaEngine for RealMediaEngine {
                 self.current_volumes.clear();
                 self.chasing.clear();
                 self.html.clear();
+                self.pending_html_data.clear();
                 self.scripts.clear();
                 if let Some(audio) = self.audio.as_mut() {
                     for cue_id in &stopped {
@@ -2174,12 +2205,30 @@ impl MediaEngine for RealMediaEngine {
             }
             EngineCommand::PushJson { target, payload } => {
                 if let Some(html) = self.html.get_mut(&target) {
-                    // Echtes WebView-Backend: Payload an den Subprocess pushen.
+                    // Echtes Backend: Payload pushen – vor dem Laden puffern,
+                    // sonst ginge sie an die noch leere Seite verloren.
                     if let Some(webview) = &mut html.webview {
-                        if let Err(err) = webview.push_json(&payload) {
+                        if !html.loaded {
+                            html.pending_data.push(payload.clone());
+                        } else if let Err(err) = webview.push_json(&payload) {
                             warn!(%target, %err, "webview push_json fehlgeschlagen");
                         }
                     }
+                    self.emit(EngineEvent::JsonReceived {
+                        target,
+                        payload,
+                        at: now,
+                    });
+                } else if self
+                    .active
+                    .get(&target)
+                    .is_some_and(|p| matches!(p.kind, PlaybackKind::Html(_)))
+                {
+                    // HTML-Cue gestartet, Instanz kommt im nächsten Tick.
+                    self.pending_html_data
+                        .entry(target)
+                        .or_default()
+                        .push(payload.clone());
                     self.emit(EngineEvent::JsonReceived {
                         target,
                         payload,
@@ -2716,6 +2765,9 @@ impl MediaEngine for RealMediaEngine {
                     next_snapshot_at: None,
                     snapshot_failures: 0,
                     snapshot_pending_since: None,
+                    loaded: false,
+                    pending_data: self.pending_html_data.remove(&cue_id).unwrap_or_default(),
+                    closing_since: None,
                 },
             );
             out.push(EngineEvent::HtmlLoaded { cue_id });
@@ -2724,10 +2776,17 @@ impl MediaEngine for RealMediaEngine {
         // WebView-Snapshots anfordern (Compositing) und Events pollen.
         // Fehler werden als Engine-Events gemeldet; Erfolgs-Bestätigungen
         // werden bereits beim Command emittiert.
+        let mut closing_done: Vec<Uuid> = Vec::new();
         for (cue_id, html) in &mut self.html {
             let Some(webview) = &mut html.webview else {
                 continue;
             };
+            if html
+                .closing_since
+                .is_some_and(|since| now.saturating_sub(since) >= HTML_OUT_TIMEOUT)
+            {
+                closing_done.push(*cue_id);
+            }
             // Fälligen Snapshot anfordern (nach Load). Bei Fehlern kein
             // dauerhaftes Stoppen, sondern Backoff – sonst friert das HTML
             // nach ein paar Snapshot-Fehlern ein (z. B. Offscreen-Fenster).
@@ -2770,6 +2829,19 @@ impl MediaEngine for RealMediaEngine {
                         if html.next_snapshot_at.is_none() {
                             html.next_snapshot_at = Some(now);
                         }
+                        // Gepufferte Daten zustellen, dann Trigger „in".
+                        if !html.loaded {
+                            html.loaded = true;
+                            for payload in std::mem::take(&mut html.pending_data) {
+                                let _ = webview.push_json(&payload);
+                            }
+                            let _ = webview.trigger("in", serde_json::Value::Null);
+                        }
+                    }
+                    super::webview_backend::WebviewEvent::TriggerDone(name) => {
+                        if name == "out" && html.closing_since.is_some() {
+                            closing_done.push(*cue_id);
+                        }
                     }
                     super::webview_backend::WebviewEvent::Error(message) => {
                         if message.starts_with("snapshot:") {
@@ -2792,6 +2864,10 @@ impl MediaEngine for RealMediaEngine {
                     _ => {}
                 }
             }
+        }
+        // Out-Animation fertig (oder Timeout): jetzt wirklich stoppen.
+        for cue_id in closing_done {
+            let _ = self.handle(EngineCommand::Stop { cue_id });
         }
         // Script-Cues: WebView-Events pollen – nach Loaded/Fehler ist das
         // Script fertig → Finished + PostWaitElapsed (Cue endet).

@@ -54,6 +54,9 @@ pub enum WebviewEvent {
         /// RGBA-Puffer (base64-dekodiert, Länge geprüft).
         rgba: Vec<u8>,
     },
+    /// `{"trigger_done": "<name>"}` – Trigger-Handler der Seite ist fertig
+    /// (auch nach einem zurückgegebenen Promise).
+    TriggerDone(String),
     /// `{"error": "…"}` – Fehler im Subprocess.
     Error(String),
 }
@@ -149,6 +152,12 @@ impl WebviewInstance {
         self.send_json(&serde_json::json!({ "eval": script }))
     }
 
+    /// Löst einen Template-Trigger aus (`{"trigger": {"name", "payload"}}`,
+    /// z. B. `in`/`out`); die Seite meldet [`WebviewEvent::TriggerDone`].
+    pub fn trigger(&mut self, name: &str, payload: serde_json::Value) -> std::io::Result<()> {
+        self.send_json(&serde_json::json!({ "trigger": { "name": name, "payload": payload } }))
+    }
+
     /// Pusht einen JSON-Payload an `window.onShowControlData`.
     pub fn push_json(&mut self, payload: &serde_json::Value) -> std::io::Result<()> {
         self.send_json(&serde_json::json!({ "push_json": payload }))
@@ -224,6 +233,9 @@ pub fn parse_event_line(line: &str) -> Option<WebviewEvent> {
     }
     if let Some(frame) = value.get("frame") {
         return parse_frame_event(frame);
+    }
+    if let Some(name) = value.get("trigger_done").and_then(|v| v.as_str()) {
+        return Some(WebviewEvent::TriggerDone(name.to_string()));
     }
     if let Some(msg) = value.get("error").and_then(|v| v.as_str()) {
         return Some(WebviewEvent::Error(msg.to_string()));

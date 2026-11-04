@@ -32,14 +32,46 @@ use cef::*;
 use kuhplay::core::HtmlSource;
 use kuhplay::engine::frame_shm::FrameShmWriter;
 
-/// JS-Bridge, die in jede geladene Seite injiziert wird (wie im wry-Subprocess).
+/// JS-Bridge für jede geladene Seite (idempotent: vorhandene Handler eines
+/// Templates bleiben erhalten). Trigger (docs/KONZEPT-html-templates.md §5):
+/// `kuhplay.on("in"|"out"|…, fn)`, gibt `fn` ein Promise zurück, wartet
+/// KuhPlay darauf; `body[data-kuhplay-state]` trägt den letzten Trigger.
 const BRIDGE_JS: &str = r#"
-window.kuhplay = window.kuhplay || {
-    version: "1",
-    onShowControlData: null,
-    done: function () { document.title = "__kuhplay_done__"; },
-};
+(function () {
+    var k = window.kuhplay = window.kuhplay || {};
+    k.version = "1";
+    if (!("onShowControlData" in k)) k.onShowControlData = null;
+    k._handlers = k._handlers || {};
+    k.on = k.on || function (name, fn) { k._handlers[name] = fn; };
+    k.done = k.done || function () { document.title = "__kuhplay_done__"; };
+    if (!k._paintedSent) {
+        k._paintedSent = true;
+        requestAnimationFrame(function () {
+            requestAnimationFrame(function () { document.title = "__kuhplay_painted__"; });
+        });
+    }
+    k._trigger = function (name, payload) {
+        if (document.body) document.body.setAttribute("data-kuhplay-state", name);
+        var fn = k._handlers[name];
+        Promise.resolve()
+            .then(function () { return fn ? fn(payload) : null; })
+            .catch(function (e) { console.error("kuhplay trigger " + name, e); })
+            .then(function () {
+                document.title = "__kuhplay_trigger__:" + name + ":" + Date.now();
+            });
+    };
+})();
 "#;
+
+/// ARGB transparent. Nicht `0`: das heißt bei CEF „nicht gesetzt" und
+/// ergibt den Standard-Hintergrund Weiß.
+const TRANSPARENT: u32 = 0x00FF_FFFF;
+
+/// Titel, über den die Bridge das erste gezeichnete Bild der Seite meldet.
+const PAINTED_TITLE: &str = "__kuhplay_painted__";
+
+/// Titel-Präfix, über das die Bridge einen fertigen Trigger meldet.
+const TRIGGER_TITLE: &str = "__kuhplay_trigger__:";
 
 /// Titel-Marker, über den `window.kuhplay.done()` meldet.
 const DONE_TITLE: &str = "__kuhplay_done__";
@@ -61,7 +93,17 @@ struct Shared {
     /// Offener Snapshot-Request (Größe) – wird bei passendem OnPaint sofort
     /// als Frame beantwortet, sonst skaliert der Request den letzten Frame.
     pending: Arc<Mutex<Option<(u32, u32)>>>,
+    /// Die geladene Seite hat ihr erstes Bild gezeichnet (Bridge meldet es
+    /// nach zwei requestAnimationFrame). Vorher keine Bilder weitergeben –
+    /// sonst kommt beim Start ein weißes Zwischenbild an.
+    painted: Arc<std::sync::atomic::AtomicBool>,
+    /// Zeitpunkt von `loaded` – kommt die Malmeldung nicht (z. B. Skript
+    /// kaputt), gibt der Loop nach [`PAINT_FALLBACK`] trotzdem Bilder frei.
+    loaded_at: Arc<Mutex<Option<std::time::Instant>>>,
 }
+
+/// Spätestens so lange nach `loaded` werden Bilder auch ohne Malmeldung frei.
+const PAINT_FALLBACK: Duration = Duration::from_secs(1);
 
 impl Default for Shared {
     fn default() -> Self {
@@ -70,6 +112,8 @@ impl Default for Shared {
             frame: Arc::new(Mutex::new(None)),
             view: Arc::new(Mutex::new(DEFAULT_VIEW)),
             pending: Arc::new(Mutex::new(None)),
+            painted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            loaded_at: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -93,6 +137,9 @@ wrap_render_handler! {
             let len = (width as usize) * (height as usize) * 4;
             let src = unsafe { std::slice::from_raw_parts(buffer, len) };
             let (w, h) = (width as u32, height as u32);
+            if !self.shared.painted.load(std::sync::atomic::Ordering::Acquire) {
+                return; // Seite hat noch nicht gezeichnet (weißes Zwischenbild)
+            }
             // Shared Memory: jedes Bild in Zielgröße sofort weiterreichen
             // (Tempo = CEF-Bildrate, kein Anfrage-Antwort-Takt).
             if let Some(shm) = self.shared.shm.lock().unwrap().as_mut() {
@@ -134,17 +181,30 @@ wrap_render_handler! {
 wrap_load_handler! {
     struct LoadH {
         events: mpsc::Sender<String>,
+        shared: Shared,
     }
     impl LoadHandler {
         fn on_load_start(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition: TransitionType) {
-            // Bridge vor dem Seiten-JS injizieren.
+            // Bridge vor dem Seiten-JS injizieren; neue Seite → erst wieder
+            // Bilder, wenn sie gezeichnet hat.
             if let Some(f) = frame {
                 if f.is_main() != 0 {
+                    self.shared.painted.store(false, std::sync::atomic::Ordering::Release);
                     f.execute_java_script(Some(&CefString::from(BRIDGE_JS)), None, 0);
                 }
             }
         }
-        fn on_load_end(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _code: i32) {
+        fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, _code: i32) {
+            // Nur die echte Seite im Hauptframe (nicht about:blank, keine
+            // iframes) – sonst gingen Daten und „in" an die leere Startseite.
+            let Some(f) = frame else { return };
+            let url = CefString::from(&f.url()).to_string();
+            if f.is_main() == 0 || url.is_empty() || url == "about:blank" {
+                return;
+            }
+            // Bridge sicher einhängen (on_load_start ist zu früh für manche Seiten).
+            f.execute_java_script(Some(&CefString::from(BRIDGE_JS)), None, 0);
+            *self.shared.loaded_at.lock().unwrap() = Some(std::time::Instant::now());
             let _ = self.events.send("{\"loaded\":true}".to_string());
         }
         fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, code: Errorcode, url: Option<&CefString>, error: Option<&CefString>) {
@@ -163,11 +223,23 @@ wrap_load_handler! {
 wrap_display_handler! {
     struct DispH {
         events: mpsc::Sender<String>,
+        shared: Shared,
     }
     impl DisplayHandler {
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            if title.map(|s| s.to_string()).as_deref() == Some(DONE_TITLE) {
+            let title = title.map(|s| s.to_string()).unwrap_or_default();
+            if title == PAINTED_TITLE {
+                self.shared.painted.store(true, std::sync::atomic::Ordering::Release);
+                if let Some(host) = _browser.and_then(|b| b.host()) {
+                    host.invalidate(PaintElementType::VIEW);
+                }
+            } else if title == DONE_TITLE {
                 let _ = self.events.send("{\"done\":true}".to_string());
+            } else if let Some(rest) = title.strip_prefix(TRIGGER_TITLE) {
+                let name = rest.rsplit_once(':').map_or(rest, |(name, _)| name);
+                let _ = self
+                    .events
+                    .send(serde_json::json!({ "trigger_done": name }).to_string());
             }
         }
     }
@@ -382,8 +454,8 @@ fn main() {
 
     let shared = Shared::default();
     let render = OsrHandler::new(shared.clone(), event_tx.clone());
-    let load = LoadH::new(event_tx.clone());
-    let disp = DispH::new(event_tx.clone());
+    let load = LoadH::new(event_tx.clone(), shared.clone());
+    let disp = DispH::new(event_tx.clone(), shared.clone());
     let client = OsrClient::new(render, load, disp);
 
     let mut settings = Settings {
@@ -392,6 +464,9 @@ fn main() {
         multi_threaded_message_loop: 0,
         external_message_pump: 1, // eigener Loop mit do_message_loop_work
         log_severity: LogSeverity::DISABLE,
+        // Auch der Standard-Hintergrund transparent – sonst ist das erste Bild
+        // einer Seite weiß (weißer Blitz beim Start eines HTML-Cues).
+        background_color: TRANSPARENT,
         ..Default::default()
     };
     // Ressourcen findet CEF selbst: im Framework (macOS) bzw. neben dem
@@ -436,9 +511,9 @@ fn main() {
     let window_info = WindowInfo::default().set_as_windowless(no_parent);
     let browser_settings = BrowserSettings {
         windowless_frame_rate: 60, // flüssige Animationen wie OBS
-        // Voll transparent (ARGB 0): Seiten ohne eigenen Hintergrund liegen
-        // mit Alpha über Video/Bildern bzw. auf dem Key-Ausgang.
-        background_color: 0,
+        // Voll transparent: Seiten ohne eigenen Hintergrund liegen mit Alpha
+        // über Video/Bildern bzw. auf dem Key-Ausgang (siehe TRANSPARENT).
+        background_color: TRANSPARENT,
         ..Default::default()
     };
     let url = CefString::from("about:blank");
@@ -461,6 +536,20 @@ fn main() {
     let mut running = true;
     while running {
         do_message_loop_work();
+        let overdue = shared
+            .loaded_at
+            .lock()
+            .unwrap()
+            .is_some_and(|at| at.elapsed() >= PAINT_FALLBACK);
+        if overdue
+            && !shared
+                .painted
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            if let Some(host) = browser.host() {
+                host.invalidate(PaintElementType::VIEW);
+            }
+        }
         while let Ok(line) = event_rx.try_recv() {
             let mut so = stdout.lock();
             let _ = writeln!(so, "{line}");
@@ -507,6 +596,17 @@ fn main() {
                     let mut so = stdout.lock();
                     let _ = writeln!(so, "{{\"js_executed\":true}}");
                     let _ = so.flush();
+                } else if let Some(trigger) = cmd.get("trigger") {
+                    let name = trigger.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let payload = trigger.get("payload").cloned().unwrap_or_default();
+                    let js = format!(
+                        "window.kuhplay && window.kuhplay._trigger && \
+                         window.kuhplay._trigger({}, {payload})",
+                        serde_json::Value::from(name)
+                    );
+                    if let Some(frame) = browser.main_frame() {
+                        frame.execute_java_script(Some(&CefString::from(js.as_str())), None, 0);
+                    }
                 } else if let Some(payload) = cmd.get("push_json") {
                     let js = format!(
                         "window.kuhplay && window.kuhplay.onShowControlData \

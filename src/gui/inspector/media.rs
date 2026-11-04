@@ -282,6 +282,12 @@ pub fn draw_slides(ui: &mut egui::Ui, app: &mut ShowApp) {
 /// mit Live-Validierung und Test-Push (`PushJson`).
 pub fn draw_data(ui: &mut egui::Ui, app: &mut ShowApp) {
     let targets = app.html_targets();
+    // Felddefinition des Ziel-Templates (welche Daten es erwartet).
+    let schema = app
+        .carts
+        .selected()
+        .and_then(|c| c.data_target)
+        .and_then(|id| app.template_schema_of(id));
     let engine = &app.engine;
     let Some(cue) = app.carts.selected_mut() else {
         ui.label(RichText::new("No cue selected").weak());
@@ -314,15 +320,92 @@ pub fn draw_data(ui: &mut egui::Ui, app: &mut ShowApp) {
         }
         ui.end_row();
 
+        // Felder des Templates: Übersicht + Beispiel zum Ausfüllen.
+        match &schema {
+            Some(Ok(schema)) => {
+                theme::field_label(ui, "Template fields");
+                ui.vertical(|ui| {
+                    if let Some(name) = &schema.name {
+                        ui.label(RichText::new(name).strong());
+                    }
+                    for field in schema.describe() {
+                        let depth = field.path.matches('.').count();
+                        let mut text = format!(
+                            "{}{}{}  ({}{})",
+                            "   ".repeat(depth),
+                            field.path.rsplit('.').next().unwrap_or(&field.path),
+                            if field.required { " *" } else { "" },
+                            field.kind,
+                            if field.localized {
+                                format!(", {}", schema.languages.join("/"))
+                            } else {
+                                String::new()
+                            },
+                        );
+                        if let Some(label) = &field.label {
+                            text.push_str(&format!(" – {label}"));
+                        }
+                        let response = ui.label(RichText::new(text).monospace().size(11.0));
+                        if let Some(description) = &field.description {
+                            response.on_hover_text(description);
+                        }
+                    }
+                    ui.label(
+                        RichText::new("* Pflichtfeld")
+                            .small()
+                            .color(theme::palette::TEXT_DIM),
+                    );
+                    let empty = cue.data_json_text.trim().is_empty();
+                    let label = if empty {
+                        "Insert example JSON"
+                    } else {
+                        "Replace with example JSON"
+                    };
+                    let button = ui.button(label).on_hover_text(
+                        "JSON mit allen Feldern des Templates zum Ausfüllen \
+                         (überschreibt den aktuellen Inhalt)",
+                    );
+                    if button.clicked() {
+                        if let Ok(text) = serde_json::to_string_pretty(&schema.example()) {
+                            cue.data_json_text = text;
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+            Some(Err(err)) => {
+                theme::field_label(ui, "Template fields");
+                ui.colored_label(theme::palette::ERROR, err);
+                ui.end_row();
+            }
+            None => {}
+        }
+
         theme::field_label(ui, "JSON Payload");
-        let r = ui.text_edit_multiline(&mut cue.data_json_text);
+        let r = ui.add(
+            egui::TextEdit::multiline(&mut cue.data_json_text)
+                .code_editor()
+                .desired_rows(10),
+        );
         app.text_field_ids.insert(r.id);
         ui.end_row();
 
         theme::field_label(ui, "JSON valid");
         match cue.data_payload() {
-            Ok(_) => {
-                ui.colored_label(theme::palette::PLAYING, "ok");
+            Ok(payload) => {
+                let problems = match &schema {
+                    Some(Ok(schema)) => schema.validate(&payload),
+                    _ => Vec::new(),
+                };
+                if problems.is_empty() {
+                    ui.colored_label(theme::palette::PLAYING, "ok");
+                } else {
+                    ui.vertical(|ui| {
+                        for problem in problems {
+                            ui.colored_label(theme::palette::ERROR, problem);
+                        }
+                    });
+                }
             }
             Err(err) => {
                 ui.colored_label(theme::palette::ERROR, err.to_string());

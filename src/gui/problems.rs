@@ -95,6 +95,13 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                     }
                 }
             }
+            // Daten gegen die Felder des Ziel-Templates prüfen (Pflichtfelder).
+            if let (Some(Ok(schema)), Ok(payload)) = (
+                cue.data_target.and_then(|id| app.template_schema_of(id)),
+                serde_json::from_str::<serde_json::Value>(&cue.data_json_text),
+            ) {
+                problems.extend(schema.validate(&payload));
+            }
             if !cue.data_json_text.trim().is_empty()
                 && serde_json::from_str::<serde_json::Value>(&cue.data_json_text).is_err()
             {

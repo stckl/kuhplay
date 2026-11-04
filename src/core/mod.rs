@@ -36,6 +36,7 @@ pub mod cue;
 pub mod cue_list;
 pub mod error;
 pub mod html;
+pub mod html_template;
 pub mod light;
 pub mod midi;
 pub mod network;

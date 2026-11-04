@@ -132,16 +132,28 @@ fn html_cue_renders_with_alpha_and_animation_through_the_engine() {
     let min = if cfg!(debug_assertions) { 5.0 } else { 50.0 };
     assert!(fps >= min, "mindestens {min} Bilder/s, waren {fps:.1}");
 
-    // Stop: Renderer beendet, Shared-Memory-Datei aufgeräumt.
+    // Stop: erst Trigger „out" – die Seite hat keinen Handler und meldet sich
+    // sofort fertig –, dann Renderer beendet und Shared Memory aufgeräumt.
+    let leftover = || {
+        std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains(&cue_id.to_string())
+            })
+    };
     engine.handle(EngineCommand::Stop { cue_id }).unwrap();
-    engine.tick();
-    let leftover = std::fs::read_dir(std::env::temp_dir())
-        .unwrap()
-        .filter_map(Result::ok)
-        .any(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .contains(&cue_id.to_string())
-        });
-    assert!(!leftover, "Shared-Memory-Datei nach Stop gelöscht");
+    let stop_at = Instant::now();
+    while leftover() && stop_at.elapsed() < Duration::from_secs(5) {
+        engine.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!leftover(), "Shared-Memory-Datei nach Stop gelöscht");
+    assert!(
+        stop_at.elapsed() < Duration::from_secs(2),
+        "ohne Out-Handler kein Warten auf den Timeout: {:?}",
+        stop_at.elapsed()
+    );
 }
