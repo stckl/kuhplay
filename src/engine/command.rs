@@ -91,7 +91,15 @@ pub enum EngineCommand {
     /// Setzt die Lautstärke (0.0 – 1.0).
     SetVolume { cue_id: Uuid, volume: f32 },
     /// Lädt ein Medium vor (Preload, ohne Wiedergabe) → `EngineEvent::Loaded`.
+    /// Bleibt geladen, bis der Cue läuft oder [`EngineCommand::Unload`] kommt
+    /// (Load-Cue).
     Load { cue_id: Uuid, path: Option<String> },
+    /// Wie [`EngineCommand::Load`], aber nur für den Standby-Cue: ersetzt den
+    /// zuvor so vorgeladenen Cue (der wird entladen → `EngineEvent::Unloaded`).
+    PreloadNext { cue_id: Uuid, path: String },
+    /// Gibt vorgeladene Medien wieder frei (`None` = alle) →
+    /// `EngineEvent::Unloaded` je entladenem Cue. Laufende Cues bleiben.
+    Unload { cue_id: Option<Uuid> },
     /// Devamp: beendet Loops/Slices sofort und springt zum Ende (Outro).
     Devamp { cue_id: Uuid },
     /// Devamp für alle laufenden Playbacks.

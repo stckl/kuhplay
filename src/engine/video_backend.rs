@@ -19,7 +19,7 @@
 //! * Mehrere parallele Streams pro Cue (Slices/Play-Counts).
 //! * NDI-Aufnahme als Quelle (statt Datei).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -102,6 +102,9 @@ pub struct VideoBackend {
     /// Bild liegt bereit. `play` mit gleicher Datei + Startposition übernimmt
     /// ihn – das Video ist sofort da statt nach ~150 ms Schwarz.
     preloaded: HashMap<Uuid, (VideoPlayer, String, Duration)>,
+    /// Vorgeladene Player, die bleiben, bis sie laufen oder entladen werden
+    /// (Load-Cue). Die übrigen sind der automatisch vorgeladene Standby-Cue.
+    pinned: HashSet<Uuid>,
 }
 
 impl VideoBackend {
@@ -112,6 +115,7 @@ impl VideoBackend {
             fps: HashMap::new(),
             pending_seeks: HashMap::new(),
             preloaded: HashMap::new(),
+            pinned: HashSet::new(),
         }
     }
 
@@ -171,6 +175,7 @@ impl VideoBackend {
     pub fn play(&mut self, cue_id: Uuid, path: &str, seek: Duration) -> Result<VideoInfo, String> {
         // Vorgeladen (gleiche Datei + Startposition): Uhr auf jetzt, weiter –
         // ohne stop(), das würde das bereitliegende erste Bild löschen.
+        self.pinned.remove(&cue_id);
         if let Some((player, pre_path, pre_seek)) = self.preloaded.remove(&cue_id) {
             if pre_path == path && pre_seek == seek && !self.players.contains_key(&cue_id) {
                 {
@@ -209,18 +214,33 @@ impl VideoBackend {
 
     /// Lädt einen Player vor: ffmpeg startet pausiert bei `seek`, das erste
     /// Bild liegt danach im Frame-Store (sichtbar erst, wenn der Cue läuft).
-    /// Andere vorgeladene Player werden beendet – vorgeladen ist nur der
-    /// nächste Cue.
-    pub fn preload(&mut self, cue_id: Uuid, path: &str, seek: Duration) -> Result<(), String> {
+    ///
+    /// `pin = false` (Standby-Cue): andere nicht festgehaltene Player werden
+    /// beendet – automatisch vorgeladen ist nur der nächste Cue.
+    /// `pin = true` (Load-Cue): bleibt, bis er läuft oder entladen wird.
+    pub fn preload(
+        &mut self,
+        cue_id: Uuid,
+        path: &str,
+        seek: Duration,
+        pin: bool,
+    ) -> Result<(), String> {
         if self.players.contains_key(&cue_id) {
             return Ok(()); // läuft schon
+        }
+        if pin {
+            self.pinned.insert(cue_id);
+        } else {
+            self.unload_transient_except(cue_id);
         }
         if let Some((_, pre_path, pre_seek)) = self.preloaded.get(&cue_id) {
             if pre_path == path && *pre_seek == seek {
                 return Ok(());
             }
         }
-        self.unload_all_except(None);
+        if let Some((player, _, _)) = self.preloaded.remove(&cue_id) {
+            Self::end_player(player);
+        }
         let info = probe(path)?;
         let mut state = PlayerState::new();
         state.paused = true;
@@ -241,20 +261,44 @@ impl VideoBackend {
         Ok(())
     }
 
-    /// Beendet vorgeladene Player (außer `keep`) und räumt ihr Bild weg.
-    pub fn unload_all_except(&mut self, keep: Option<Uuid>) {
+    /// Beendet automatisch vorgeladene (nicht festgehaltene) Player außer
+    /// `keep`.
+    fn unload_transient_except(&mut self, keep: Uuid) {
         let drop_ids: Vec<Uuid> = self
             .preloaded
             .keys()
-            .filter(|id| Some(**id) != keep)
+            .filter(|id| **id != keep && !self.pinned.contains(id))
             .copied()
             .collect();
         for id in drop_ids {
-            if let Some((player, _, _)) = self.preloaded.remove(&id) {
-                Self::end_player(player);
-                self.frames.lock().unwrap().remove(&id);
-            }
+            self.unload(id);
         }
+    }
+
+    /// Gibt einen vorgeladenen Player frei (ffmpeg beendet, Bild weg).
+    /// Laufende Player bleiben unberührt. `true`, wenn etwas entladen wurde.
+    pub fn unload(&mut self, cue_id: Uuid) -> bool {
+        self.pinned.remove(&cue_id);
+        let Some((player, _, _)) = self.preloaded.remove(&cue_id) else {
+            return false;
+        };
+        Self::end_player(player);
+        self.frames.lock().unwrap().remove(&cue_id);
+        true
+    }
+
+    /// Gibt alle vorgeladenen Player frei; liefert ihre Cue-IDs.
+    pub fn unload_all(&mut self) -> Vec<Uuid> {
+        let ids: Vec<Uuid> = self.preloaded.keys().copied().collect();
+        for id in &ids {
+            self.unload(*id);
+        }
+        ids
+    }
+
+    /// Cue-IDs aller vorgeladenen Player.
+    pub fn preloaded_ids(&self) -> Vec<Uuid> {
+        self.preloaded.keys().copied().collect()
     }
 
     /// Ist für `cue_id` ein Player vorgeladen?

@@ -953,6 +953,12 @@ impl CueList {
                 };
                 commands.push(EngineCommand::Load { cue_id, path });
             }
+            ControlAction::Unload => {
+                let cue_id = self
+                    .find_index_by_number(target_number.as_deref())
+                    .map(|t| self.cues[t].id);
+                commands.push(EngineCommand::Unload { cue_id });
+            }
             ControlAction::Reset => {
                 // Reset der gesamten Show (Playhead + alle Status).
                 self.reset();

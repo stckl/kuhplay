@@ -172,6 +172,28 @@ fn load_sends_load_command_with_target_path() {
 }
 
 #[test]
+fn unload_with_target_frees_that_cue_without_target_all() {
+    let mut list = CueList::new();
+    list.add(control("1", ControlAction::Unload, Some("3")));
+    list.add(control("2", ControlAction::Unload, None));
+    list.add(audio("3").with_target("/media/big.mov"));
+
+    let target_id = list.cues()[2].id;
+    let outcome = list.go().unwrap();
+    assert_eq!(
+        outcome.commands,
+        vec![EngineCommand::Unload {
+            cue_id: Some(target_id)
+        }]
+    );
+    let outcome = list.go().unwrap();
+    assert_eq!(
+        outcome.commands,
+        vec![EngineCommand::Unload { cue_id: None }]
+    );
+}
+
+#[test]
 fn devamp_without_target_sends_devamp_all_with_target_sends_devamp() {
     let mut list = CueList::new();
     let target = audio("3");

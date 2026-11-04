@@ -2946,9 +2946,9 @@ impl ShowApp {
             return;
         }
         if let Some((cue_id, path)) = &want {
-            self.dispatch(vec![EngineCommand::Load {
+            self.dispatch(vec![EngineCommand::PreloadNext {
                 cue_id: *cue_id,
-                path: Some(path.clone()),
+                path: path.clone(),
             }]);
         }
         self.preloaded_standby = want;
@@ -3017,6 +3017,16 @@ impl ShowApp {
             }
             if let EngineEvent::Loaded { cue_id } = &event {
                 self.loaded_cues.insert(*cue_id);
+            }
+            if let EngineEvent::Unloaded { cue_id } = &event {
+                self.loaded_cues.remove(cue_id);
+                if self
+                    .preloaded_standby
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == cue_id)
+                {
+                    self.preloaded_standby = None;
+                }
             }
             match event {
                 EngineEvent::Started { cue_id, duration } => {
@@ -3141,6 +3151,7 @@ impl ShowApp {
                 | EngineEvent::FadeProgress { .. }
                 | EngineEvent::FrameDrop { .. }
                 | EngineEvent::Loaded { .. }
+                | EngineEvent::Unloaded { .. }
                 | EngineEvent::StageConfigured { .. }
                 | EngineEvent::Pong(_) => {}
             }

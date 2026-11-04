@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use kuhplay::core::{LoopMode, Stage, StageGeometry, SurfaceGeometry};
 use kuhplay::engine::{
     new_frame_store, new_opacity_store, new_route_frame_store, new_stage_frame_store,
-    EngineCommand, FrameStore, MediaEngine, RealMediaEngine, StageFrameStore,
+    EngineCommand, EngineEvent, FrameStore, MediaEngine, RealMediaEngine, StageFrameStore,
 };
 
 /// 3-s-Testvideo (helles Testbild, 320×180) – `None` ohne ffmpeg.
@@ -148,4 +148,74 @@ fn preloaded_video_stays_hidden_during_pre_wait() {
     assert!(stage_dark(&stages), "in der Pre-Wait noch nichts zu sehen");
     tick_for(&mut e, Duration::from_millis(800));
     assert!(!stage_dark(&stages), "nach der Pre-Wait sichtbar");
+}
+
+#[test]
+fn load_cue_stays_preloaded_until_unload_standby_preload_is_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(path) = test_video(dir.path()) else {
+        println!("SKIP: ffmpeg fehlt");
+        return;
+    };
+    let frames = new_frame_store();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut e = RealMediaEngine::new(
+        frames.clone(),
+        new_opacity_store(),
+        new_stage_frame_store(),
+        new_route_frame_store(),
+        tx,
+    );
+    let unloaded = |rx: &crossbeam_channel::Receiver<EngineEvent>| -> Vec<uuid::Uuid> {
+        rx.try_iter()
+            .filter_map(|ev| match ev {
+                EngineEvent::Unloaded { cue_id } => Some(cue_id),
+                _ => None,
+            })
+            .collect()
+    };
+    let (pinned, next1, next2) = (
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+    );
+    // Load-Cue hält fest, Standby-Vorladen ersetzt nur sich selbst.
+    e.handle(EngineCommand::Load {
+        cue_id: pinned,
+        path: Some(path.clone()),
+    })
+    .unwrap();
+    e.handle(EngineCommand::PreloadNext {
+        cue_id: next1,
+        path: path.clone(),
+    })
+    .unwrap();
+    assert!(
+        unloaded(&rx).is_empty(),
+        "Load-Cue bleibt beim Standby-Vorladen"
+    );
+    e.handle(EngineCommand::PreloadNext {
+        cue_id: next2,
+        path: path.clone(),
+    })
+    .unwrap();
+    assert_eq!(unloaded(&rx), vec![next1], "alter Standby-Cue verdrängt");
+
+    tick_for(&mut e, Duration::from_secs(2));
+    assert!(
+        frames.lock().unwrap().contains_key(&pinned),
+        "erstes Bild bereit"
+    );
+
+    // Gezielt freigeben: Bild weg; dann alle übrigen.
+    e.handle(EngineCommand::Unload {
+        cue_id: Some(pinned),
+    })
+    .unwrap();
+    assert_eq!(unloaded(&rx), vec![pinned]);
+    assert!(!frames.lock().unwrap().contains_key(&pinned), "RAM frei");
+    e.handle(EngineCommand::Unload { cue_id: None }).unwrap();
+    assert_eq!(unloaded(&rx), vec![next2]);
+    e.handle(EngineCommand::Unload { cue_id: None }).unwrap();
+    assert!(unloaded(&rx).is_empty(), "nichts mehr vorgeladen");
 }

@@ -58,6 +58,9 @@ pub enum EngineEvent {
     },
     /// Medium wurde vorgeladen (`EngineCommand::Load`).
     Loaded { cue_id: Uuid },
+    /// Vorgeladenes Medium wurde freigegeben (`EngineCommand::Unload` oder
+    /// ersetzt durch einen neuen Standby-Cue).
+    Unloaded { cue_id: Uuid },
     /// Stage wurde konfiguriert (`EngineCommand::ConfigureStage`).
     StageConfigured { stage_name: String },
     /// HTML5-Instanz wurde geladen und ist aktiv (nach Pre-Wait, zusammen

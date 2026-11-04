@@ -876,6 +876,17 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 }
                 self.emit(EngineEvent::Loaded { cue_id });
             }
+            EngineCommand::PreloadNext { cue_id, path } => {
+                if self.validate_media(cue_id, &Some(path)) {
+                    self.emit(EngineEvent::Loaded { cue_id });
+                }
+            }
+            EngineCommand::Unload { cue_id } => {
+                debug!(?cue_id, "unload (nothing cached in the mock)");
+                if let Some(cue_id) = cue_id {
+                    self.emit(EngineEvent::Unloaded { cue_id });
+                }
+            }
             EngineCommand::Devamp { cue_id } => {
                 debug!(%cue_id, "devamp: finish immediately");
                 self.finish_now(cue_id);

@@ -235,8 +235,12 @@ pub enum ControlAction {
     Stop,
     /// Pausiert den Ziel-Cue (ohne Ziel: alle laufenden Cues).
     Pause,
-    /// Lädt den Ziel-Cue vor (Preload, ohne Wiedergabe).
+    /// Lädt den Ziel-Cue vor (Preload, ohne Wiedergabe); bleibt geladen,
+    /// bis er läuft oder ein Unload kommt.
     Load,
+    /// Gibt das vorgeladene Medium des Ziel-Cues frei (ohne Ziel: alle
+    /// vorgeladenen Medien). Laufende Cues bleiben unberührt.
+    Unload,
     /// Reset der gesamten Cue-Liste (Playhead + alle Status → Standby).
     Reset,
     /// Devamp: beendet Loops sofort und springt zum Ende (Outro).
@@ -255,11 +259,12 @@ pub enum ControlAction {
 
 impl ControlAction {
     /// Alle Aktionen (für UI-ComboBoxen).
-    pub const ALL: [ControlAction; 11] = [
+    pub const ALL: [ControlAction; 12] = [
         ControlAction::Start,
         ControlAction::Stop,
         ControlAction::Pause,
         ControlAction::Load,
+        ControlAction::Unload,
         ControlAction::Reset,
         ControlAction::Devamp,
         ControlAction::GoTo,
@@ -276,6 +281,7 @@ impl ControlAction {
             ControlAction::Stop => "Stop",
             ControlAction::Pause => "Pause",
             ControlAction::Load => "Load",
+            ControlAction::Unload => "Unload",
             ControlAction::Reset => "Reset",
             ControlAction::Devamp => "Devamp",
             ControlAction::GoTo => "GoTo (Target)",

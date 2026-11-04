@@ -863,6 +863,26 @@ impl RealMediaEngine {
         }
     }
 
+    /// Video vorstarten (ffmpeg pausiert) – beim GO ist das erste Bild sofort
+    /// da (kein Schwarz zwischen Video-Cues). Andere Dateien: nichts zu tun.
+    /// Dabei verdrängte Standby-Vorladungen melden `Unloaded`.
+    fn preload_video(&mut self, cue_id: Uuid, path: &str, pin: bool) {
+        if super::video_backend::probe(path).is_err() {
+            return;
+        }
+        let before = self.video.preloaded_ids();
+        if let Err(err) = self.video.preload(cue_id, path, Duration::ZERO, pin) {
+            debug!(%cue_id, %err, "video preload fehlgeschlagen");
+        }
+        let after = self.video.preloaded_ids();
+        for id in before.into_iter().filter(|id| !after.contains(id)) {
+            self.emit(EngineEvent::Unloaded { cue_id: id });
+        }
+        if !pin && self.video.is_preloaded(cue_id) {
+            self.emit(EngineEvent::Loaded { cue_id });
+        }
+    }
+
     /// Stoppt das Backend eines Cues (Stop/Devamp/Ende).
     fn stop_backend(
         audio: &mut Option<AudioBackend>,
@@ -1954,15 +1974,21 @@ impl MediaEngine for RealMediaEngine {
                     audio.set_volume(cue_id, volume);
                 }
             }
+            EngineCommand::PreloadNext { cue_id, path } => {
+                self.preload_video(cue_id, &path, false);
+            }
+            EngineCommand::Unload { cue_id } => {
+                let unloaded = match cue_id {
+                    Some(id) => self.video.unload(id).then_some(id).into_iter().collect(),
+                    None => self.video.unload_all(),
+                };
+                for cue_id in unloaded {
+                    self.emit(EngineEvent::Unloaded { cue_id });
+                }
+            }
             EngineCommand::Load { cue_id, path } => match &path {
                 Some(path) if Path::new(path).exists() => {
-                    // Video: ffmpeg pausiert vorstarten – beim GO ist das erste
-                    // Bild sofort da (kein Schwarz zwischen Video-Cues).
-                    if super::video_backend::probe(path).is_ok() {
-                        if let Err(err) = self.video.preload(cue_id, path, Duration::ZERO) {
-                            debug!(%cue_id, %err, "video preload fehlgeschlagen");
-                        }
-                    }
+                    self.preload_video(cue_id, path, true);
                     self.emit(EngineEvent::Loaded { cue_id });
                 }
                 _ => {
