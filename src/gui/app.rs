@@ -41,7 +41,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use egui::{Key, RichText};
+use egui::Key;
 use uuid::Uuid;
 
 use crate::core::{
@@ -3700,26 +3700,15 @@ impl ShowApp {
                 &super::viewport_window::WindowSpec::new(
                     "kuhplay-about",
                     "About KuhPlay",
-                    [360.0, 200.0],
-                    [280.0, 150.0],
+                    [440.0, 470.0],
+                    [380.0, 400.0],
                 )
                 .resizable(false)
                 .show_mode_badge(self.show_mode),
                 &mut open,
                 self,
                 |_ctx, ui, app| {
-                    ui.label(RichText::new("KuhPlay").size(24.0).strong());
-                    ui.label("Show control & cue playback – Rust/egui.");
-                    ui.separator();
-                    ui.label(crate::update::build_info());
-                    ui.label(format!(
-                        "Kanal: GitHub Releases ({})",
-                        crate::update::REPO_OWNER
-                    ));
-                    ui.separator();
-                    ui.label("Lizenzen: KuhPlay, egui/eframe und Phosphor-Icons: MIT;");
-                    ui.label("ffmpeg/ffprobe (im Paket): LGPL v2.1+ – siehe LICENSE-ffmpeg.txt / LICENSES.md.");
-                    if ui.button("Close").clicked() {
+                    if super::about::draw(ui) {
                         app.ui.about_open = false;
                     }
                 },

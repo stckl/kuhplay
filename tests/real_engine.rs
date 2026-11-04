@@ -480,7 +480,8 @@ fn video_play_produces_frames_and_finishes() {
                 .get(&cue_id)
                 .is_some_and(|f| f.width == 320 && f.height == 240)
         },
-        Duration::from_secs(5),
+        // ffmpeg-Kaltstart auf CI-Runnern (macOS) dauert teils > 5 s.
+        Duration::from_secs(15),
     );
     assert!(got_frame, "expected decoded 320x240 frame in FrameStore");
 

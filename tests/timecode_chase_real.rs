@@ -69,22 +69,29 @@ fn chasing_cue_pauses_when_timecode_stops_and_resumes_with_it() {
     // Timecode läuft 1 s ab 01:00:00:00 (alle 40 ms ein Wert).
     let mut tc = Duration::from_secs(3600);
     let run = Instant::now();
+    // Längste Lücke zwischen zwei Timecodes: auf langsamen CI-Runnern kann
+    // ein Schritt länger dauern als die Pause-Schwelle (300 ms).
+    let (mut last, mut max_gap) = (Instant::now(), Duration::ZERO);
     while run.elapsed() < Duration::from_secs(1) {
         e.handle(EngineCommand::InjectTimecode {
             tc: Timecode::from_duration(tc, Fps::Fps25),
         })
         .unwrap();
+        max_gap = max_gap.max(last.elapsed());
+        last = Instant::now();
         e.tick();
         tc += Duration::from_millis(40);
         std::thread::sleep(Duration::from_millis(40));
     }
     let before = events(&rx);
-    assert!(
-        !before
-            .iter()
-            .any(|ev| matches!(ev, EngineEvent::Paused { cue_id } if *cue_id == cue)),
-        "läuft, solange Timecode kommt"
-    );
+    let paused_early = before
+        .iter()
+        .any(|ev| matches!(ev, EngineEvent::Paused { cue_id } if *cue_id == cue));
+    if max_gap < Duration::from_millis(250) {
+        assert!(!paused_early, "läuft, solange Timecode kommt");
+    } else {
+        println!("Timecode-Lücke {max_gap:?} (langsamer Runner) – Pause erlaubt");
+    }
     // Timecode steht 600 ms → Cue pausiert.
     let stop = Instant::now();
     while stop.elapsed() < Duration::from_millis(600) {

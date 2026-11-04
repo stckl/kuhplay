@@ -152,6 +152,16 @@ impl NativeMenu {
                     Some(AboutMetadata {
                         name: Some("KuhPlay".to_string()),
                         version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                        short_version: Some(crate::update::build_info()),
+                        copyright: Some(super::about::COPYRIGHT.to_string()),
+                        credits: Some(super::about::credits()),
+                        comments: Some(super::about::TAGLINE.to_string()),
+                        license: Some("MIT".to_string()),
+                        website: Some(super::about::website()),
+                        // Ohne Icon zeigt macOS beim Start außerhalb eines
+                        // App-Bundles ein generisches Symbol.
+                        icon: super::app_icon()
+                            .and_then(|i| muda::Icon::from_rgba(i.rgba, i.width, i.height).ok()),
                         ..Default::default()
                     }),
                 ),
