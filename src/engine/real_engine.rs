@@ -142,6 +142,12 @@ impl ActivePlayback {
         }
     }
 
+    /// Darf das Bild dieses Cues gezeigt werden? Ein vorgeladenes Video
+    /// liegt schon im Frame-Store – sichtbar erst nach dem Start (Pre-Wait).
+    fn shows_picture(&self) -> bool {
+        !matches!(self.kind, PlaybackKind::Video) || self.started_at.is_some()
+    }
+
     /// Dauer der aktuellen Einheit.
     fn current_unit(&self) -> Duration {
         if matches!(self.kind, PlaybackKind::Wait) {
@@ -1009,7 +1015,10 @@ impl RealMediaEngine {
                 continue;
             }
             let surface = playback.surface.unwrap_or_else(SurfaceGeometry::fit);
-            let frame = self.frames.lock().unwrap().get(cue_id).cloned();
+            let frame = playback
+                .shows_picture()
+                .then(|| self.frames.lock().unwrap().get(cue_id).cloned())
+                .flatten();
             let fade_opacity = self
                 .opacities
                 .lock()
@@ -1119,6 +1128,7 @@ impl RealMediaEngine {
                         && playback.finished_at.is_none()
                         && playback.layer == held.layer
                         && playback.stage.as_deref() == Some(held.stage.as_str())
+                        && playback.shows_picture()
                         && frames.contains_key(other)
                 })
             })
@@ -1133,7 +1143,11 @@ impl RealMediaEngine {
     /// Stoppt die alten Cues, sobald der neue ein Bild zeigt.
     fn tick_deferred_stops(&mut self, now: Duration) {
         for deferred in std::mem::take(&mut self.deferred_stops) {
-            let has_picture = self.frames.lock().unwrap().contains_key(&deferred.cue_id);
+            let has_picture = self.frames.lock().unwrap().contains_key(&deferred.cue_id)
+                && self
+                    .active
+                    .get(&deferred.cue_id)
+                    .is_some_and(ActivePlayback::shows_picture);
             let playback = self.active.get(&deferred.cue_id);
             let timed_out = playback
                 .and_then(|p| p.started_at)
@@ -1165,7 +1179,7 @@ impl RealMediaEngine {
             ) {
                 continue;
             }
-            let frame = frames.get(cue_id);
+            let frame = frames.get(cue_id).filter(|_| playback.shows_picture());
             let opacity = opacities.get(cue_id).copied().unwrap_or(1.0);
             if self.compositor.is_dirty(stage, *cue_id, frame, opacity) {
                 let stage = stage.clone();

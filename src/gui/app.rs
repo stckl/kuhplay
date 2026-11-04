@@ -192,6 +192,8 @@ pub struct ShowApp {
     holding: HashSet<Uuid>,
     /// Länge noch nicht gespielter Medien (für die Anzeige von Anfang an).
     probed_durations: crate::engine::media_probe::MediaDurations,
+    /// Zuletzt vorgeladener Standby-Video-Cue (Cue + Datei).
+    preloaded_standby: Option<(Uuid, String)>,
     /// Felddefinitionen der HTML-Templates (aus den Template-Dateien gelesen).
     template_schemas: crate::core::html_template::TemplateSchemaCache,
     /// Zwischenablage für „Copy/Paste Cue Properties" (JSON der Cue-Felder).
@@ -594,6 +596,7 @@ impl ShowApp {
             holding: HashSet::new(),
             probed_durations: Default::default(),
             template_schemas: Default::default(),
+            preloaded_standby: None,
             properties_clipboard: None,
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
@@ -2928,6 +2931,28 @@ impl ShowApp {
         (0..self.carts.cart_count()).any(|i| self.carts.cart(i).running_count() > 0)
     }
 
+    /// Lädt den Video-Cue unter dem Playhead vor (ffmpeg pausiert, erstes
+    /// Bild bereit) – beim GO startet das Video ohne Schwarz. Nur bei
+    /// Änderung des Standby-Cues bzw. seiner Datei.
+    pub fn preload_standby_video(&mut self) {
+        let want = self
+            .carts
+            .active()
+            .standby()
+            .filter(|c| c.cue_type == CueType::Video && c.slices.is_empty())
+            .and_then(|c| Some((c.id, c.target_path.clone()?)));
+        if want == self.preloaded_standby {
+            return;
+        }
+        if let Some((cue_id, path)) = &want {
+            self.dispatch(vec![EngineCommand::Load {
+                cue_id: *cue_id,
+                path: Some(path.clone()),
+            }]);
+        }
+        self.preloaded_standby = want;
+    }
+
     /// Feuert Clock-Trigger (Datum+Uhrzeit one-shot; Uhrzeit+Wochentage
     /// wiederkehrend), deren Zeitpunkt seit der letzten Prüfung erreicht ist.
     pub fn fire_clock_triggers(&mut self) {
@@ -3771,6 +3796,7 @@ impl eframe::App for ShowApp {
             ctx.request_repaint();
         }
         self.fire_clock_triggers();
+        self.preload_standby_video();
         self.poll_remote_commands();
         self.handle_hotkeys(ctx);
 

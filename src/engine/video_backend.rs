@@ -169,10 +169,10 @@ impl VideoBackend {
     /// Startet einen Player für `path` (ffmpeg-Dekodierung).
     /// `seek` = Startposition. Liefert die Metadaten.
     pub fn play(&mut self, cue_id: Uuid, path: &str, seek: Duration) -> Result<VideoInfo, String> {
-        self.stop(cue_id);
-        // Vorgeladen (gleiche Datei + Startposition): Uhr auf jetzt, weiter.
+        // Vorgeladen (gleiche Datei + Startposition): Uhr auf jetzt, weiter –
+        // ohne stop(), das würde das bereitliegende erste Bild löschen.
         if let Some((player, pre_path, pre_seek)) = self.preloaded.remove(&cue_id) {
-            if pre_path == path && pre_seek == seek {
+            if pre_path == path && pre_seek == seek && !self.players.contains_key(&cue_id) {
                 {
                     let mut s = player.state.lock().unwrap();
                     s.started_at = Instant::now();
@@ -187,6 +187,7 @@ impl VideoBackend {
             }
             Self::end_player(player);
         }
+        self.stop(cue_id);
         let info = probe(path)?;
         let state = Arc::new(Mutex::new(PlayerState::new()));
         let (tx, rx) = crossbeam_channel::unbounded::<VideoControl>();
