@@ -1563,6 +1563,8 @@ impl RealMediaEngine {
                 position: to,
             });
         }
+        // Ein langsamer Sprung (ffmpeg-Neustart) zählt nicht als Timecode-Lücke.
+        self.last_timecode_at = Some(self.now());
     }
 }
 
