@@ -396,8 +396,10 @@ fn engine_requests_only_one_snapshot_until_the_answer_arrives() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(snapshots(), 1, "erste Snapshot-Anfrage");
-    // … dann darf bis zum Timeout (2 s) keine zweite folgen.
-    for _ in 0..40 {
+    // … dann darf bis zum Timeout (2 s) keine zweite folgen – Zeit statt
+    // Tick-Anzahl, Ticks sind auf langsamen CI-Maschinen deutlich länger.
+    let first_seen = std::time::Instant::now();
+    while first_seen.elapsed() < Duration::from_millis(1000) {
         engine.tick();
         std::thread::sleep(Duration::from_millis(20));
     }
