@@ -730,6 +730,7 @@ impl CueList {
                     commands.push(command);
                 }
                 push_volume_command(cue, commands);
+                push_initial_html_data(cue, commands);
             }
         }
     }
@@ -1262,6 +1263,22 @@ impl CueList {
     }
 }
 
+/// HTML-Cue mit Startdaten (`data_json_text`): Daten direkt nach dem Start
+/// mitschicken – die Engine stellt sie nach dem Laden zu, vor dem Trigger
+/// „in", die Seite ist also gleich befüllt. Ungültiges JSON meldet die
+/// Problemanzeige; hier wird es übergangen.
+fn push_initial_html_data(cue: &Cue, commands: &mut Vec<EngineCommand>) {
+    if cue.cue_type != CueType::Html || cue.data_json_text.trim().is_empty() {
+        return;
+    }
+    if let Ok(payload) = serde_json::from_str(&cue.data_json_text) {
+        commands.push(EngineCommand::PushJson {
+            target: cue.id,
+            payload,
+        });
+    }
+}
+
 /// Hängt ein `SetVolume`-Command an, wenn die Cue-Lautstärke ≠ 1.0 ist
 /// (Audio/Video-Cues). Die Engine setzt die Lautstärke unmittelbar nach
 /// dem `Play`-Command – so startet das Medium mit korrektem Pegel.
@@ -1317,6 +1334,29 @@ mod tests {
 
     fn audio(number: &str) -> Cue {
         Cue::new(number, number, CueType::Audio).with_target("/media/x.wav")
+    }
+
+    #[test]
+    fn html_cue_sends_its_initial_data_right_after_start() {
+        let mut list = CueList::new();
+        let mut cue = Cue::new("1", "Zeitplan", CueType::Html)
+            .with_html_source(crate::core::HtmlSource::inline("<html></html>"));
+        cue.data_json_text = r#"{"speakers": []}"#.to_string();
+        let id = cue.id;
+        list.add(cue);
+        let outcome = list.go().expect("GO");
+        let kinds: Vec<&str> = outcome
+            .commands
+            .iter()
+            .map(|c| match c {
+                EngineCommand::PlayHtml { .. } => "play",
+                EngineCommand::PushJson { target, .. } if target == &id => "data",
+                _ => "other",
+            })
+            .collect();
+        let play = kinds.iter().position(|k| *k == "play").expect("PlayHtml");
+        let data = kinds.iter().position(|k| *k == "data").expect("PushJson");
+        assert!(play < data, "Daten nach dem Start: {kinds:?}");
     }
 
     #[test]

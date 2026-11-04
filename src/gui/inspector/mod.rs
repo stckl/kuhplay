@@ -169,6 +169,98 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
     }
 }
 
+/// JSON-Editor über die volle Breite mit Syntax-Highlighting (Schlüssel,
+/// Texte, Zahlen, true/false/null, Satzzeichen). Registriert sich als
+/// Textfeld, damit Tippen keine Hotkeys auslöst.
+pub fn json_editor(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    text_field_ids: &mut std::collections::HashSet<egui::Id>,
+) -> egui::Response {
+    let mut layouter = |ui: &egui::Ui, buf: &str, wrap_width: f32| {
+        let mut job = json_layout_job(buf);
+        job.wrap.max_width = wrap_width;
+        ui.fonts(|f| f.layout_job(job))
+    };
+    let response = ui.add(
+        egui::TextEdit::multiline(text)
+            .code_editor()
+            .desired_rows(14)
+            .desired_width(f32::INFINITY)
+            .layouter(&mut layouter),
+    );
+    text_field_ids.insert(response.id);
+    response
+}
+
+/// Färbt JSON-Text für den Editor ein (tolerant: auch halb getipptes JSON).
+pub fn json_layout_job(text: &str) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    const KEY: egui::Color32 = egui::Color32::from_rgb(130, 180, 255);
+    const STRING: egui::Color32 = egui::Color32::from_rgb(152, 205, 120);
+    const NUMBER: egui::Color32 = egui::Color32::from_rgb(240, 170, 90);
+    const LITERAL: egui::Color32 = egui::Color32::from_rgb(200, 140, 230);
+    let font = egui::FontId::monospace(12.0);
+    let fmt = |color| TextFormat::simple(font.clone(), color);
+    let mut job = LayoutJob::default();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        let color = match bytes[i] {
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i = (i + 1).min(bytes.len());
+                // Schlüssel: nach dem String folgt (ggf. nach Leerraum) ein ':'.
+                let rest = text[i..].trim_start();
+                if rest.starts_with(':') {
+                    KEY
+                } else {
+                    STRING
+                }
+            }
+            b'-' | b'0'..=b'9' => {
+                while i < bytes.len()
+                    && matches!(bytes[i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                {
+                    i += 1;
+                }
+                NUMBER
+            }
+            b'a'..=b'z' => {
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                LITERAL
+            }
+            b'{' | b'}' | b'[' | b']' | b':' | b',' => {
+                i += 1;
+                theme::palette::TEXT_DIM
+            }
+            _ => {
+                // Leerraum und alles andere (UTF-8 sicher bis zum nächsten Token).
+                i += 1;
+                while i < bytes.len() && !text.is_char_boundary(i) {
+                    i += 1;
+                }
+                theme::palette::TEXT
+            }
+        };
+        let end = i.min(bytes.len());
+        // Mitten in einem UTF-8-Zeichen abgeschnitten? Bis zur Grenze erweitern.
+        let mut end = end;
+        while end < bytes.len() && !text.is_char_boundary(end) {
+            end += 1;
+        }
+        i = end;
+        job.append(&text[start..end], 0.0, fmt(color));
+    }
+    job
+}
+
 /// Zeitfeld: Anzeige und Eingabe als Timecode `MM:SS.mmm` (wie die
 /// Cue-Liste). Akzeptiert `MM:SS.mmm`, `HH:MM:SS.mmm` und nackte
 /// Sekunden (siehe [`parse_timecode`]); ungültige Eingabe wird verworfen.
@@ -234,5 +326,42 @@ pub(super) fn push_stage(
         let _ = engine.send(crate::engine::EngineCommand::ConfigureStage {
             stage: stage.clone(),
         });
+    }
+}
+
+#[cfg(test)]
+mod json_highlight_tests {
+    use super::json_layout_job;
+
+    /// (Text, Farbe) je Abschnitt.
+    fn sections(text: &str) -> Vec<(String, egui::Color32)> {
+        let job = json_layout_job(text);
+        job.sections
+            .iter()
+            .map(|s| (text[s.byte_range.clone()].to_string(), s.format.color))
+            .collect()
+    }
+
+    #[test]
+    fn keys_strings_numbers_and_literals_get_their_own_colors() {
+        let parts = sections(r#"{"name": "Dr. Häusler", "n": 3, "ok": true}"#);
+        let color_of = |t: &str| parts.iter().find(|(s, _)| s == t).map(|(_, c)| *c).unwrap();
+        assert_ne!(
+            color_of("\"name\""),
+            color_of("\"Dr. Häusler\""),
+            "Schlüssel ≠ Text"
+        );
+        assert_ne!(color_of("3"), color_of("true"));
+        // Nichts geht verloren (auch Umlaute).
+        let joined: String = parts.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(joined, r#"{"name": "Dr. Häusler", "n": 3, "ok": true}"#);
+    }
+
+    #[test]
+    fn half_typed_json_does_not_panic() {
+        for text in ["{\"ä", "\"x\\", "[1, tr", "ü", ""] {
+            let joined: String = sections(text).into_iter().map(|(s, _)| s).collect();
+            assert_eq!(joined, text);
+        }
     }
 }

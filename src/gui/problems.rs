@@ -70,6 +70,22 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                 Some(HtmlSource::Url(_)) | Some(HtmlSource::Inline(_)) => {}
             }
             check_stage(cue, app, &mut problems);
+            // Startdaten (Initial data) gegen die Felder des Templates prüfen.
+            if !cue.data_json_text.trim().is_empty() {
+                match serde_json::from_str::<serde_json::Value>(&cue.data_json_text) {
+                    Ok(payload) => {
+                        if let Some(Ok(schema)) = app.template_schema_of(cue.id) {
+                            problems.extend(
+                                schema
+                                    .validate(&payload)
+                                    .into_iter()
+                                    .map(|p| format!("initial data: {p}")),
+                            );
+                        }
+                    }
+                    Err(_) => problems.push("initial data: invalid JSON".to_string()),
+                }
+            }
         }
         CueType::SlideShow => {
             check_stage(cue, app, &mut problems);
