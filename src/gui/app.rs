@@ -1075,11 +1075,19 @@ impl ShowApp {
                     )
                 };
                 let mut stops: Vec<Uuid> = Vec::new();
-                // Kill-Switch: alle anderen laufenden Media-Cues (Video/Diashow/HTML).
+                // Kill-Switch: die anderen laufenden Cues derselben Ausgabe –
+                // Bild-Cues auf derselben Stage bzw. die anderen Audio-Cues.
+                let same_output = |c: &Cue| {
+                    if is_picture(new_cue) {
+                        is_picture(c) && c.stage == new_cue.stage
+                    } else {
+                        new_cue.cue_type == CueType::Audio && c.cue_type == CueType::Audio
+                    }
+                };
                 if new_cue.kill_others {
                     stops.extend(
                         cues.iter()
-                            .filter(|c| c.id != new_cue.id && is_running(c) && is_picture(c))
+                            .filter(|c| c.id != new_cue.id && is_running(c) && same_output(c))
                             .map(|c| c.id),
                     );
                 }
@@ -1100,6 +1108,11 @@ impl ShowApp {
                             CueType::Video | CueType::SlideShow | CueType::Html
                         ) && new_cue.stage.is_some(),
                         stops,
+                        fade: if new_cue.kill_others {
+                            new_cue.kill_others_fade
+                        } else {
+                            Duration::ZERO
+                        },
                     });
                 }
                 self.dispatch(commands);

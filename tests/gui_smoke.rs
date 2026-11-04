@@ -2112,6 +2112,81 @@ fn kill_others_stops_other_running_media_cues() {
     );
 }
 
+/// „Fade out others": nur Bild-Cues derselben Stage, mit Fade-Zeit; ein
+/// Audio-Cue blendet nur die anderen Audio-Cues aus.
+#[test]
+fn fade_out_others_only_hits_the_same_stage_or_audio() {
+    let (mut app, cmd_rx, _evt_tx) = manual_app();
+    let add = |app: &mut ShowApp, t: CueType, stage: Option<&str>| {
+        let before: std::collections::HashSet<_> =
+            app.carts.active().cues().iter().map(|c| c.id).collect();
+        app.add_cue(t);
+        let id = *app
+            .carts
+            .active()
+            .cues()
+            .iter()
+            .map(|c| c.id)
+            .collect::<std::collections::HashSet<_>>()
+            .difference(&before)
+            .next()
+            .unwrap();
+        let cue = app
+            .carts
+            .active_mut()
+            .cues_mut()
+            .iter_mut()
+            .find(|c| c.id == id)
+            .unwrap();
+        cue.stage = stage.map(str::to_string);
+        id
+    };
+    let same = add(&mut app, CueType::Video, Some("A"));
+    let other_stage = add(&mut app, CueType::Html, Some("B"));
+    let music = add(&mut app, CueType::Audio, None);
+    let new_video = add(&mut app, CueType::Video, Some("A"));
+    let new_audio = add(&mut app, CueType::Audio, None);
+    for (id, fade) in [(new_video, 3), (new_audio, 1)] {
+        let cue = app
+            .carts
+            .active_mut()
+            .cues_mut()
+            .iter_mut()
+            .find(|c| c.id == id)
+            .unwrap();
+        cue.kill_others = true;
+        cue.kill_others_fade = Duration::from_secs(fade);
+    }
+    for id in [same, other_stage, music] {
+        let _ = app.carts.set_status(id, CueStatus::Playing);
+    }
+    let go_and_collect = |app: &mut ShowApp, id| {
+        while cmd_rx.try_recv().is_ok() {}
+        let idx = app
+            .carts
+            .active()
+            .cues()
+            .iter()
+            .position(|c| c.id == id)
+            .unwrap();
+        app.carts.set_cursor(idx);
+        app.go_now();
+        cmd_rx
+            .try_iter()
+            .find_map(|cmd| match cmd {
+                EngineCommand::StopWhenVisible { stops, fade, .. } => Some((stops, fade)),
+                _ => None,
+            })
+            .expect("StopWhenVisible")
+    };
+    let (stops, fade) = go_and_collect(&mut app, new_video);
+    assert_eq!(stops, vec![same], "nur Bild-Cues derselben Stage");
+    assert_eq!(fade, Duration::from_secs(3));
+    let (stops, fade) = go_and_collect(&mut app, new_audio);
+    assert_eq!(stops, vec![music], "Audio blendet nur Audio aus");
+    assert_eq!(fade, Duration::from_secs(1));
+}
+
 /// Test-Grid (Footer-Icon): setzt region.grid auf allen Stages und wird im
 /// Show-Mode gezwungen abgeschaltet.
 #[test]

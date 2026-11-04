@@ -258,6 +258,7 @@ struct HeldFrame {
 struct DeferredStop {
     cue_id: Uuid,
     stops: Vec<Uuid>,
+    fade: Duration,
 }
 
 struct ActiveHtml {
@@ -1183,13 +1184,33 @@ impl RealMediaEngine {
                 .and_then(|p| p.started_at)
                 .is_some_and(|started| now.saturating_sub(started) >= STOP_WHEN_VISIBLE_TIMEOUT);
             if has_picture || timed_out {
-                for cue_id in deferred.stops {
-                    let _ = self.handle(EngineCommand::Stop { cue_id });
-                }
+                self.end_others(deferred.stops, deferred.fade);
             } else if playback.is_some() {
                 self.deferred_stops.push(deferred);
             }
             // Sonst ist der neue Cue ausgefallen: Die alten laufen weiter.
+        }
+    }
+
+    /// Beendet die alten Cues eines Kill-Switches: sofort oder über `fade`
+    /// ausgeblendet (eigener Fade je Cue, stoppt am Ende).
+    fn end_others(&mut self, stops: Vec<Uuid>, fade: Duration) {
+        for cue_id in stops {
+            let command = if fade.is_zero() {
+                EngineCommand::Stop { cue_id }
+            } else {
+                EngineCommand::Fade {
+                    cue_id: Uuid::new_v4(),
+                    target_cue: Some(cue_id),
+                    from: None,
+                    volume: Some(0.0),
+                    opacity: Some(0.0),
+                    duration: fade,
+                    curve: FadeCurve::Decibel,
+                    stop_when_done: true,
+                }
+            };
+            let _ = self.handle(command);
         }
     }
 
@@ -1783,15 +1804,18 @@ impl MediaEngine for RealMediaEngine {
                 cue_id,
                 stops,
                 wait_for_picture,
+                fade,
             } => {
                 if wait_for_picture {
                     // Bild eines früheren Laufs zählt nicht.
                     self.frames.lock().unwrap().remove(&cue_id);
-                    self.deferred_stops.push(DeferredStop { cue_id, stops });
+                    self.deferred_stops.push(DeferredStop {
+                        cue_id,
+                        stops,
+                        fade,
+                    });
                 } else {
-                    for cue_id in stops {
-                        let _ = self.handle(EngineCommand::Stop { cue_id });
-                    }
+                    self.end_others(stops, fade);
                 }
             }
             EngineCommand::Stop { cue_id } => {
@@ -1884,7 +1908,11 @@ impl MediaEngine for RealMediaEngine {
                 if !running {
                     // Ziel läuft nicht: Fade endet sofort ohne Wirkung und ohne
                     // Engine-Fehler (AUFTRAG §2.5) – außer derselbe Fade-Cue hat
-                    // noch Fades auf anderen Gruppen-Kindern laufen.
+                    // noch Fades auf anderen Gruppen-Kindern laufen. Ein
+                    // stehendes letztes Bild (Hold) geht mit Stop weg.
+                    if stop_when_done {
+                        let _ = self.handle(EngineCommand::Stop { cue_id: target });
+                    }
                     if !self.fade_pending.contains_key(&cue_id) {
                         self.emit(EngineEvent::Finished { cue_id });
                     }

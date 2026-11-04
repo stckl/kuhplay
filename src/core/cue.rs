@@ -581,10 +581,15 @@ pub struct Cue {
     /// Continue-Mode (Auto-Continue/Auto-Follow, Cue Sequences).
     #[serde(default)]
     pub continue_mode: ContinueMode,
-    /// Kill-Switch: Beim Start dieses Cues alle anderen laufenden Media-Cues
-    /// (Video/Diashow/HTML) stoppen.
+    /// Kill-Switch: Beim Start dieses Cues die anderen laufenden Cues
+    /// derselben Ausgabe beenden – Bild-Cues (Video/Diashow/HTML/Text) auf
+    /// derselben Stage, Audio-Cues die anderen Audio-Cues.
     #[serde(default)]
     pub kill_others: bool,
+    /// Mit [`Cue::kill_others`]: die anderen über diese Zeit ausblenden
+    /// (Bild und Ton), dann stoppen. `0` = sofort beenden.
+    #[serde(default, with = "crate::core::duration_ms")]
+    pub kill_others_fade: Duration,
     /// Video/Diashow: Am Ende bleibt das letzte Bild stehen, bis es gestoppt oder
     /// auf demselben Layer ersetzt wird. Sonst wird das Bild schwarz.
     #[serde(default)]
@@ -727,6 +732,7 @@ impl Cue {
             in_point: None,
             out_point: None,
             kill_others: false,
+            kill_others_fade: Duration::ZERO,
             hold_last_frame: false,
             stop_previous: false,
             continue_mode: ContinueMode::Off,

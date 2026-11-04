@@ -1163,6 +1163,7 @@ fn killing_previous_cues_waits_for_the_new_picture() {
             cue_id: new_id,
             stops: vec![old_id],
             wait_for_picture: true,
+            fade: Duration::ZERO,
         })
         .unwrap();
     let start = std::time::Instant::now();
@@ -1191,6 +1192,49 @@ fn killing_previous_cues_waits_for_the_new_picture() {
     assert!(stopped.is_some(), "das alte Video muss gestoppt sein");
 }
 
+/// Kill-Switch mit Fade: der alte Cue blendet aus und stoppt danach.
+#[test]
+fn stop_when_visible_with_fade_fades_the_old_cue_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let (Some(old), Some(new)) = (
+        colour_clip(dir.path(), "old.mp4", "red", 20.0),
+        colour_clip(dir.path(), "new.mp4", "blue", 20.0),
+    ) else {
+        return;
+    };
+    let engine = spawn_real_engine();
+    let stage = kuhplay::core::Stage::new("S", kuhplay::core::StageGeometry::new(64.0, 64.0));
+    engine
+        .commands
+        .send(EngineCommand::ConfigureStage { stage })
+        .unwrap();
+    let (old_id, new_id) = (Uuid::new_v4(), Uuid::new_v4());
+    engine.commands.send(stage_clip_cmd(old_id, &old)).unwrap();
+    assert!(wait_for_picture(&engine));
+    engine.commands.send(stage_clip_cmd(new_id, &new)).unwrap();
+    let sent = std::time::Instant::now();
+    engine
+        .commands
+        .send(EngineCommand::StopWhenVisible {
+            cue_id: new_id,
+            stops: vec![old_id],
+            wait_for_picture: true,
+            fade: Duration::from_millis(800),
+        })
+        .unwrap();
+    let stopped = wait_for_event(
+        &engine.events,
+        |e| matches!(e, EngineEvent::Stopped { cue_id } if *cue_id == old_id),
+        Duration::from_secs(5),
+    );
+    assert!(stopped.is_some(), "der alte Cue stoppt nach dem Fade");
+    assert!(
+        sent.elapsed() >= Duration::from_millis(700),
+        "erst ausgeblendet, nicht sofort gekillt: {:?}",
+        sent.elapsed()
+    );
+}
+
 /// Fällt der neue Cue aus, läuft der alte weiter.
 #[test]
 fn failed_new_cue_leaves_the_old_one_running() {
@@ -1213,6 +1257,7 @@ fn failed_new_cue_leaves_the_old_one_running() {
             cue_id: Uuid::new_v4(),
             stops: vec![old_id],
             wait_for_picture: true,
+            fade: Duration::ZERO,
         })
         .unwrap();
     std::thread::sleep(Duration::from_millis(300));

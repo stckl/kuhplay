@@ -52,11 +52,13 @@ pub enum EngineCommand {
     HoldLastFrame { cue_id: Uuid },
     /// Stoppt `stops`, sobald `cue_id` sein erstes Bild zeigt, damit dazwischen
     /// nichts schwarz wird. Ohne `wait_for_picture` sofort. Fällt `cue_id` aus,
-    /// laufen die alten Cues weiter.
+    /// laufen die alten Cues weiter. `fade` > 0: die alten erst über diese
+    /// Zeit ausblenden (Volume + Opacity), dann stoppen.
     StopWhenVisible {
         cue_id: Uuid,
         stops: Vec<Uuid>,
         wait_for_picture: bool,
+        fade: Duration,
     },
     /// Pausiert einen laufenden Cue.
     Pause { cue_id: Uuid },

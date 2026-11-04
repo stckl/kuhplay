@@ -756,6 +756,7 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 }
             }
             EngineCommand::HoldLastFrame { .. } => {}
+            // Mock: Ausblenden nicht simuliert, die alten enden sofort.
             EngineCommand::StopWhenVisible { stops, .. } => {
                 for cue_id in stops {
                     if self.active.remove(&cue_id).is_some() {

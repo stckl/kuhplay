@@ -6,6 +6,8 @@
 //! * Mitte: Pre Wait / Duration / Post Wait / Continue.
 //! * Rechts: Type + Armed, Color (Swatches), Notes.
 
+use std::time::Duration;
+
 use egui::RichText;
 
 use crate::core::{ContinueMode, ControlAction, CueType, GroupMode, CUE_COLORS};
@@ -210,24 +212,66 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.add_space(theme::size::SPACE_MEDIUM);
                 ui.checkbox(&mut cue.is_armed, "Armed")
                     .on_hover_text("Armed: GO includes this cue (disarmed cues are skipped)");
-                if matches!(
-                    cue.cue_type,
-                    CueType::Video | CueType::SlideShow | CueType::Html
-                ) {
-                    if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
-                        ui.label("At end:");
-                        ui.selectable_value(&mut cue.hold_last_frame, false, "Black");
-                        ui.selectable_value(&mut cue.hold_last_frame, true, "Hold last frame")
-                            .on_hover_text(
-                                "The last frame stays until it is stopped or replaced on its layer",
-                            );
-                    }
-                    ui.checkbox(&mut cue.kill_others, "Kill others")
+                if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
+                    ui.label("At end:");
+                    ui.selectable_value(&mut cue.hold_last_frame, false, "Black");
+                    ui.selectable_value(&mut cue.hold_last_frame, true, "Hold last frame")
                         .on_hover_text(
-                            "On start: stop all other running video/slideshow/HTML cues",
+                            "The last frame stays until it is stopped or replaced on its layer",
                         );
                 }
             });
+            if matches!(
+                cue.cue_type,
+                CueType::Video
+                    | CueType::SlideShow
+                    | CueType::Html
+                    | CueType::Text
+                    | CueType::Audio
+            ) {
+                ui.horizontal(|ui| {
+                    let others = if cue.cue_type == CueType::Audio {
+                        "other running audio cues"
+                    } else {
+                        "other running cues on the same stage"
+                    };
+                    ui.label(RichText::new("On start").color(theme::palette::TEXT_DIM))
+                        .on_hover_text(format!(
+                            "What happens to the {others} when this cue starts"
+                        ));
+                    // 0 = Keep, 1 = Kill, 2 = Fade out
+                    let mut mode = match (cue.kill_others, cue.kill_others_fade.is_zero()) {
+                        (false, _) => 0,
+                        (true, true) => 1,
+                        (true, false) => 2,
+                    };
+                    let before = mode;
+                    ui.selectable_value(&mut mode, 0, "Keep others");
+                    ui.selectable_value(&mut mode, 1, "Kill others")
+                        .on_hover_text(format!("Stop the {others} immediately"));
+                    ui.selectable_value(&mut mode, 2, "Fade out others")
+                        .on_hover_text(format!(
+                            "Fade out the {others} (picture and sound), then stop them"
+                        ));
+                    if mode != before {
+                        cue.kill_others = mode != 0;
+                        cue.kill_others_fade = match mode {
+                            2 => Duration::from_secs(2),
+                            _ => Duration::ZERO,
+                        };
+                    }
+                    if mode == 2 {
+                        let mut fade = cue.kill_others_fade;
+                        if super::time_field(ui, &mut fade)
+                            .on_hover_text("Fade-out time")
+                            .changed()
+                        {
+                            // 0 hieße „Kill" – kürzester Fade 0,1 s.
+                            cue.kill_others_fade = fade.max(Duration::from_millis(100));
+                        }
+                    }
+                });
+            }
 
             // „Cue Color": Paletten-Swatches + Entfernen.
             ui.horizontal(|ui| {
