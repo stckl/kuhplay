@@ -145,7 +145,16 @@ fn bundle(cef_dir: &Path, renderer: &Path, out: &Path) -> io::Result<PathBuf> {
     for entry in fs::read_dir(cef_dir)? {
         let entry = entry?;
         let name = entry.file_name();
-        if name == "archive.json" || name == "include" || name == "cmake" {
+        // Nur Laufzeit-Dateien: kein Wrapper-Quellcode/Build-Kram, keine
+        // Import-Lib und keine Sandbox-Starter (kuhplay-cef läuft ohne Sandbox).
+        let skip = name.to_str().is_some_and(|n| {
+            matches!(
+                n,
+                "archive.json" | "include" | "cmake" | "libcef_dll" | "tests" | "CMakeLists.txt"
+            ) || n.ends_with(".lib")
+                || n.starts_with("bootstrap")
+        });
+        if skip {
             continue;
         }
         let dst = out.join(&name);
