@@ -346,6 +346,10 @@ impl AudioRoute {
     }
 }
 
+/// Ende eines Slices „bis zum Medienende", wenn die Länge beim Anlegen
+/// noch unbekannt ist (die Engine endet am Medienende ohnehin).
+pub const SLICE_TO_END: Duration = Duration::from_secs(24 * 3600);
+
 /// Media-Slice: Segment eines Mediums mit eigenem Wiederholungszähler.
 ///
 /// Mehrere Slices bilden einen Abspiel-Plan (z. B. Slice A 2×, dann Slice B 1×).

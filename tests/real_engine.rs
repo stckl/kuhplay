@@ -240,7 +240,8 @@ fn ping_is_answered_with_pong() {
     let pong = wait_for_event(
         &engine.events,
         |e| matches!(e, EngineEvent::Pong(42)),
-        Duration::from_secs(2),
+        // Engine-Start inkl. Audio-Init (~2 s je nach Rechner) abwarten.
+        Duration::from_secs(8),
     );
     assert!(pong.is_some(), "engine must answer Ping with Pong(42)");
 }
@@ -281,7 +282,8 @@ fn configure_stage_valid_reports_configured() {
     let evt = wait_for_event(
         &engine.events,
         |e| matches!(e, EngineEvent::StageConfigured { stage_name } if stage_name == "TestStage"),
-        Duration::from_secs(2),
+        // Engine-Start inkl. Audio-Init (~2 s je nach Rechner) abwarten.
+        Duration::from_secs(8),
     );
     assert!(evt.is_some(), "expected StageConfigured event");
 }
@@ -297,7 +299,8 @@ fn configure_stage_invalid_geometry_reports_error() {
     let evt = wait_for_event(
         &engine.events,
         |e| matches!(e, EngineEvent::Error { cue_id: None, .. }),
-        Duration::from_secs(2),
+        // Engine-Start inkl. Audio-Init (~2 s je nach Rechner) abwarten.
+        Duration::from_secs(8),
     );
     assert!(
         evt.is_some(),

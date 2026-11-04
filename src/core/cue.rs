@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::core::audio::{AudioRoute, FadeCurve, FadeParam, MediaSlice};
+use crate::core::audio::{AudioRoute, FadeCurve, FadeParam, MediaSlice, SLICE_TO_END};
 use crate::core::error::{ShowError, ShowResult};
 use crate::core::html::HtmlSource;
 use crate::core::slideshow::SlideShow;
@@ -556,11 +556,21 @@ pub struct Cue {
     /// Loop-Modus der Wiedergabe.
     #[serde(default)]
     pub loop_mode: LoopMode,
-    /// Startzeit im Medium (In-Point); None = ab 0.
-    #[serde(default, with = "crate::core::option_duration_ms")]
+    /// Veraltet: eigenes In/Out aus einer Zwischenversion. Wird nur noch
+    /// gelesen und beim Laden in „Play from/to" ([`Cue::slices`]) übernommen
+    /// (siehe [`Cue::migrate_in_out`]); nicht mehr gespeichert.
+    #[serde(
+        default,
+        skip_serializing,
+        deserialize_with = "crate::core::option_duration_ms::deserialize"
+    )]
     pub in_point: Option<Duration>,
-    /// Endzeit im Medium (Out-Point); None = bis Ende.
-    #[serde(default, with = "crate::core::option_duration_ms")]
+    /// Veraltet, siehe [`Cue::in_point`].
+    #[serde(
+        default,
+        skip_serializing,
+        deserialize_with = "crate::core::option_duration_ms::deserialize"
+    )]
     pub out_point: Option<Duration>,
     /// Continue-Mode (Auto-Continue/Auto-Follow, Cue Sequences).
     #[serde(default)]
@@ -778,6 +788,21 @@ impl Cue {
             }
         }
         self.from_volume = None; // entfällt: Fade startet beim aktuellen Wert
+    }
+
+    /// Übernimmt das veraltete In/Out (`in_point`/`out_point`) in „Play
+    /// from/to" – ein Slice, sofern noch keiner gesetzt ist. Nur ein In-Punkt
+    /// → Ende [`SLICE_TO_END`] (spielt bis zum Medienende). Beim Laden aufrufen.
+    pub fn migrate_in_out(&mut self) {
+        let (in_point, out_point) = (self.in_point.take(), self.out_point.take());
+        if in_point.is_none() && out_point.is_none() || !self.slices.is_empty() {
+            return;
+        }
+        let start = in_point.unwrap_or_default();
+        let end = out_point.unwrap_or(SLICE_TO_END);
+        if end > start {
+            self.slices = vec![MediaSlice::new(start, end, 1)];
+        }
     }
 
     /// Builder: Laufzeit/Fade-Dauer setzen.
@@ -1196,8 +1221,9 @@ impl Cue {
                 stage: self.stage.clone(),
                 layer: self.layer,
                 surface: self.surface,
-                in_point: self.in_point,
-                out_point: self.out_point,
+                // In/Out läuft über die Slices („Play from/to").
+                in_point: None,
+                out_point: None,
             }),
             CueType::Fade => {
                 // Alte Felder (target_volume/fade_param) migrieren: Opacity -> fade_opacity.
@@ -1564,6 +1590,44 @@ mod tests {
         // Stummer Fehlschlag vermeiden: kein Kommando ohne Zielwert.
         let cue = Cue::new("1", "Fade", CueType::Fade);
         assert_eq!(cue.build_trigger_command(), None);
+    }
+
+    #[test]
+    fn legacy_in_out_becomes_play_from_to() {
+        let json = r#"{"id":"6b3b1c1e-2f4e-4b8e-9a51-6f0e9d1c2a10","number":"1","name":"v",
+            "cue_type":"Video","in_point":1500,"out_point":4000}"#;
+        let mut cue: Cue = serde_json::from_str(json).expect("alte Show lesbar");
+        cue.migrate_in_out();
+        assert_eq!(
+            cue.slices,
+            vec![MediaSlice::new(
+                Duration::from_millis(1500),
+                Duration::from_millis(4000),
+                1
+            )]
+        );
+        assert_eq!((cue.in_point, cue.out_point), (None, None));
+        let saved = serde_json::to_string(&cue).unwrap();
+        assert!(!saved.contains("in_point") && !saved.contains("out_point"));
+    }
+
+    #[test]
+    fn legacy_in_only_plays_to_the_end_and_slices_win() {
+        let mut cue = Cue::new("1", "v", CueType::Video);
+        cue.in_point = Some(Duration::from_secs(2));
+        cue.migrate_in_out();
+        assert_eq!(
+            cue.slices,
+            vec![MediaSlice::new(Duration::from_secs(2), SLICE_TO_END, 1)]
+        );
+        // Vorhandenes Play from/to bleibt, das alte In/Out entfällt.
+        let mut cue = Cue::new("2", "v", CueType::Video);
+        let slice = MediaSlice::new(Duration::from_secs(1), Duration::from_secs(3), 1);
+        cue.slices = vec![slice];
+        cue.out_point = Some(Duration::from_secs(9));
+        cue.migrate_in_out();
+        assert_eq!(cue.slices, vec![slice]);
+        assert_eq!(cue.out_point, None);
     }
 
     #[test]

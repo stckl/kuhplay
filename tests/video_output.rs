@@ -372,7 +372,9 @@ fn real_engine_route_without_stage_stays_black_and_alive() {
         })
         .expect("send routes");
     engine.commands.send(EngineCommand::Ping(1)).expect("ping");
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // Großzügig: Der Audio-Start (CoreAudio/cpal) allein dauert je nach
+    // Rechner ~2 s, erst danach antwortet die Engine.
+    let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
         if let Ok(EngineEvent::Pong(1)) = engine.events.try_recv() {
             return;
