@@ -98,6 +98,10 @@ pub struct VideoBackend {
     fps: HashMap<Uuid, f64>,
     /// Neuester Sprung, der noch auf das erste Bild des vorigen wartet.
     pending_seeks: HashMap<Uuid, (String, Duration)>,
+    /// Vorgeladene Player (Cue im Standby): ffmpeg läuft pausiert, das erste
+    /// Bild liegt bereit. `play` mit gleicher Datei + Startposition übernimmt
+    /// ihn – das Video ist sofort da statt nach ~150 ms Schwarz.
+    preloaded: HashMap<Uuid, (VideoPlayer, String, Duration)>,
 }
 
 impl VideoBackend {
@@ -107,6 +111,7 @@ impl VideoBackend {
             frames,
             fps: HashMap::new(),
             pending_seeks: HashMap::new(),
+            preloaded: HashMap::new(),
         }
     }
 
@@ -165,6 +170,23 @@ impl VideoBackend {
     /// `seek` = Startposition. Liefert die Metadaten.
     pub fn play(&mut self, cue_id: Uuid, path: &str, seek: Duration) -> Result<VideoInfo, String> {
         self.stop(cue_id);
+        // Vorgeladen (gleiche Datei + Startposition): Uhr auf jetzt, weiter.
+        if let Some((player, pre_path, pre_seek)) = self.preloaded.remove(&cue_id) {
+            if pre_path == path && pre_seek == seek {
+                {
+                    let mut s = player.state.lock().unwrap();
+                    s.started_at = Instant::now();
+                    s.paused_accum = Duration::ZERO;
+                    s.paused_since = None;
+                    s.paused = false;
+                }
+                let info = player.info;
+                self.fps.insert(cue_id, info.fps.max(1.0));
+                self.players.insert(cue_id, player);
+                return Ok(info);
+            }
+            Self::end_player(player);
+        }
         let info = probe(path)?;
         let state = Arc::new(Mutex::new(PlayerState::new()));
         let (tx, rx) = crossbeam_channel::unbounded::<VideoControl>();
@@ -182,6 +204,61 @@ impl VideoBackend {
             },
         );
         Ok(info)
+    }
+
+    /// Lädt einen Player vor: ffmpeg startet pausiert bei `seek`, das erste
+    /// Bild liegt danach im Frame-Store (sichtbar erst, wenn der Cue läuft).
+    /// Andere vorgeladene Player werden beendet – vorgeladen ist nur der
+    /// nächste Cue.
+    pub fn preload(&mut self, cue_id: Uuid, path: &str, seek: Duration) -> Result<(), String> {
+        if self.players.contains_key(&cue_id) {
+            return Ok(()); // läuft schon
+        }
+        if let Some((_, pre_path, pre_seek)) = self.preloaded.get(&cue_id) {
+            if pre_path == path && *pre_seek == seek {
+                return Ok(());
+            }
+        }
+        self.unload_all_except(None);
+        let info = probe(path)?;
+        let mut state = PlayerState::new();
+        state.paused = true;
+        state.paused_since = Some(Instant::now());
+        let state = Arc::new(Mutex::new(state));
+        let (tx, rx) = crossbeam_channel::unbounded::<VideoControl>();
+        let child = Arc::new(Mutex::new(None::<Child>));
+        self.spawn_ffmpeg(cue_id, path, seek, &info, state.clone(), rx, child.clone());
+        let player = VideoPlayer {
+            state,
+            control: tx,
+            child,
+            info,
+            started: Instant::now(),
+        };
+        self.preloaded
+            .insert(cue_id, (player, path.to_string(), seek));
+        Ok(())
+    }
+
+    /// Beendet vorgeladene Player (außer `keep`) und räumt ihr Bild weg.
+    pub fn unload_all_except(&mut self, keep: Option<Uuid>) {
+        let drop_ids: Vec<Uuid> = self
+            .preloaded
+            .keys()
+            .filter(|id| Some(**id) != keep)
+            .copied()
+            .collect();
+        for id in drop_ids {
+            if let Some((player, _, _)) = self.preloaded.remove(&id) {
+                Self::end_player(player);
+                self.frames.lock().unwrap().remove(&id);
+            }
+        }
+    }
+
+    /// Ist für `cue_id` ein Player vorgeladen?
+    pub fn is_preloaded(&self, cue_id: Uuid) -> bool {
+        self.preloaded.contains_key(&cue_id)
     }
 
     /// Springt an `position`. Das letzte Bild bleibt stehen, bis das neue da ist.
@@ -568,8 +645,45 @@ fn kill_child(child_slot: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
-/// ffprobe: Auflösung, Framerate, Dauer des ersten Video-Streams.
+/// ffprobe-Ergebnis pro Datei (Schlüssel: Pfad, gültig solange Zeitstempel
+/// und Größe gleich bleiben) – beim GO fragt die Engine sonst bis zu dreimal
+/// ffprobe für dieselbe Datei, das verzögert den Start spürbar.
+type ProbeCache = HashMap<
+    String,
+    (
+        (Option<std::time::SystemTime>, u64),
+        Result<VideoInfo, String>,
+    ),
+>;
+
+fn probe_cache() -> &'static Mutex<ProbeCache> {
+    static CACHE: std::sync::OnceLock<Mutex<ProbeCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// ffprobe: Auflösung, Framerate, Dauer des ersten Video-Streams
+/// (zwischengespeichert, siehe [`probe_cache`]).
 pub fn probe(path: &str) -> Result<VideoInfo, String> {
+    let stamp = std::fs::metadata(path)
+        .map(|m| (m.modified().ok(), m.len()))
+        .unwrap_or((None, 0));
+    if let Some((at, result)) = probe_cache().lock().unwrap().get(path) {
+        if *at == stamp {
+            return result.clone();
+        }
+    }
+    let result = probe_uncached(path);
+    // Fehlender ffprobe ist kein Dateizustand – nicht merken.
+    if !matches!(&result, Err(e) if e.starts_with("ffprobe nicht gefunden")) {
+        probe_cache()
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), (stamp, result.clone()));
+    }
+    result
+}
+
+fn probe_uncached(path: &str) -> Result<VideoInfo, String> {
     let out = Command::new(VideoBackend::ffprobe_binary())
         .args([
             "-v",

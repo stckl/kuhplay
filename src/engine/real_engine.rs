@@ -1897,6 +1897,13 @@ impl MediaEngine for RealMediaEngine {
             }
             EngineCommand::Load { cue_id, path } => match &path {
                 Some(path) if Path::new(path).exists() => {
+                    // Video: ffmpeg pausiert vorstarten – beim GO ist das erste
+                    // Bild sofort da (kein Schwarz zwischen Video-Cues).
+                    if super::video_backend::probe(path).is_ok() {
+                        if let Err(err) = self.video.preload(cue_id, path, Duration::ZERO) {
+                            debug!(%cue_id, %err, "video preload fehlgeschlagen");
+                        }
+                    }
                     self.emit(EngineEvent::Loaded { cue_id });
                 }
                 _ => {
