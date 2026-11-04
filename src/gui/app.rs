@@ -3064,6 +3064,14 @@ impl ShowApp {
                     tracing::debug!(%cue_id, index, ?at, "slideshow changed slide");
                 }
                 // Spulen (Seek): elapsed-Uhr an die Sprungposition hängen.
+                // Neuer Durchlauf: Uhr auf den Anfang des Mediums (Active Cues
+                // zählen bei Loops den Durchlauf, ohne über viele Runden zu driften).
+                EngineEvent::LoopIteration { cue_id, .. } => {
+                    if self.started_at.contains_key(&cue_id) {
+                        self.banked.insert(cue_id, Duration::ZERO);
+                        self.started_at.insert(cue_id, Instant::now());
+                    }
+                }
                 EngineEvent::TimecodeJump { cue_id, to, .. } => {
                     if self
                         .carts
@@ -3079,7 +3087,6 @@ impl ShowApp {
                 }
                 // Informative Events (V1 ohne UI-Anzeige, über Events abgedeckt).
                 EngineEvent::Position { .. }
-                | EngineEvent::LoopIteration { .. }
                 | EngineEvent::FadeProgress { .. }
                 | EngineEvent::FrameDrop { .. }
                 | EngineEvent::Loaded { .. }

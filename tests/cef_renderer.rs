@@ -85,7 +85,12 @@ fn html_cue_renders_with_alpha_and_animation_through_the_engine() {
     let first = loop {
         engine.tick();
         let frame = frames.lock().unwrap().get(&cue_id).cloned();
-        if let Some(frame) = frame.filter(|f| (f.width, f.height) == (1280, 720)) {
+        // Erstes *gemaltes* Bild: CEF liefert vorher ggf. ein leeres
+        // (voll transparentes) Bild der neuen Größe (z. B. Linux).
+        let painted = |f: &kuhplay::engine::VideoFrame| {
+            (f.width, f.height) == (1280, 720) && f.rgba[(100 * 1280 + 100) * 4 + 3] > 0
+        };
+        if let Some(frame) = frame.filter(|f| painted(f)) {
             break frame;
         }
         assert!(Instant::now() < deadline, "kein CEF-Bild in Stage-Größe");

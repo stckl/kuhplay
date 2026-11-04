@@ -181,7 +181,10 @@ struct ActiveCueRow {
     /// Medien-Dauer (aus Engine-Event), falls bekannt – Basis fürs Spulen.
     media: Option<Duration>,
     /// Gesamtlaufzeit, wenn es ein Ende gibt – Basis für Restzeit und Balken.
+    /// Bei Loops: Länge eines Durchlaufs (`elapsed` zählt dann darin).
     total: Option<Duration>,
+    /// Loop-Cue: Restzeit/Balken gelten für den aktuellen Durchlauf (↻).
+    looping: bool,
 }
 
 /// Gesamtlaufzeit eines laufenden Cues: eingetragene Dauer, sonst die des Mediums.
@@ -199,6 +202,25 @@ fn total_runtime(
         LoopMode::Count(n) => Some(base.saturating_mul(n)),
         LoopMode::Infinite => None,
     }
+}
+
+/// Loop-Cue (n-mal/endlos) mit bekannter Durchlauf-Länge: (Länge, gelaufene
+/// Zeit im aktuellen Durchlauf). Restzeit, Balken und Spulen beziehen sich
+/// dann auf das Medium, nicht auf den ganzen Cue.
+fn loop_window(
+    duration: Duration,
+    media: Option<Duration>,
+    loop_mode: LoopMode,
+    elapsed: Option<Duration>,
+) -> Option<(Duration, Option<Duration>)> {
+    if loop_mode == LoopMode::Once {
+        return None;
+    }
+    let base = Some(duration)
+        .filter(|d| *d > Duration::ZERO)
+        .or(media.filter(|d| *d > Duration::ZERO))?;
+    let within = elapsed.map(|e| Duration::from_nanos((e.as_nanos() % base.as_nanos()) as u64));
+    Some((base, within))
 }
 
 /// Spielzeit eines In/Out- oder Slice-Plans.
@@ -226,6 +248,13 @@ fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
     for cue in app.carts.active().cues() {
         let holding = !cue.status.is_active() && app.is_holding(cue.id);
         if cue.status.is_active() || holding {
+            let media = app.media_duration_of(cue);
+            let elapsed = app.elapsed_of(cue);
+            let window = cue
+                .slices
+                .is_empty()
+                .then(|| loop_window(cue.duration, media, cue.loop_mode, elapsed))
+                .flatten();
             rows.push(ActiveCueRow {
                 holding,
                 id: cue.id,
@@ -234,11 +263,14 @@ fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
                 cue_type: cue.cue_type,
                 status: cue.status,
                 duration: cue.duration,
-                elapsed: app.elapsed_of(cue),
-                media: app.media_duration_of(cue),
-                total: planned_runtime(cue).or_else(|| {
-                    total_runtime(cue.duration, app.media_duration_of(cue), cue.loop_mode)
-                }),
+                elapsed: window.map_or(elapsed, |(_, within)| within),
+                media,
+                total: match window {
+                    Some((base, _)) => Some(base),
+                    None => planned_runtime(cue)
+                        .or_else(|| total_runtime(cue.duration, media, cue.loop_mode)),
+                },
+                looping: window.is_some(),
             });
         }
     }
@@ -267,6 +299,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         media,
         total: runtime,
         holding,
+        looping,
     } = row;
     let holding = *holding;
     let (id, cue_type, status, duration, elapsed, media, runtime) = (
@@ -387,7 +420,12 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
     let time = if holding {
         "Holding last frame".to_string()
     } else {
-        active_time_text(elapsed, runtime)
+        let text = active_time_text(elapsed, runtime);
+        if *looping {
+            format!("↻ {text}")
+        } else {
+            text
+        }
     };
     let mut time_ui = child(ui, time_rect, centered);
     time_ui.add(
@@ -466,6 +504,28 @@ mod active_time_tests {
         assert_eq!(
             active_time_text(Some(SECOND * 40), total),
             format!("−{}", format_timecode(SECOND * 60))
+        );
+    }
+
+    #[test]
+    fn loops_count_down_within_the_current_pass() {
+        let media = Some(SECOND * 10);
+        assert_eq!(
+            loop_window(Duration::ZERO, media, LoopMode::Once, Some(SECOND)),
+            None
+        );
+        let (base, within) =
+            loop_window(Duration::ZERO, media, LoopMode::Infinite, Some(SECOND * 23)).unwrap();
+        assert_eq!(
+            (base, within),
+            (SECOND * 10, Some(SECOND * 3)),
+            "3. Durchlauf, 3 s"
+        );
+        assert_eq!(active_time_text(within, Some(base)), "−00:07.000");
+        // Ohne bekannte Länge kein Fenster (dann zählt die Uhr nur hoch).
+        assert_eq!(
+            loop_window(Duration::ZERO, None, LoopMode::Count(3), Some(SECOND)),
+            None
         );
     }
 
