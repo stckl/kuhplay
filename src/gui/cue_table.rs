@@ -159,6 +159,9 @@ pub struct CueTableActions {
     pub move_to: Option<(usize, usize)>,
     /// Drag & Drop in Gruppe: (Cue-Index, Gruppen-Index).
     pub move_into_group: Option<(usize, usize)>,
+    /// Drag & Drop mit Gruppen-Kindern (Quelle oder Ziel ist ein Kind):
+    /// (gezogener Cue, Ziel-Zeile, in die Gruppe = Ziel ist eine Gruppe).
+    pub move_cue: Option<(Uuid, Uuid, bool)>,
 }
 
 /// Inline-Edit-Feld einer Zelle (Doppelklick, docs/TODO-offen.md Phase 3).
@@ -198,10 +201,13 @@ struct CellEdit {
     focus_requested: bool,
 }
 
-/// Drag&Drop-Payload: Index des gezogenen Top-Level-Cues.
+/// Drag&Drop-Payload: gezogener Cue (oberste Ebene oder Gruppen-Kind).
 #[derive(Debug, Clone)]
 struct DragPayload {
+    /// Index in der obersten Liste (nur sinnvoll, wenn `!child`).
     index: usize,
+    id: Uuid,
+    child: bool,
 }
 
 /// Bekannte egui-ID: Widget-ID des aktiven Zellen-Editors (leer, wenn
@@ -931,11 +937,15 @@ pub fn draw(
                             .button_double_clicked(egui::PointerButton::Primary)
                     });
 
-                // --- Drag & Drop (nur Top-Level, Edit-Mode, kein Zell-Edit) ---
-                if editable && !is_child && edit.is_none() {
-                    response.dnd_set_drag_payload(DragPayload { index: list_index });
+                // --- Drag & Drop (Edit-Mode, kein Zell-Edit; auch Gruppen-Kinder) ---
+                if editable && edit.is_none() {
+                    response.dnd_set_drag_payload(DragPayload {
+                        index: list_index,
+                        id: cue_id,
+                        child: is_child,
+                    });
                 }
-                if editable && !is_child {
+                if editable {
                     // Drop-Ziel: dezenter Rahmen während des Hover.
                     if response.dnd_hover_payload::<DragPayload>().is_some() {
                         painter.rect_stroke(
@@ -947,7 +957,12 @@ pub fn draw(
                     // Drop: Aktion vormerken (Ausführung nach der Tabelle).
                     if let Some(payload) = response.dnd_release_payload::<DragPayload>() {
                         let from = payload.index;
-                        if from != list_index && from < cue_list.len() {
+                        if payload.child || is_child {
+                            // Gruppen-Kinder: per ID (umsortieren, raus, rein).
+                            if payload.id != cue_id {
+                                actions.move_cue = Some((payload.id, cue_id, is_group));
+                            }
+                        } else if from != list_index && from < cue_list.len() {
                             if is_group {
                                 // Drop auf eine Gruppe = hineinlegen.
                                 actions.move_into_group = Some((from, list_index));

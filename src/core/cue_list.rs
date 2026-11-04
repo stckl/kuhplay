@@ -464,6 +464,69 @@ impl CueList {
         true
     }
 
+    /// Drag & Drop per ID – auch für Kinder einer Gruppe: `target` ist die
+    /// Zeile, auf die gezogen wurde. Gruppe → als letztes Kind hinein; sonst
+    /// an die Stelle der Zielzeile in deren Liste (oberste Ebene oder Gruppe).
+    /// In derselben Liste nach unten gezogen landet der Cue hinter dem Ziel,
+    /// nach oben davor (wie [`Self::move_to`]). Rückgabe: `true` bei Erfolg.
+    pub fn move_by_id(&mut self, dragged: Uuid, target: Uuid, into_group: bool) -> bool {
+        if dragged == target {
+            return false;
+        }
+        // Eine Gruppe nicht in sich selbst bzw. eines ihrer Kinder schieben.
+        if self
+            .find_cue(dragged)
+            .is_some_and(|c| contains_id(&c.children, target))
+        {
+            return false;
+        }
+        let Some(from) = locate(&self.cues, dragged) else {
+            return false;
+        };
+        let Some(to) = locate(&self.cues, target) else {
+            return false;
+        };
+        let cursor_id = self.cues.get(self.cursor).map(|c| c.id);
+        let Some(mut cue) = take(&mut self.cues, dragged) else {
+            return false;
+        };
+        if into_group {
+            let Some(group) = self.find_cue_mut(target) else {
+                return false;
+            };
+            if group.cue_type != CueType::Group {
+                return false;
+            }
+            cue.parent_group = Some(target);
+            group.children.push(cue);
+        } else {
+            // Zielliste + Position (nach dem Entnehmen neu bestimmt).
+            let Some(at) = locate(&self.cues, target) else {
+                return false;
+            };
+            let down = from.0 == to.0 && from.1 < to.1;
+            let index = at.1 + usize::from(down);
+            let (list, parent) = match at.0 {
+                None => (&mut self.cues, None),
+                Some(group_id) => match self.find_cue_mut(group_id) {
+                    Some(group) => (&mut group.children, Some(group_id)),
+                    None => return false,
+                },
+            };
+            cue.parent_group = parent;
+            list.insert(index.min(list.len()), cue);
+        }
+        // Playhead bleibt beim selben Cue (sonst an seiner Stelle).
+        if let Some(id) = cursor_id {
+            if let Some(index) = self.cues.iter().position(|c| c.id == id) {
+                self.cursor = index;
+            }
+        }
+        self.cursor = self.cursor.min(self.cues.len());
+        self.select_id(Some(dragged));
+        true
+    }
+
     /// Dupliziert einen Top-Level-Cue (tiefe Kopie inkl. Group-Kinder mit
     /// frischen UUIDs, „Duplicate"). Rückgabe: Index der Kopie.
     pub fn duplicate(&mut self, index: usize) -> Option<usize> {
@@ -1327,6 +1390,36 @@ fn shuffle_deterministic<T>(items: &mut [T], seed: u64) {
     }
 }
 
+/// Fundort eines Cues: (Gruppe – `None` = oberste Ebene, Index darin).
+fn locate(cues: &[Cue], id: Uuid) -> Option<(Option<Uuid>, usize)> {
+    fn walk(cues: &[Cue], parent: Option<Uuid>, id: Uuid) -> Option<(Option<Uuid>, usize)> {
+        for (i, cue) in cues.iter().enumerate() {
+            if cue.id == id {
+                return Some((parent, i));
+            }
+            if let Some(found) = walk(&cue.children, Some(cue.id), id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    walk(cues, None, id)
+}
+
+/// Nimmt einen Cue (beliebige Tiefe) aus der Liste.
+fn take(cues: &mut Vec<Cue>, id: Uuid) -> Option<Cue> {
+    if let Some(i) = cues.iter().position(|c| c.id == id) {
+        return Some(cues.remove(i));
+    }
+    cues.iter_mut().find_map(|c| take(&mut c.children, id))
+}
+
+/// Enthält `cues` (beliebige Tiefe) die ID?
+fn contains_id(cues: &[Cue], id: Uuid) -> bool {
+    cues.iter()
+        .any(|c| c.id == id || contains_id(&c.children, id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1334,6 +1427,77 @@ mod tests {
 
     fn audio(number: &str) -> Cue {
         Cue::new(number, number, CueType::Audio).with_target("/media/x.wav")
+    }
+
+    /// Liste: 1, G[2.1, 2.2, 2.3], 3 – liefert (Liste, IDs nach Nummer).
+    fn grouped() -> (CueList, std::collections::HashMap<&'static str, Uuid>) {
+        let mut list = CueList::new();
+        let kids = vec![
+            Cue::new("2.1", "a", CueType::Wait),
+            Cue::new("2.2", "b", CueType::Wait),
+            Cue::new("2.3", "c", CueType::Wait),
+        ];
+        let mut ids = std::collections::HashMap::new();
+        let one = Cue::new("1", "eins", CueType::Wait);
+        let group = Cue::new_group("2", "Gruppe", GroupMode::Timeline, kids);
+        let three = Cue::new("3", "drei", CueType::Wait);
+        ids.insert("1", one.id);
+        ids.insert("2", group.id);
+        for c in &group.children {
+            ids.insert(
+                match c.number.as_str() {
+                    "2.1" => "2.1",
+                    "2.2" => "2.2",
+                    _ => "2.3",
+                },
+                c.id,
+            );
+        }
+        ids.insert("3", three.id);
+        list.add(one);
+        list.add(group);
+        list.add(three);
+        (list, ids)
+    }
+
+    fn numbers(cues: &[Cue]) -> Vec<String> {
+        cues.iter().map(|c| c.number.clone()).collect()
+    }
+
+    #[test]
+    fn drag_reorders_children_inside_a_group() {
+        let (mut list, ids) = grouped();
+        assert!(list.move_by_id(ids["2.1"], ids["2.3"], false), "nach unten");
+        assert_eq!(numbers(&list.cues()[1].children), ["2.2", "2.3", "2.1"]);
+        assert!(list.move_by_id(ids["2.1"], ids["2.2"], false), "nach oben");
+        assert_eq!(numbers(&list.cues()[1].children), ["2.1", "2.2", "2.3"]);
+    }
+
+    #[test]
+    fn drag_moves_cues_out_of_and_into_groups() {
+        let (mut list, ids) = grouped();
+        // Kind auf oberste Ebene (vor Cue 3).
+        assert!(list.move_by_id(ids["2.2"], ids["3"], false));
+        assert_eq!(numbers(list.cues()), ["1", "2", "2.2", "3"]);
+        assert_eq!(list.find_cue(ids["2.2"]).unwrap().parent_group, None);
+        // Oberste Ebene an eine Stelle in der Gruppe (vor 2.3).
+        assert!(list.move_by_id(ids["1"], ids["2.3"], false));
+        assert_eq!(numbers(&list.cues()[0].children), ["2.1", "1", "2.3"]);
+        assert_eq!(
+            list.find_cue(ids["1"]).unwrap().parent_group,
+            Some(ids["2"])
+        );
+        // Auf die Gruppen-Zeile = als letztes Kind hinein.
+        assert!(list.move_by_id(ids["3"], ids["2"], true));
+        assert_eq!(numbers(&list.cues()[0].children), ["2.1", "1", "2.3", "3"]);
+    }
+
+    #[test]
+    fn a_group_cannot_be_dropped_into_itself() {
+        let (mut list, ids) = grouped();
+        assert!(!list.move_by_id(ids["2"], ids["2.1"], false));
+        assert!(!list.move_by_id(ids["2"], ids["2"], true));
+        assert_eq!(numbers(list.cues()), ["1", "2", "3"]);
     }
 
     #[test]

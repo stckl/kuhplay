@@ -244,6 +244,7 @@ fn actions_nonempty(a: &cue_table::CueTableActions) -> bool {
         || a.color.is_some()
         || a.move_to.is_some()
         || a.move_into_group.is_some()
+        || a.move_cue.is_some()
 }
 
 /// Dreifach-Klick (Move → Press → Release) mit Modifikatoren und
@@ -3151,4 +3152,74 @@ fn fade_cue_ui_to_go_to_finished_chain() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Drag & Drop innerhalb einer Gruppe: Kind 5.2 auf Kind 5.1 ziehen meldet
+/// `move_cue` mit den IDs (Gruppen-Kinder sind ziehbar und Ablageziel).
+#[test]
+fn drag_and_drop_inside_a_group_requests_move_by_id() {
+    let ctx = egui::Context::default();
+    let mut carts = CartManager::new();
+    for i in 1..=2 {
+        carts
+            .active_mut()
+            .add(Cue::new(i.to_string(), format!("Cue {i}"), CueType::Audio));
+    }
+    carts.active_mut().add(Cue::new_group(
+        "3",
+        "Gruppe",
+        kuhplay::core::GroupMode::Timeline,
+        vec![
+            Cue::new("3.1", "Kind A", CueType::Audio),
+            Cue::new("3.2", "Kind B", CueType::Audio),
+        ],
+    ));
+    carts.select(None);
+    let mut columns = CueColumnLayout::default();
+    let mut time = 1.0;
+    for _ in 0..2 {
+        render_table_cols(
+            &ctx,
+            &mut carts,
+            &mut columns,
+            true,
+            vec![],
+            time,
+            egui::Modifiers::NONE,
+        );
+    }
+    let group_index = carts
+        .active()
+        .cues()
+        .iter()
+        .position(|c| c.cue_type == CueType::Group)
+        .expect("Demo hat eine Gruppe");
+    let group = &carts.active().cues()[group_index];
+    let (first, second) = (group.children[0].id, group.children[1].id);
+    let y0 = find_row_y(&ctx, &mut carts, 0, &mut time).expect("Zeile 0");
+    let y2 = find_row_y(&ctx, &mut carts, 2, &mut time).expect("Zeile 2");
+    let row = (y2 - y0) / 2.0;
+    // Kinder stehen direkt unter der (aufgeklappten) Gruppen-Zeile.
+    let y_first = y0 + row * (group_index as f32 + 1.0);
+    let y_second = y_first + row;
+    let mut step = |events: Vec<egui::Event>, time: &mut f64| {
+        *time += 0.05;
+        render_actions(&ctx, &mut carts, &mut columns, events, *time).1
+    };
+    let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let (from, to) = (egui::pos2(250.0, y_second), egui::pos2(250.0, y_first));
+    step(vec![egui::Event::PointerMoved(from)], &mut time);
+    step(vec![button(from, true)], &mut time);
+    step(vec![egui::Event::PointerMoved(to)], &mut time);
+    let actions = step(vec![button(to, false)], &mut time);
+    assert_eq!(
+        actions.move_cue,
+        Some((second, first, false)),
+        "Kind auf Kind gezogen"
+    );
 }

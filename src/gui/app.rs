@@ -3645,6 +3645,11 @@ impl ShowApp {
                 if let Some((from, to)) = actions.move_to {
                     self.carts.active_mut().move_to(from, to);
                 }
+                if let Some((dragged, target, into_group)) = actions.move_cue {
+                    self.carts
+                        .active_mut()
+                        .move_by_id(dragged, target, into_group);
+                }
                 if let Some((cue, group)) = actions.move_into_group {
                     self.carts.active_mut().move_into_group(cue, group);
                 }
