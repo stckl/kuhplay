@@ -429,7 +429,11 @@ fn main() {
         return;
     }
 
-    let window_info = WindowInfo::default().set_as_windowless(std::ptr::null_mut());
+    // Kein Eltern-Fenster. Der Handle-Typ ist je Plattform anders (macOS
+    // Pointer, Linux Ganzzahl, Windows HWND) – „null" ist überall gültig.
+    // SAFETY: alle drei Varianten sind Werte ohne Invarianten, null = keins.
+    let no_parent: cef::sys::cef_window_handle_t = unsafe { std::mem::zeroed() };
+    let window_info = WindowInfo::default().set_as_windowless(no_parent);
     let browser_settings = BrowserSettings {
         windowless_frame_rate: 60, // flüssige Animationen wie OBS
         // Voll transparent (ARGB 0): Seiten ohne eigenen Hintergrund liegen
