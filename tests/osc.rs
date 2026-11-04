@@ -98,9 +98,13 @@ fn osc_in_maps_addresses_to_commands() {
         RemoteCommand::Panic
     ));
 
-    // Unbekannte Adresse wird verworfen: danach kommt Reset an (nicht /other).
+    // Unbekannte Adresse geht als Cue-OSC-Trigger an die App, danach Reset.
     send_osc(&socket, port, "/other/go", vec![]);
     send_osc(&socket, port, "/kuhplay/reset", vec![]);
+    assert!(matches!(
+        cmd_rx.blocking_recv().unwrap(),
+        RemoteCommand::OscAddress { ref address } if address == "/other/go"
+    ));
     assert!(matches!(
         cmd_rx.blocking_recv().unwrap(),
         RemoteCommand::Reset

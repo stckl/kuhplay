@@ -583,6 +583,42 @@ impl MockMediaEngine<VirtualClock> {
     }
 }
 
+impl<C: Clock> MockMediaEngine<C> {
+    /// Ein Fade von `fade_cue` ist beendet; sind alle durch, meldet der
+    /// Fade-Cue genau einmal `Finished` (`completed`) bzw. `Stopped` (ersetzt
+    /// oder Ziel gestoppt) – wie die Real-Engine.
+    fn settle_fade(&mut self, fade_cue: Uuid, completed: bool) {
+        let Some(pending) = self.fade_pending.get_mut(&fade_cue) else {
+            return;
+        };
+        *pending = pending.saturating_sub(1);
+        if *pending == 0 {
+            self.fade_pending.remove(&fade_cue);
+            let event = if completed {
+                EngineEvent::Finished { cue_id: fade_cue }
+            } else {
+                EngineEvent::Stopped { cue_id: fade_cue }
+            };
+            self.emit(event);
+        }
+    }
+
+    /// Entfernt alle Fades auf `target` (Ziel gestoppt) und rechnet sie ab.
+    fn drop_fades_on(&mut self, target: Uuid) {
+        let keys: Vec<(Uuid, FadeParam)> = self
+            .fades
+            .keys()
+            .filter(|(t, _)| *t == target)
+            .copied()
+            .collect();
+        for key in keys {
+            if let Some(fade) = self.fades.remove(&key) {
+                self.settle_fade(fade.fade_cue, false);
+            }
+        }
+    }
+}
+
 impl<C: Clock> MediaEngine for MockMediaEngine<C> {
     fn name(&self) -> &'static str {
         "mock-media-engine"
@@ -733,6 +769,11 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 if self.active.remove(&cue_id).is_some() {
                     self.chasing.remove(&cue_id);
                     self.html.remove(&cue_id);
+                    self.drop_fades_on(cue_id);
+                    self.emit(EngineEvent::Stopped { cue_id });
+                } else if self.fade_pending.remove(&cue_id).is_some() {
+                    // Laufender Fade-Cue gestoppt: Fades anhalten, kein Finished.
+                    self.fades.retain(|_, f| f.fade_cue != cue_id);
                     self.emit(EngineEvent::Stopped { cue_id });
                 }
             }
@@ -762,39 +803,54 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                 // sonst Fades pro Parameter, Finished wenn alle fertig.
                 let target = target_cue.unwrap_or(cue_id);
                 if !self.active.contains_key(&target) {
-                    self.emit(EngineEvent::Finished { cue_id });
+                    // Ziel läuft nicht: sofort fertig (außer derselbe Fade-Cue
+                    // fadet noch andere Gruppen-Kinder).
+                    if !self.fade_pending.contains_key(&cue_id) {
+                        self.emit(EngineEvent::Finished { cue_id });
+                    }
                     return Ok(());
                 }
                 let mut n = 0u32;
                 for (param, to) in [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)] {
                     let Some(to) = to else { continue };
-                    let from_v = from.unwrap_or(1.0);
                     if duration.is_zero() {
                         self.emit(EngineEvent::FadeProgress {
                             cue_id,
                             param,
                             value: to,
                         });
-                    } else {
-                        self.fades.insert(
-                            (target, param),
-                            ActiveFade {
-                                fade_cue: cue_id,
-                                from: from_v,
-                                target: to,
-                                duration,
-                                curve,
-                                started_at: now,
-                                last_value: from_v,
-                            },
-                        );
-                        n += 1;
+                        continue;
                     }
+                    let from_v = from.unwrap_or(1.0);
+                    // Opacity läuft immer linear, die Kurve gilt nur für Volume.
+                    let curve = match param {
+                        FadeParam::Volume => curve,
+                        _ => FadeCurve::Linear,
+                    };
+                    let replaced = self.fades.insert(
+                        (target, param),
+                        ActiveFade {
+                            fade_cue: cue_id,
+                            from: from_v,
+                            target: to,
+                            duration,
+                            curve,
+                            started_at: now,
+                            last_value: from_v,
+                        },
+                    );
+                    // Ersetzter Fade eines anderen Fade-Cues gilt als fertig.
+                    if let Some(old) = replaced.filter(|old| old.fade_cue != cue_id) {
+                        self.settle_fade(old.fade_cue, false);
+                    }
+                    n += 1;
                 }
-                if duration.is_zero() || n == 0 {
-                    self.emit(EngineEvent::Finished { cue_id });
+                if n == 0 {
+                    if !self.fade_pending.contains_key(&cue_id) {
+                        self.emit(EngineEvent::Finished { cue_id });
+                    }
                 } else {
-                    self.fade_pending.insert(cue_id, n);
+                    *self.fade_pending.entry(cue_id).or_insert(0) += n;
                 }
             }
             EngineCommand::Seek { cue_id, position } => {
@@ -1154,8 +1210,8 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
                         + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).sin()
                 }
                 FadeCurve::EqualPowerDown => {
-                    fade.from
-                        + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).cos()
+                    fade.target
+                        + (fade.from - fade.target) * (progress * std::f32::consts::FRAC_PI_2).cos()
                 }
             };
             if value != fade.last_value {
@@ -1175,14 +1231,7 @@ impl<C: Clock> MediaEngine for MockMediaEngine<C> {
         }
         for (target, param) in fades_done {
             if let Some(fade) = self.fades.remove(&(target, param)) {
-                let fade_cue = fade.fade_cue;
-                if let Some(pending) = self.fade_pending.get_mut(&fade_cue) {
-                    *pending = pending.saturating_sub(1);
-                    if *pending == 0 {
-                        self.fade_pending.remove(&fade_cue);
-                        self.emit(EngineEvent::Finished { cue_id: fade_cue });
-                    }
-                }
+                self.settle_fade(fade.fade_cue, true);
             }
         }
 

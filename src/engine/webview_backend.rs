@@ -1,6 +1,6 @@
-//! WebView-Backend für HTML5-Cues: Subprocess `kuhplay-webview` (tao+wry,
-//! eigenes OS-Fenster pro Cue) mit **JSON-lines IPC über stdio** – eine
-//! JSON-Message pro Zeile.
+//! Renderer-Backend für HTML5-Cues: Subprocess `kuhplay-cef` (CEF mit
+//! Offscreen-Rendering, ein Prozess pro Cue) mit **JSON-lines IPC über
+//! stdio** – eine JSON-Message pro Zeile.
 //!
 //! ## Protokoll
 //!
@@ -21,8 +21,8 @@
 //!
 //! Die Engine nutzt dieses Backend, wenn das Binary auffindbar ist
 //! ([`cef_binary`]), sonst den virtuellen Fallback (siehe
-//! `real_engine.rs`). Das Binary liegt hinter dem Cargo-Feature `webview`
-//! (`src/bin/kuhplay-webview.rs`) – die Engine selbst braucht kein wry.
+//! `real_engine.rs`). Das Binary liegt hinter dem Cargo-Feature `cef`
+//! (`src/bin/kuhplay-cef.rs`) – die Engine selbst linkt kein CEF.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -220,8 +220,8 @@ pub fn cef_binary() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Kandidaten-Pfade fur das CEF-Binary neben dem Hauptprogramm
-/// (Windows zusatzlich `kuhplay-cef.exe`, da `is_file` keine Endung anhangt).
+/// Kandidaten-Pfade für das CEF-Binary neben dem Hauptprogramm
+/// (Windows zusätzlich `kuhplay-cef.exe`, da `is_file` keine Endung anhängt).
 fn cef_sibling_paths(dir: &std::path::Path) -> Vec<PathBuf> {
     #[cfg(target_os = "windows")]
     return vec![dir.join("kuhplay-cef"), dir.join("kuhplay-cef.exe")];

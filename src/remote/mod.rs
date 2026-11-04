@@ -73,6 +73,11 @@ pub enum RemoteCommand {
         channel: u8,
         note: u8,
     },
+    /// OSC-Nachricht an eine nicht belegte Adresse (volle Adresse, z. B.
+    /// „/kuhplay/cue/5") – für Cue-OSC-Trigger.
+    OscAddress {
+        address: String,
+    },
     /// Externer Timecode (LTC/MTC/OSC-Eingang): chasing Cues springen mit,
     /// Timecode-Trigger-Cues feuern (siehe `CueList::receive_timecode`).
     ReceiveTimecode {
@@ -241,6 +246,8 @@ impl RemoteCommand {
                 | Self::SetActiveCart { .. }
                 | Self::SetPlayhead { .. }
                 | Self::ReceiveTimecode { .. }
+                | Self::MidiNote { .. }
+                | Self::OscAddress { .. }
                 | Self::RefreshAudioDevices
                 | Self::SaveShow
                 | Self::SaveShowAs { .. }

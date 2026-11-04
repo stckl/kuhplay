@@ -42,6 +42,7 @@ pub fn draw_time_loops(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.add(egui::DragValue::new(n).range(1..=999));
             }
         });
+        ui.end_row();
         // In/Out am Cue (Start-/Endzeit im Medium; 0/leer = Anfang/Ende).
         if matches!(cue.cue_type, CueType::Audio | CueType::Video) {
             theme::field_label(ui, "Start at (in)");

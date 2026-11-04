@@ -203,10 +203,11 @@ pub fn osc_message_to_command(msg: &OscMessage, prefix: &str) -> Option<RemoteCo
             let tc = crate::core::Timecode::parse_hmsf(&text, fps)?;
             Some(RemoteCommand::ReceiveTimecode { tc })
         }
-        other => {
-            tracing::warn!(%other, "osc: unbekannte Adresse");
-            None
-        }
+        // Nicht belegte Adresse: als Cue-OSC-Trigger an die App weiterreichen
+        // (volle Adresse, mit oder ohne Prefix).
+        _ => Some(RemoteCommand::OscAddress {
+            address: msg.addr.clone(),
+        }),
     }
 }
 
@@ -326,10 +327,20 @@ mod tests {
             osc_message_to_command(&msg("/kuhplay/status", vec![]), PREFIX),
             Some(RemoteCommand::GetStatus)
         ));
-        // Anderes Präfix matcht nicht.
-        assert!(osc_message_to_command(&msg("/kuhplay/go", vec![]), "/show").is_none());
-        // Unbekannt → None.
-        assert!(osc_message_to_command(&msg("/other/go", vec![]), PREFIX).is_none());
+        // Anderes Präfix ist kein App-Command, nur noch Cue-Trigger-Adresse.
+        assert!(matches!(
+            osc_message_to_command(&msg("/kuhplay/go", vec![]), "/show"),
+            Some(RemoteCommand::OscAddress { ref address }) if address == "/kuhplay/go"
+        ));
+        // Unbekannt → volle Adresse für Cue-OSC-Trigger.
+        assert!(matches!(
+            osc_message_to_command(&msg("/other/go", vec![]), PREFIX),
+            Some(RemoteCommand::OscAddress { ref address }) if address == "/other/go"
+        ));
+        assert!(matches!(
+            osc_message_to_command(&msg("/kuhplay/cue/5", vec![]), PREFIX),
+            Some(RemoteCommand::OscAddress { ref address }) if address == "/kuhplay/cue/5"
+        ));
         // Fehlende Argumente → None.
         assert!(osc_message_to_command(&msg("/kuhplay/goto", vec![]), PREFIX).is_none());
         assert!(osc_message_to_command(
@@ -351,8 +362,11 @@ mod tests {
             "/show",
         );
         assert!(matches!(cmd, Some(RemoteCommand::GoTo { ref cue }) if cue == "5.1"));
-        // Anderes Präfix matcht nicht mehr.
-        assert!(osc_message_to_command(&msg("/kuhplay/go", vec![]), "/show").is_none());
+        // Anderes Präfix ist kein Go mehr.
+        assert!(!matches!(
+            osc_message_to_command(&msg("/kuhplay/go", vec![]), "/show"),
+            Some(RemoteCommand::Go)
+        ));
     }
 
     #[test]

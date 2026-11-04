@@ -316,8 +316,8 @@ pub struct RealMediaEngine {
     fades: HashMap<(Uuid, FadeParam), ActiveFade>,
     /// Noch laufende Fades pro Fade-Cue (Finished erst bei 0).
     fade_pending: HashMap<Uuid, u32>,
-    /// Stop-when-done: Ziel-Cue pro Fade-Cue.
-    fade_stop_target: HashMap<Uuid, Uuid>,
+    /// Stop-when-done: Ziel-Cues pro Fade-Cue (Gruppen-Ziel: mehrere Kinder).
+    fade_stop_target: HashMap<Uuid, Vec<Uuid>>,
     /// Aktueller Lautstärke-Wert pro Cue (für from=None und Reset nach Neustart).
     current_volumes: HashMap<Uuid, f32>,
     chasing: HashMap<Uuid, Timecode>,
@@ -869,11 +869,71 @@ impl RealMediaEngine {
         }
     }
 
-    /// Stoppt einen Cue intern (Stop-when-done, Crossfade-Ende): Backends zu,
+    /// Trägt einen Fade ein. Ersetzt er einen laufenden Fade eines anderen
+    /// Fade-Cues auf dasselbe Ziel/denselben Parameter, gilt dieser als fertig
+    /// (AUFTRAG §3) – sonst bliebe der alte Fade-Cue ewig „läuft".
+    fn insert_fade(&mut self, key: (Uuid, FadeParam), fade: ActiveFade) {
+        let new_cue = fade.fade_cue;
+        if let Some(old) = self.fades.insert(key, fade) {
+            if old.fade_cue != new_cue {
+                self.settle_fade(old.fade_cue, false);
+            }
+        }
+    }
+
+    /// Ein Fade von `fade_cue` ist beendet. Sind alle seine Fades durch,
+    /// meldet der Fade-Cue genau einmal: `completed` (regulär zu Ende) →
+    /// Stop when done stoppt die Ziele, dann `Finished`; sonst (ersetzt oder
+    /// Ziel gestoppt) `Stopped` – ohne Auto-Continue.
+    fn settle_fade(&mut self, fade_cue: Uuid, completed: bool) {
+        let Some(pending) = self.fade_pending.get_mut(&fade_cue) else {
+            return;
+        };
+        *pending = pending.saturating_sub(1);
+        if *pending > 0 {
+            return;
+        }
+        self.fade_pending.remove(&fade_cue);
+        let targets = self.fade_stop_target.remove(&fade_cue).unwrap_or_default();
+        if completed {
+            for target in targets {
+                self.stop_cue_simple(target);
+            }
+            self.emit(EngineEvent::Finished { cue_id: fade_cue });
+        } else {
+            self.emit(EngineEvent::Stopped { cue_id: fade_cue });
+        }
+    }
+
+    /// Entfernt alle Fades, die auf `target` wirken, und rechnet sie bei
+    /// ihren Fade-Cues ab (Ziel gestoppt → Fade endet ohne Stop-when-done).
+    fn drop_fades_on(&mut self, target: Uuid) {
+        let keys: Vec<(Uuid, FadeParam)> = self
+            .fades
+            .keys()
+            .filter(|(t, _)| *t == target)
+            .copied()
+            .collect();
+        for key in keys {
+            if let Some(fade) = self.fades.remove(&key) {
+                self.settle_fade(fade.fade_cue, false);
+            }
+        }
+    }
+
+    /// Bricht einen Fade-Cue ab (Stop auf den Fade-Cue selbst): seine Fades
+    /// bleiben beim aktuellen Wert stehen, kein Finished.
+    fn cancel_fade_cue(&mut self, fade_cue: Uuid) -> bool {
+        let had = self.fade_pending.remove(&fade_cue).is_some();
+        self.fade_stop_target.remove(&fade_cue);
+        self.fades.retain(|_, f| f.fade_cue != fade_cue);
+        had
+    }
+
+    /// Stoppt einen Cue intern (Stop-when-done): Backends zu,
     /// Status-Maps raus, Stopped-Event.
     fn stop_cue_simple(&mut self, cue_id: Uuid) {
-        self.fades
-            .retain(|(t, _), f| *t != cue_id && f.fade_cue != cue_id);
+        self.drop_fades_on(cue_id);
         if let Some(playback) = self.active.remove(&cue_id) {
             Self::stop_backend(&mut self.audio, &mut self.video, cue_id, &playback);
             self.audio_voices.lock().unwrap().remove(&cue_id);
@@ -894,6 +954,9 @@ impl RealMediaEngine {
     fn apply_fade_value(&mut self, cue_id: Uuid, param: FadeParam, value: f32) {
         match param {
             FadeParam::Volume => {
+                // Aktuellen Wert merken: der nächste Fade (from=None) setzt
+                // hier an, ohne Sprung.
+                self.current_volumes.insert(cue_id, value);
                 if let Some(audio) = self.audio.as_mut() {
                     audio.set_volume(cue_id, value);
                 }
@@ -1648,14 +1711,14 @@ impl MediaEngine for RealMediaEngine {
                     self.audio_voices.lock().unwrap().remove(&cue_id);
                     self.chasing.remove(&cue_id);
                     self.html.remove(&cue_id);
-                    self.fades
-                        .retain(|(t, _), f| *t != cue_id && f.fade_cue != cue_id);
-                    self.fade_pending.remove(&cue_id);
-                    self.fade_stop_target.remove(&cue_id);
+                    self.drop_fades_on(cue_id);
                     self.current_volumes.remove(&cue_id);
                     self.frames.lock().unwrap().remove(&cue_id);
                     self.opacities.lock().unwrap().remove(&cue_id);
                     Self::mark_stage_dirty(&mut self.compositor, &playback);
+                    self.emit(EngineEvent::Stopped { cue_id });
+                } else if self.cancel_fade_cue(cue_id) {
+                    // Laufender Fade-Cue gestoppt: Fades anhalten.
                     self.emit(EngineEvent::Stopped { cue_id });
                 }
             }
@@ -1710,53 +1773,60 @@ impl MediaEngine for RealMediaEngine {
                 let running = self.active.contains_key(&target) || self.html.contains_key(&target);
                 if !running {
                     // Ziel läuft nicht: Fade endet sofort ohne Wirkung und ohne
-                    // Engine-Fehler (AUFTRAG §2.5).
-                    self.emit(EngineEvent::Finished { cue_id });
-                } else {
-                    let mut n = 0u32;
-                    for (param, to) in [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)]
-                    {
-                        let Some(to) = to else { continue };
-                        // from=None: aktueller Wert des Ziels (kein Sprung).
-                        let from_v = from.unwrap_or_else(|| self.current_value(target, param));
-                        self.fades.insert(
-                            (target, param),
-                            ActiveFade {
-                                fade_cue: cue_id,
-                                from: from_v,
-                                target: to,
-                                duration,
-                                curve,
-                                started_at: now,
-                                last_value: from_v,
-                            },
-                        );
-                        self.apply_fade_value(target, param, from_v);
-                        n += 1;
-                    }
-                    if n == 0 {
-                        // weder Volume noch Opacity aktiv: sofort fertig.
+                    // Engine-Fehler (AUFTRAG §2.5) – außer derselbe Fade-Cue hat
+                    // noch Fades auf anderen Gruppen-Kindern laufen.
+                    if !self.fade_pending.contains_key(&cue_id) {
                         self.emit(EngineEvent::Finished { cue_id });
-                    } else {
-                        self.fade_pending.insert(cue_id, n);
-                        if stop_when_done {
-                            self.fade_stop_target.insert(cue_id, target);
-                        }
-                        if duration.is_zero() {
-                            for (param, to) in
-                                [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)]
-                            {
-                                if let Some(to) = to {
-                                    self.apply_fade_value(target, param, to);
-                                }
-                            }
-                            self.fades.retain(|_, f| f.fade_cue != cue_id);
-                            self.fade_pending.remove(&cue_id);
-                            if let Some(t) = self.fade_stop_target.remove(&cue_id) {
-                                self.stop_cue_simple(t);
-                            }
-                            self.emit(EngineEvent::Finished { cue_id });
-                        }
+                    }
+                    return Ok(());
+                }
+                let mut n = 0u32;
+                for (param, to) in [(FadeParam::Volume, volume), (FadeParam::Opacity, opacity)] {
+                    let Some(to) = to else { continue };
+                    if duration.is_zero() {
+                        self.apply_fade_value(target, param, to);
+                        continue;
+                    }
+                    // from=None: aktueller Wert des Ziels (kein Sprung).
+                    let from_v = from.unwrap_or_else(|| self.current_value(target, param));
+                    // Opacity läuft immer linear, die Kurve gilt nur für Volume.
+                    let curve = match param {
+                        FadeParam::Volume => curve,
+                        _ => FadeCurve::Linear,
+                    };
+                    self.insert_fade(
+                        (target, param),
+                        ActiveFade {
+                            fade_cue: cue_id,
+                            from: from_v,
+                            target: to,
+                            duration,
+                            curve,
+                            started_at: now,
+                            last_value: from_v,
+                        },
+                    );
+                    self.apply_fade_value(target, param, from_v);
+                    n += 1;
+                }
+                if n == 0 {
+                    // Duration 0 (Werte schon gesetzt) oder weder Volume noch
+                    // Opacity aktiv: sofort fertig.
+                    if stop_when_done {
+                        self.stop_cue_simple(target);
+                    }
+                    if !self.fade_pending.contains_key(&cue_id) {
+                        self.emit(EngineEvent::Finished { cue_id });
+                    }
+                } else {
+                    // Gruppen-Ziel: mehrere Fade-Kommandos desselben Fade-Cues
+                    // (eins je Kind) – Finished erst, wenn alle durch sind.
+                    *self.fade_pending.entry(cue_id).or_insert(0) += n;
+                    if stop_when_done {
+                        self.fade_stop_target
+                            .entry(cue_id)
+                            .or_default()
+                            .push(target);
                     }
                 }
             }
@@ -2407,8 +2477,8 @@ impl MediaEngine for RealMediaEngine {
                 }
                 // Equal-Power für Crossfade-Ton: cos(t·π/2) abwärts, sin(t·π/2) aufwärts.
                 FadeCurve::EqualPowerDown => {
-                    fade.from
-                        + (fade.target - fade.from) * (progress * std::f32::consts::FRAC_PI_2).cos()
+                    fade.target
+                        + (fade.from - fade.target) * (progress * std::f32::consts::FRAC_PI_2).cos()
                 }
                 FadeCurve::EqualPowerUp => {
                     fade.from
@@ -2429,25 +2499,20 @@ impl MediaEngine for RealMediaEngine {
                 fades_done.push((*target, *param));
             }
         }
-        for (target, param) in fades_done {
-            if let Some(fade) = self.fades.remove(&(target, param)) {
-                let fade_cue = fade.fade_cue;
-                if let Some(pending) = self.fade_pending.get_mut(&fade_cue) {
-                    *pending = pending.saturating_sub(1);
-                    if *pending == 0 {
-                        self.fade_pending.remove(&fade_cue);
-                        // Stop-when-done: Ziel stoppen, bevor Finished gemeldet wird.
-                        if let Some(t) = self.fade_stop_target.remove(&fade_cue) {
-                            self.stop_cue_simple(t);
-                        }
-                        out.push(EngineEvent::Finished { cue_id: fade_cue });
-                    }
-                }
-            }
-        }
+        // Erst die Werte anwenden (Endwert sitzt), dann abrechnen:
+        // Stop-when-done stoppt das Ziel, bevor Finished gemeldet wird.
         let pending_fades = std::mem::take(&mut self.pending_fade_values);
         for (target, _fade_cue, param, value) in pending_fades {
             self.apply_fade_value(target, param, value);
+        }
+        // settle_fade meldet direkt – Progress-Events vorher raus (Reihenfolge).
+        for event in out.drain(..) {
+            self.emit(event);
+        }
+        for (target, param) in fades_done {
+            if let Some(fade) = self.fades.remove(&(target, param)) {
+                self.settle_fade(fade.fade_cue, true);
+            }
         }
 
         // Playbacks: Pre-Wait → Laufend → Loops/Slices → Finished → Post-Wait.

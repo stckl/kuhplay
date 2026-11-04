@@ -484,7 +484,6 @@ pub const CUE_COLORS: [[u8; 3]; 8] = [
     [127, 140, 141], // grau
 ];
 
-/// Ein einzelner Cue in der Cue-Liste.
 /// Start-Trigger eines Cues (feuert unabhängig vom Playhead).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
@@ -501,6 +500,7 @@ pub enum CueTrigger {
     Clock(crate::core::clock_trigger::ClockTrigger),
 }
 
+/// Ein einzelner Cue in der Cue-Liste.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cue {
     /// Eindeutige, stabile ID (überlebt Einfügungen/Löschungen in der Liste).
@@ -652,11 +652,11 @@ pub struct Cue {
     /// Companion-Trigger (HTTP-API) – nur [`CueType::Companion`].
     #[serde(default)]
     pub companion: Option<crate::core::companion::CompanionTrigger>,
-    /// Timecode-Trigger – nur [`CueType::Timecode`]: feuert, wenn der externe
     /// Zusätzliche Start-Trigger (Hotkey/OSC/MIDI/Timecode/Clock) – feuern den
     /// Cue unabhängig vom Playhead (siehe Inspector-Tab „Triggers").
     #[serde(default)]
     pub triggers: Vec<CueTrigger>,
+    /// Timecode-Trigger – nur [`CueType::Timecode`]: feuert, wenn der externe
     /// Timecode diesen Wert erreicht (Eingang z. B. OSC `/kuhplay/timecode`).
     #[serde(default)]
     pub tc_trigger: Option<Timecode>,

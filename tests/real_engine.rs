@@ -1005,6 +1005,26 @@ fn fade_applies_to_target_cue_not_self() {
     let engine = spawn_real_engine();
     let fade_id = Uuid::new_v4();
     let target_id = Uuid::new_v4();
+    // Ziel muss laufen – ein Fade auf einen nicht laufenden Cue endet sofort
+    // ohne Wirkung (docs/AUFTRAG-fade.md §2.5).
+    engine
+        .send(EngineCommand::Play {
+            cue_id: target_id,
+            path: None,
+            duration: Some(Duration::from_secs(5)),
+            pre_wait: Duration::ZERO,
+            post_wait: Duration::ZERO,
+            loop_mode: kuhplay::core::LoopMode::Once,
+            slices: Vec::new(),
+            route: None,
+            timecode_in: None,
+            stage: None,
+            layer: 0,
+            surface: None,
+            in_point: None,
+            out_point: None,
+        })
+        .unwrap();
     engine
         .send(EngineCommand::Fade {
             target_cue: Some(target_id),

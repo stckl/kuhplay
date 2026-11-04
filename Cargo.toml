@@ -72,6 +72,8 @@ display-info = "0.5"
 cef = { version = "156", optional = true }
 # Base64 für Frame-Payloads der Renderer-IPC (bereits transitiv im Tree).
 base64 = "0.22"
+# Ortszeit inkl. Sommerzeit für Clock-Trigger (src/core/clock_trigger.rs).
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native Menüleiste (siehe src/gui/native_menu.rs).

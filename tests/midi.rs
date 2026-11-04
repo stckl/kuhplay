@@ -83,14 +83,29 @@ async fn midi_note_on_triggers_remote_command() {
         .expect("channel geschlossen");
     assert!(matches!(cmd, RemoteCommand::Panic));
 
-    // Nicht gemappte Note (60) und Note-Off (Velocity 0) erzeugen nichts.
+    // Nicht gemappte Note (60) kommt als rohe MidiNote an (Cue-MIDI-Trigger),
+    // Note-Off (Velocity 0) erzeugt nichts.
     sender.send(&[0x90, 60, 100]).unwrap();
     sender.send(&[0x90, 0, 0]).unwrap();
+    let cmd = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("timeout midi note")
+        .expect("channel geschlossen");
+    assert!(
+        matches!(
+            cmd,
+            RemoteCommand::MidiNote {
+                channel: 1,
+                note: 60
+            }
+        ),
+        "nicht gemappte Note → MidiNote, war {cmd:?}"
+    );
     assert!(
         tokio::time::timeout(Duration::from_millis(500), rx.recv())
             .await
             .is_err(),
-        "nicht gemappte Nachrichten dürfen keine Commands erzeugen"
+        "Note-Off darf keinen Command erzeugen"
     );
 }
 
@@ -135,13 +150,15 @@ async fn midi_custom_note_map_end_to_end() {
     }
     assert!(got_go, "kein Go-Command für Note 36 (custom map)");
 
-    // Default-Note 0 ist mit der Custom-Map nicht mehr gemappt.
+    // Default-Note 0 ist mit der Custom-Map nicht mehr gemappt → rohe MidiNote.
     sender.send(&[0x90, 0, 100]).unwrap();
+    let cmd = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("timeout midi note")
+        .expect("channel geschlossen");
     assert!(
-        tokio::time::timeout(Duration::from_millis(400), rx.recv())
-            .await
-            .is_err(),
-        "Note 0 darf mit Custom-Map keinen Command erzeugen"
+        matches!(cmd, RemoteCommand::MidiNote { note: 0, .. }),
+        "Note 0 mit Custom-Map → MidiNote statt globalem Command, war {cmd:?}"
     );
 
     sender.send(&[0x90, 127, 100]).unwrap();

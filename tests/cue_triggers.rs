@@ -18,24 +18,116 @@ fn app_with_cue(triggers: Vec<CueTrigger>) -> ShowApp {
     app
 }
 
+/// Feste Ortszeit (wie `ClockTrigger` sie rechnet) als SystemTime.
+fn at(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> std::time::SystemTime {
+    use chrono::TimeZone;
+    chrono::Local
+        .with_ymd_and_hms(y, mo, d, h, mi, s)
+        .earliest()
+        .expect("gültige Ortszeit")
+        .into()
+}
+
 #[test]
-fn clock_trigger_fires_once_per_occurrence() {
-    // One-shot in der Vergangenheit → feuert genau einmal.
-    let ct = ClockTrigger::at_date(2020, 1, 1, 8, 0, 0);
+fn clock_trigger_fires_once_when_its_time_is_reached() {
+    let ct = ClockTrigger::at_date(2026, 11, 5, 20, 15, 0);
     let mut app = app_with_cue(vec![CueTrigger::Clock(ct)]);
-    app.fire_clock_triggers();
+    app.fire_clock_triggers_at(at(2026, 11, 5, 20, 14, 59));
+    assert_eq!(app.carts.active().cues()[0].status, CueStatus::Standby);
+    app.fire_clock_triggers_at(at(2026, 11, 5, 20, 15, 0));
     assert_eq!(
         app.carts.active().cues()[0].status,
         CueStatus::Playing,
-        "Clock feuert"
+        "Clock feuert zur Uhrzeit"
     );
-    app.fire_clock_triggers();
-    app.fire_clock_triggers();
-    // weiterhin Playing (nicht doppelt neu gestartet → kein Reset auf Standby)
+    // Wieder bereit machen: dieselbe Occurrence feuert nicht erneut.
+    app.carts.active_mut().cues_mut()[0].status = CueStatus::Standby;
+    app.fire_clock_triggers_at(at(2026, 11, 5, 20, 15, 1));
+    app.fire_clock_triggers_at(at(2026, 11, 5, 20, 15, 2));
+    assert_eq!(
+        app.carts.active().cues()[0].status,
+        CueStatus::Standby,
+        "kein Doppel-Feuer"
+    );
+}
+
+#[test]
+fn clock_trigger_in_the_past_does_not_fire_when_show_is_opened() {
+    // Termin war gestern: Show öffnen darf den Cue nicht nachträglich starten.
+    let ct = ClockTrigger::at_date(2026, 11, 4, 20, 15, 0);
+    let mut app = app_with_cue(vec![CueTrigger::Clock(ct)]);
+    app.fire_clock_triggers_at(at(2026, 11, 5, 9, 0, 0));
+    app.fire_clock_triggers_at(at(2026, 11, 5, 9, 0, 1));
+    assert_eq!(app.carts.active().cues()[0].status, CueStatus::Standby);
+}
+
+#[test]
+fn daily_clock_trigger_fires_every_day() {
+    let mut app = app_with_cue(vec![CueTrigger::Clock(ClockTrigger::daily(8, 0, 0))]);
+    for day in [5, 6] {
+        app.carts.active_mut().cues_mut()[0].status = CueStatus::Standby;
+        app.fire_clock_triggers_at(at(2026, 11, day, 7, 59, 59));
+        app.fire_clock_triggers_at(at(2026, 11, day, 8, 0, 0));
+        assert_eq!(
+            app.carts.active().cues()[0].status,
+            CueStatus::Playing,
+            "täglich 8:00 am {day}."
+        );
+    }
+}
+
+#[test]
+fn osc_trigger_fires_matching_cue() {
+    let mut app = app_with_cue(vec![CueTrigger::Osc("/kuhplay/cue/5".into())]);
+    app.handle_remote_command(RemoteCommand::OscAddress {
+        address: "/kuhplay/cue/6".into(),
+    });
+    assert_eq!(app.carts.active().cues()[0].status, CueStatus::Standby);
+    app.handle_remote_command(RemoteCommand::OscAddress {
+        address: "/kuhplay/cue/5".into(),
+    });
     assert_eq!(
         app.carts.active().cues()[0].status,
         CueStatus::Playing,
-        "kein Doppel-Feuer"
+        "OSC-Trigger feuert"
+    );
+}
+
+#[test]
+fn trigger_fires_cue_without_number() {
+    let mut app = app_with_cue(vec![CueTrigger::Midi {
+        channel: 1,
+        note: 60,
+    }]);
+    app.carts.active_mut().cues_mut()[0].number.clear();
+    app.handle_remote_command(RemoteCommand::MidiNote {
+        channel: 1,
+        note: 60,
+    });
+    assert_eq!(
+        app.carts.active().cues()[0].status,
+        CueStatus::Playing,
+        "Cue ohne Nummer feuert per Trigger"
+    );
+}
+
+#[test]
+fn trigger_fires_cue_in_inactive_cart() {
+    let mut app = app_with_cue(vec![CueTrigger::Midi {
+        channel: 1,
+        note: 61,
+    }]);
+    // Cue liegt in Cart 1, aktiv ist ein neuer zweiter Cart.
+    app.carts.add_cart("Cart 2");
+    app.carts.set_active(1).unwrap();
+    app.handle_remote_command(RemoteCommand::MidiNote {
+        channel: 1,
+        note: 61,
+    });
+    assert_eq!(
+        app.carts.cart(0).cues()[0].status,
+        CueStatus::Playing,
+        "Trigger feuert im eigenen Cart"
     );
 }
 

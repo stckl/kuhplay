@@ -622,19 +622,6 @@ impl CueList {
     /// `Start`), ohne den Playhead zu bewegen. Liefert `None`, wenn kein
     /// Cue mit dieser Nummer existiert oder der Cue nicht triggerbar ist
     /// (nicht armed / nicht in Standby).
-    /// Startet einen Cue per ID unabhängig vom Playhead (Trigger). Rückgabe:
-    /// Engine-Kommandos.
-    pub fn trigger_id(&mut self, id: Uuid) -> Vec<EngineCommand> {
-        let mut commands = Vec::new();
-        if let Some(cue) = self.find_cue(id) {
-            let number = cue.number.clone();
-            if !number.is_empty() {
-                self.trigger_by_number(&number, &mut commands);
-            }
-        }
-        commands
-    }
-
     pub fn go_to_number(&mut self, number: &str) -> Option<GoOutcome> {
         let index = self.find_index_by_number(Some(number))?;
         let mut commands = Vec::new();
@@ -709,7 +696,8 @@ impl CueList {
             };
             if let Some(command) = command {
                 // Fade auf eine Gruppe: wirkt auf alle laufenden Kinder – pro
-                // Kind ein eigenes Fade-Kommando (eigene fade_id fürs Pending-Counting).
+                // Kind ein Fade-Kommando mit der ID des Fade-Cues; die Engine
+                // zählt mit und meldet Finished erst nach dem letzten Kind.
                 let mut group_children_cmds: Vec<EngineCommand> = Vec::new();
                 if cue.cue_type == CueType::Fade && !fade_group_children.is_empty() {
                     if let EngineCommand::Fade {
@@ -724,7 +712,7 @@ impl CueList {
                     {
                         for child_id in &fade_group_children {
                             group_children_cmds.push(EngineCommand::Fade {
-                                cue_id: uuid::Uuid::new_v4(),
+                                cue_id: cue.id,
                                 target_cue: Some(*child_id),
                                 from: *from,
                                 volume: *volume,
@@ -966,9 +954,26 @@ impl CueList {
     /// Rückgabe: `true`, wenn der Cue getriggert wurde (ggf. in den
     /// Fehlerzustand bei ungültiger Konfiguration).
     fn trigger_by_number(&mut self, number: &str, commands: &mut Vec<EngineCommand>) -> bool {
-        let Some(index) = self.find_index_by_number(Some(number)) else {
-            return false;
-        };
+        match self.find_index_by_number(Some(number)) {
+            Some(index) => self.trigger_index(index, commands),
+            None => false,
+        }
+    }
+
+    /// Startet einen Top-Level-Cue per ID unabhängig vom Playhead (Cue-Trigger
+    /// Hotkey/OSC/MIDI/Timecode/Clock) – auch ohne oder mit doppelter Nummer.
+    /// Rückgabe: Engine-Kommandos.
+    pub fn trigger_id(&mut self, id: Uuid) -> Vec<EngineCommand> {
+        let mut commands = Vec::new();
+        if let Some(index) = self.cues.iter().position(|c| c.id == id) {
+            self.trigger_index(index, &mut commands);
+        }
+        commands
+    }
+
+    /// Triggert den Top-Level-Cue `index` samt Follow-Kette, ohne den Playhead
+    /// zu bewegen (siehe [`Self::trigger_by_number`]).
+    fn trigger_index(&mut self, index: usize, commands: &mut Vec<EngineCommand>) -> bool {
         if !self.cues[index].is_armed || self.cues[index].status != CueStatus::Standby {
             return false;
         }

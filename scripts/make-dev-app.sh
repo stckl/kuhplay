@@ -2,10 +2,14 @@
 # Dev-.app für macOS: KuhPlay + CEF-Runtime in korrektem Bundle-Layout
 # (CEF crasht ohne .app mit SIGTRAP). CEF_DIST zeigt auf die entpackte
 # Standard-Distribution (mit icudtl.dat), z. B. von cef-builds.spotifycdn.com.
-# Aufruf: scripts/make-dev-app.sh [CEF_DIST_DIR]
+# Aufruf: scripts/make-dev-app.sh CEF_DIST_DIR [ZIEL.app]
 set -e
-CEF_DIST="${1:-/tmp/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_macosarm64/Release}"
-APP="${2:-/Users/stocke/KuhPlay-dev.app}"
+if [ -z "$1" ]; then
+  echo "Aufruf: $0 CEF_DIST_DIR [ZIEL.app]  (CEF_DIST_DIR = .../Release der CEF-Distribution)" >&2
+  exit 1
+fi
+CEF_DIST="$1"
+APP="${2:-$HOME/KuhPlay-dev.app}"
 cargo build --release --locked --features cef,decklink
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"

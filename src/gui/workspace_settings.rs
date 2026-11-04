@@ -282,7 +282,8 @@ fn draw_audio(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(current_label.as_str()).weak())
                 .on_hover_text(
-                    "Primary audio device (system default). Channel-to-device routing is done                      in the patch matrix below.",
+                    "Primary audio device (system default). Channel-to-device routing is done \
+                     in the patch matrix below.",
                 );
             refresh = icons::button(
                 ui,

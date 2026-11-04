@@ -181,8 +181,9 @@ pub struct ShowApp {
     /// Cache statt Live-Abfrage, weil egui den Fokus bei Esc bereits in
     /// `begin_pass` löscht – bevor die Hotkeys laufen.
     text_field_active: bool,
-    /// Clock-Trigger: letzter gefeuerter Occurrence-Key pro Cue (nie doppelt feuern).
-    clock_fired: std::collections::HashMap<Uuid, i64>,
+    /// Clock-Trigger: Zeitpunkt der letzten Prüfung – gefeuert wird nur, was
+    /// seitdem fällig wurde (nie doppelt, nichts Vergangenes beim Laden).
+    clock_last_check: Option<std::time::SystemTime>,
     /// Startzeitpunkte laufender Cues (für elapsed-Anzeige in der Sidebar).
     started_at: HashMap<Uuid, Instant>,
     /// Medien-Dauer pro Cue (aus `EngineEvent::Started`), Basis fürs Spulen.
@@ -585,7 +586,7 @@ impl ShowApp {
             text_field_ids: HashSet::new(),
             text_field_ids_prev: HashSet::new(),
             text_field_active: false,
-            clock_fired: std::collections::HashMap::new(),
+            clock_last_check: None,
             started_at: HashMap::new(),
             media_durations: HashMap::new(),
             holding: HashSet::new(),
@@ -1250,6 +1251,11 @@ impl ShowApp {
         if cue_type == CueType::Wait {
             cue.duration = std::time::Duration::from_secs(1);
         }
+        // Fade-Cue: 3 s, dB-Kurve (docs/AUFTRAG-fade.md §2).
+        if cue_type == CueType::Fade {
+            cue.duration = std::time::Duration::from_secs(3);
+            cue.fade_curve = crate::core::FadeCurve::Decibel;
+        }
         // Text-Cue: leerer Text-Inhalt als Vorgabe (sonst „kaputt").
         if cue_type == CueType::Text {
             cue.text_content = Some(crate::core::TextContent::default());
@@ -1838,11 +1844,23 @@ impl ShowApp {
     /// Verarbeitet ein Remote-Command (Web-Remote / Companion) wie die
     /// entsprechende UI-Aktion.
     pub fn handle_remote_command(&mut self, cmd: RemoteCommand) {
-        if let RemoteCommand::MidiNote { channel, note } = cmd {
-            self.fire_matching_triggers(|t| {
-                matches!(t, crate::core::CueTrigger::Midi { channel: c, note: n } if *c == channel && *n == note)
-            });
-            return;
+        // Cue-Trigger (MIDI/OSC) feuern auch im Show-Mode – sie editieren nichts.
+        match &cmd {
+            RemoteCommand::MidiNote { channel, note } => {
+                let (channel, note) = (*channel, *note);
+                self.fire_matching_triggers(|t| {
+                    matches!(t, crate::core::CueTrigger::Midi { channel: c, note: n } if *c == channel && *n == note)
+                });
+                return;
+            }
+            RemoteCommand::OscAddress { address } => {
+                let address = address.clone();
+                self.fire_matching_triggers(
+                    |t| matches!(t, crate::core::CueTrigger::Osc(a) if *a == address),
+                );
+                return;
+            }
+            _ => {}
         }
         if self.show_mode && cmd.is_edit() {
             self.report_remote_error("Show Mode is active: editing is disabled.".to_string());
@@ -1862,7 +1880,8 @@ impl ShowApp {
     /// Führt ein Remote-Command aus, wie die entsprechende UI-Aktion.
     fn apply_remote_command(&mut self, cmd: RemoteCommand) -> Result<(), String> {
         match cmd {
-            RemoteCommand::MidiNote { .. } => {} // wird oben in handle_remote_command abgefangen
+            // werden oben in handle_remote_command abgefangen
+            RemoteCommand::MidiNote { .. } | RemoteCommand::OscAddress { .. } => {}
             RemoteCommand::Go => self.go_now(),
             RemoteCommand::Panic => {
                 self.panic();
@@ -2885,73 +2904,41 @@ impl ShowApp {
     }
 
     /// Feuert Clock-Trigger (Datum+Uhrzeit one-shot; Uhrzeit+Wochentage
-    /// wiederkehrend), deren Zeitpunkt jetzt erreicht ist – genau einmal pro
-    /// Occurrence.
+    /// wiederkehrend), deren Zeitpunkt seit der letzten Prüfung erreicht ist.
     pub fn fire_clock_triggers(&mut self) {
-        use crate::core::clock_trigger::split_system_time;
-        use crate::core::CueTrigger;
-        let now = std::time::SystemTime::now();
-        let (days, secs, _) = split_system_time(now);
-        let now_s = days * 86_400 + secs as i64;
-        let mut fire: Vec<Uuid> = Vec::new();
-        for ci in 0..self.carts.cart_count() {
-            let list = self.carts.cart(ci);
-            for cue in list.cues() {
-                for t in &cue.triggers {
-                    if let CueTrigger::Clock(ct) = t {
-                        // Fällige Occurrence: bei Datum one-shot dessen Zeitpunkt
-                        // (auch in der Vergangenheit = einmal nachfeuern),
-                        // sonst nächste vor 1 s.
-                        let (h, m, sec) = ct.time;
-                        let tod = h as i64 * 3600 + m as i64 * 60 + sec as i64;
-                        let occ = match ct.date {
-                            Some((y, mo, d)) => {
-                                let at = crate::core::clock_trigger::days_from_civil(
-                                    y as i64, mo as u32, d as u32,
-                                ) * 86_400
-                                    + tod;
-                                if at <= now_s {
-                                    Some(at)
-                                } else {
-                                    None
-                                }
-                            }
-                            None => ct
-                                .next_after(now - std::time::Duration::from_secs(1))
-                                .map(|pt| {
-                                    let (pd, ps, _) = split_system_time(pt);
-                                    pd * 86_400 + ps as i64
-                                })
-                                .filter(|o| *o <= now_s),
-                        };
-                        if let Some(occ) = occ {
-                            if self.clock_fired.get(&cue.id) != Some(&occ) {
-                                fire.push(cue.id);
-                                self.clock_fired.insert(cue.id, occ);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for id in fire {
-            let cmds = self.carts.active_mut().trigger_id(id);
-            self.dispatch(cmds);
-        }
+        self.fire_clock_triggers_at(std::time::SystemTime::now());
     }
 
-    /// Feuert Timecode-/MIDI-/Hotkey-/OSC-Trigger, die `match` erfüllen.
+    /// Wie [`Self::fire_clock_triggers`] mit vorgegebener Uhrzeit (Tests).
+    /// Feuert genau die Zeitpunkte im Fenster (letzte Prüfung, `now`] – ein
+    /// Termin, der beim Öffnen der Show schon vorbei ist, feuert also nicht.
+    pub fn fire_clock_triggers_at(&mut self, now: std::time::SystemTime) {
+        use crate::core::CueTrigger;
+        let Some(last) = self.clock_last_check.replace(now) else {
+            return; // erste Prüfung: nur Startpunkt merken
+        };
+        if now <= last {
+            return; // Uhr steht oder wurde zurückgestellt
+        }
+        self.fire_matching_triggers(|t| match t {
+            CueTrigger::Clock(ct) => ct.next_after(last).is_some_and(|at| at <= now),
+            _ => false,
+        });
+    }
+
+    /// Feuert Timecode-/MIDI-/Hotkey-/OSC-Trigger, die `match` erfüllen – in
+    /// dem Cart, zu dem der Cue gehört.
     pub fn fire_matching_triggers(&mut self, pred: impl Fn(&crate::core::CueTrigger) -> bool) {
-        let mut fire: Vec<Uuid> = Vec::new();
+        let mut fire: Vec<(usize, Uuid)> = Vec::new();
         for ci in 0..self.carts.cart_count() {
             for cue in self.carts.cart(ci).cues() {
                 if cue.triggers.iter().any(&pred) {
-                    fire.push(cue.id);
+                    fire.push((ci, cue.id));
                 }
             }
         }
-        for id in fire {
-            let cmds = self.carts.active_mut().trigger_id(id);
+        for (ci, id) in fire {
+            let cmds = self.carts.cart_mut(ci).trigger_id(id);
             self.dispatch(cmds);
         }
     }
@@ -3186,13 +3173,21 @@ impl ShowApp {
                 .iter()
                 .filter_map(|e| match e {
                     egui::Event::Key {
-                        key, pressed: true, ..
-                    } => Some(format!("{key:?}")),
+                        key,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if !(modifiers.command || modifiers.ctrl || modifiers.alt) => {
+                        Some(format!("{key:?}"))
+                    }
                     _ => None,
                 })
                 .collect()
         });
-        if !pressed_names.is_empty() {
+        // Nicht beim Tippen in Textfeldern; ⌘/Ctrl/Alt-Kombinationen (oben
+        // gefiltert) sind App-Shortcuts.
+        if !pressed_names.is_empty() && !text_input {
             let names = pressed_names.clone();
             self.fire_matching_triggers(
                 |t| matches!(t, crate::core::CueTrigger::Hotkey(h) if names.iter().any(|n| n == h)),

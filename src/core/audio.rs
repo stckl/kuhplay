@@ -55,13 +55,10 @@ pub enum FadeCurve {
 }
 
 impl FadeCurve {
-    /// Alle Kurven (für UI-ComboBoxen).
-    pub const ALL: [FadeCurve; 4] = [
-        FadeCurve::Linear,
-        FadeCurve::Decibel,
-        FadeCurve::EqualPowerUp,
-        FadeCurve::EqualPowerDown,
-    ];
+    /// Wählbare Kurven (für UI-ComboBoxen) – Linear oder dB laut
+    /// docs/AUFTRAG-fade.md; Equal-Power stammt vom entfernten Crossfade-Cue
+    /// und bleibt nur zum Laden alter Shows.
+    pub const ALL: [FadeCurve; 2] = [FadeCurve::Linear, FadeCurve::Decibel];
 
     /// Anzeige-Label.
     pub fn label(self) -> &'static str {

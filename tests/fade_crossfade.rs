@@ -205,13 +205,19 @@ fn new_fade_on_same_param_replaces_running() {
         engine.tick();
     }
     let events = drain(&rx);
-    // f2 endet nach 1000 ms; f1 darf nicht zusätzlich Finished melden (wurde ersetzt).
+    // f2 endet nach 1000 ms; f1 wurde ersetzt: kein Finished (kein
+    // Auto-Continue), aber genau ein Stopped – sonst hinge der Cue in „läuft".
     assert_eq!(finished_count(&events, f2), 1);
     assert_eq!(
         finished_count(&events, f1),
         0,
         "ersetzter Fade meldet nicht Finished"
     );
+    let stopped_f1 = events
+        .iter()
+        .filter(|e| matches!(e, EngineEvent::Stopped { cue_id } if *cue_id == f1))
+        .count();
+    assert_eq!(stopped_f1, 1, "ersetzter Fade-Cue meldet Stopped");
 }
 
 // --- Abnahme 4: Stop when done stoppt das Ziel vor Finished ---
@@ -348,4 +354,160 @@ fn fade_cue_inspector_fields_drive_command() {
         }
         other => panic!("kein Fade-Kommando: {other:?}"),
     }
+}
+
+fn stopped_count(events: &[EngineEvent], cue_id: Uuid) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, EngineEvent::Stopped { cue_id: id } if *id == cue_id))
+        .count()
+}
+
+// --- Review: Gruppen-Ziel, Ziel gestoppt, Fade-Cue gestoppt, Kurven ---
+
+#[test]
+fn group_fade_finishes_once_after_all_children() {
+    // cue_list fächert einen Gruppen-Fade auf: ein Kommando je Kind, alle mit
+    // der ID des Fade-Cues. Finished genau einmal, nach dem letzten Kind.
+    let (mut engine, clock, rx) = setup();
+    let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+    let fade = Uuid::new_v4();
+    engine.handle(play_cmd(a, 30_000)).unwrap();
+    engine.handle(play_cmd(b, 30_000)).unwrap();
+    engine.tick();
+    drain(&rx);
+    engine
+        .handle(fade_cmd(fade, Some(a), Some(0.0), None, 500))
+        .unwrap();
+    engine
+        .handle(fade_cmd(fade, Some(b), Some(0.0), None, 500))
+        .unwrap();
+    for _ in 0..6 {
+        clock.advance(Duration::from_millis(100));
+        engine.tick();
+    }
+    assert_eq!(finished_count(&drain(&rx), fade), 1);
+}
+
+#[test]
+fn stopping_the_target_ends_the_fade_cue() {
+    let (mut engine, clock, rx) = setup();
+    let target = Uuid::new_v4();
+    let fade = Uuid::new_v4();
+    engine.handle(play_cmd(target, 30_000)).unwrap();
+    engine.tick();
+    engine
+        .handle(fade_cmd(fade, Some(target), Some(0.0), None, 5000))
+        .unwrap();
+    clock.advance(Duration::from_millis(100));
+    engine.tick();
+    drain(&rx);
+    engine
+        .handle(EngineCommand::Stop { cue_id: target })
+        .unwrap();
+    clock.advance(Duration::from_millis(6000));
+    engine.tick();
+    let events = drain(&rx);
+    assert_eq!(stopped_count(&events, fade), 1, "Fade-Cue hängt nicht");
+    assert_eq!(finished_count(&events, fade), 0);
+}
+
+#[test]
+fn stopping_a_running_fade_cue_halts_its_fade() {
+    let (mut engine, clock, rx) = setup();
+    let target = Uuid::new_v4();
+    let fade = Uuid::new_v4();
+    engine.handle(play_cmd(target, 30_000)).unwrap();
+    engine.tick();
+    engine
+        .handle(fade_cmd(fade, Some(target), Some(0.0), None, 1000))
+        .unwrap();
+    clock.advance(Duration::from_millis(200));
+    engine.tick();
+    drain(&rx);
+    engine.handle(EngineCommand::Stop { cue_id: fade }).unwrap();
+    clock.advance(Duration::from_millis(2000));
+    engine.tick();
+    let events = drain(&rx);
+    assert_eq!(stopped_count(&events, fade), 1);
+    assert_eq!(finished_count(&events, fade), 0);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, EngineEvent::FadeProgress { cue_id, .. } if *cue_id == fade)),
+        "gestoppter Fade läuft nicht weiter"
+    );
+}
+
+/// Fade-Werte eines Parameters in Event-Reihenfolge.
+fn fade_values(events: &[EngineEvent], fade: Uuid, want: FadeParam) -> Vec<f32> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::FadeProgress {
+                cue_id,
+                param,
+                value,
+            } if *cue_id == fade && *param == want => Some(*value),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn equal_power_down_runs_from_start_to_target() {
+    let (mut engine, clock, rx) = setup();
+    let target = Uuid::new_v4();
+    let fade = Uuid::new_v4();
+    engine.handle(play_cmd(target, 30_000)).unwrap();
+    engine.tick();
+    drain(&rx);
+    let mut cmd = fade_cmd(fade, Some(target), Some(0.0), None, 1000);
+    if let EngineCommand::Fade { curve, from, .. } = &mut cmd {
+        *curve = FadeCurve::EqualPowerDown;
+        *from = Some(1.0);
+    }
+    engine.handle(cmd).unwrap();
+    for _ in 0..10 {
+        clock.advance(Duration::from_millis(100));
+        engine.tick();
+    }
+    let values = fade_values(&drain(&rx), fade, FadeParam::Volume);
+    assert!(
+        values.first().is_some_and(|v| *v > 0.9),
+        "startet oben: {values:?}"
+    );
+    assert!(
+        values.last().is_some_and(|v| *v < 0.01),
+        "endet unten: {values:?}"
+    );
+    assert!(
+        values.windows(2).all(|w| w[1] <= w[0]),
+        "fällt monoton: {values:?}"
+    );
+}
+
+#[test]
+fn opacity_fades_linear_even_with_db_curve() {
+    let (mut engine, clock, rx) = setup();
+    let target = Uuid::new_v4();
+    let fade = Uuid::new_v4();
+    engine.handle(play_cmd(target, 30_000)).unwrap();
+    engine.tick();
+    drain(&rx);
+    let mut cmd = fade_cmd(fade, Some(target), None, Some(0.0), 1000);
+    if let EngineCommand::Fade { curve, from, .. } = &mut cmd {
+        *curve = FadeCurve::Decibel;
+        *from = Some(1.0);
+    }
+    engine.handle(cmd).unwrap();
+    engine.tick();
+    clock.advance(Duration::from_millis(500));
+    engine.tick();
+    let values = fade_values(&drain(&rx), fade, FadeParam::Opacity);
+    let mid = *values.last().expect("Opacity-Zwischenwert");
+    assert!(
+        (mid - 0.5).abs() < 0.02,
+        "Opacity linear: Mitte ≈ 0.5, war {mid}"
+    );
 }

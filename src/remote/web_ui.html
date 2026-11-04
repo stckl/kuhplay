@@ -555,7 +555,7 @@ function tabTriggers(c) {
     form.append(...field('FPS', select(W.options.fps, tc.fps, v => up(c, { timecode_in: { ...tc, fps: v } }))));
     form.append(...field('Offset', number(tc.frames, v => up(c, { timecode_in: { ...tc, frames: Math.max(0, Math.round(v)) } }))));
   }
-  return [form, h('p', { class: 'note' }, 'MIDI, OSC and network triggers are not available yet.')];
+  return [form, h('p', { class: 'note' }, 'Start triggers (Hotkey, OSC, MIDI, Timecode, Clock) are edited in the app for now.')];
 }
 function tabTime(c) {
   const mode = typeof c.loop_mode === 'string' ? c.loop_mode : 'Count';
