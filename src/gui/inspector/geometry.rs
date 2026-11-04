@@ -1,5 +1,5 @@
 //! Tab „Geometry" (Video/HTML5/Diashow): Stage, Layer, Surface
-//! (Position/Größe, Crop, Hard Edge, Deckkraft) und
+//! (Position/Größe, Crop, Deckkraft; Kanten-Blending liegt an den Stage-Regionen) und
 //! Stage-Einstellungen (Canvas/Screen/Visible).
 
 use egui::RichText;
@@ -172,10 +172,10 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
 }
 
 /// Editor für eine Cue-Surface (Surface-Geometrie auf der Stage):
-/// Position/Größe, Crop (Quellen-Zuschnitt), Hard-Edge-Blending,
+/// Position/Größe, Crop (Quellen-Zuschnitt),
 /// Deckkraft und Sichtbarkeit.
 fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry, content: Option<(u32, u32)>) {
-    use crate::core::{BlendCurve, Crop, EdgeSide, HardEdge};
+    use crate::core::Crop;
     theme::form_grid("surface_grid").show(ui, |ui| {
         theme::field_label(ui, "Mode");
         egui::ComboBox::from_id_salt("surface_mode")
@@ -308,43 +308,23 @@ fn surface_editor(ui: &mut egui::Ui, surface: &mut SurfaceGeometry, content: Opt
             ui.end_row();
         }
 
-        // --- Hard Edge (Kanten-Blending für Projektor-Overlaps) ---
-        theme::field_label(ui, "Hard Edge");
-        let mut edge = surface.hard_edge.is_some();
-        if ui.checkbox(&mut edge, "Blend edge").changed() {
-            surface.hard_edge =
-                edge.then_some(HardEdge::new(EdgeSide::Right, 100.0, BlendCurve::Cosine));
-        }
-        ui.end_row();
-        if let Some(hard_edge) = &mut surface.hard_edge {
-            theme::field_label(ui, "Side");
-            let mut side = hard_edge.side;
-            egui::ComboBox::from_id_salt("hard_edge_side")
-                .selected_text(side.label())
-                .show_ui(ui, |ui| {
-                    for s in EdgeSide::ALL {
-                        ui.selectable_value(&mut side, s, s.label());
-                    }
-                });
-            hard_edge.side = side;
-            ui.end_row();
-            theme::field_label(ui, "Width");
-            ui.add(
-                egui::DragValue::new(&mut hard_edge.width)
-                    .speed(1.0)
-                    .range(1.0..=4096.0),
-            );
-            ui.end_row();
-            theme::field_label(ui, "Curve");
-            let mut curve = hard_edge.curve;
-            egui::ComboBox::from_id_salt("hard_edge_curve")
-                .selected_text(curve.label())
-                .show_ui(ui, |ui| {
-                    for c in BlendCurve::ALL {
-                        ui.selectable_value(&mut curve, c, c.label());
-                    }
-                });
-            hard_edge.curve = curve;
+        // Kanten-Blending gehört an Stage/Region (Display-Einstellungen),
+        // nicht an den Cue. Alte Shows: Hinweis + Entfernen, statt unsichtbar
+        // weiterzuwirken.
+        if surface.hard_edge.is_some() {
+            theme::field_label(ui, "Hard Edge");
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(
+                        "set on this cue (old show) – blends belong to the stage regions",
+                    )
+                    .small()
+                    .color(theme::palette::TEXT_DIM),
+                );
+                if ui.small_button("Remove").clicked() {
+                    surface.hard_edge = None;
+                }
+            });
             ui.end_row();
         }
     });

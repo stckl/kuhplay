@@ -290,6 +290,10 @@ struct ActiveHtml {
     closing_since: Option<Duration>,
 }
 
+/// So lange ohne neuen Timecode gilt er als angehalten (Chasing pausiert).
+/// Bei 25 fps kommen sonst alle 40 ms neue Werte.
+const CHASE_TIMECODE_TIMEOUT: Duration = Duration::from_millis(300);
+
 /// Höchstens so lange wartet ein Stop auf die Out-Animation des Templates
 /// (docs/KONZEPT-html-templates.md §5); ein zweites Stop beendet sofort.
 const HTML_OUT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -342,6 +346,10 @@ pub struct RealMediaEngine {
     /// Aktueller Lautstärke-Wert pro Cue (für from=None und Reset nach Neustart).
     current_volumes: HashMap<Uuid, f32>,
     chasing: HashMap<Uuid, Timecode>,
+    /// Engine-Zeit des letzten empfangenen Timecodes (Chasing).
+    last_timecode_at: Option<Duration>,
+    /// Vom Chasing pausierte Cues (Timecode steht) – laufen mit ihm weiter.
+    chase_paused: HashSet<Uuid>,
     stages: HashMap<String, Stage>,
     /// Testbild pro Stage-Name („Test Pattern"; überdeckt die Inhalte).
     /// Output Routes und ihre gerenderten Bilder.
@@ -443,6 +451,8 @@ impl RealMediaEngine {
             fade_stop_target: HashMap::new(),
             current_volumes: HashMap::new(),
             chasing: HashMap::new(),
+            last_timecode_at: None,
+            chase_paused: HashSet::new(),
             stages: HashMap::new(),
             routes: RouteManager::new(),
             route_frames,
@@ -1421,6 +1431,33 @@ impl RealMediaEngine {
 }
 
 impl RealMediaEngine {
+    /// Steht der Timecode (länger als [`CHASE_TIMECODE_TIMEOUT`] nichts
+    /// empfangen), pausieren die Cues, die ihm folgen; der nächste Timecode
+    /// setzt sie fort. Ohne je empfangenen Timecode läuft ein Cue normal.
+    fn pause_chasing_when_timecode_stops(&mut self, now: Duration) {
+        let Some(last) = self.last_timecode_at else {
+            return;
+        };
+        if now.saturating_sub(last) < CHASE_TIMECODE_TIMEOUT {
+            return;
+        }
+        let to_pause: Vec<Uuid> = self
+            .chasing
+            .keys()
+            .filter(|id| !self.chase_paused.contains(id))
+            .filter(|id| {
+                self.active.get(id).is_some_and(|p| {
+                    p.started_at.is_some() && p.finished_at.is_none() && p.paused_since.is_none()
+                })
+            })
+            .copied()
+            .collect();
+        for cue_id in to_pause {
+            let _ = self.handle(EngineCommand::Pause { cue_id });
+            self.chase_paused.insert(cue_id);
+        }
+    }
+
     /// Externer Timecode (LTC/MTC/OSC) einspeisen: alle chasing Cues springen
     /// auf `tc - timecode_in`, sobald der Sprung mehr als einen Frame beträgt.
     /// Media-Backends (Audio/Video) seeken passend mit (Video: ffmpeg-Neustart
@@ -1429,6 +1466,13 @@ impl RealMediaEngine {
     pub fn receive_timecode(&mut self, tc: Timecode) {
         let frame = tc.fps.frame_duration();
         let now = self.now();
+        // Timecode läuft (wieder): vom Chasing pausierte Cues fortsetzen.
+        self.last_timecode_at = Some(now);
+        for cue_id in std::mem::take(&mut self.chase_paused) {
+            if self.chasing.contains_key(&cue_id) {
+                let _ = self.handle(EngineCommand::Resume { cue_id });
+            }
+        }
         let mut jumps: Vec<(Uuid, Duration, Duration)> = Vec::new();
         for (cue_id, offset) in &self.chasing {
             let Some(playback) = self.active.get(cue_id) else {
@@ -1784,6 +1828,7 @@ impl MediaEngine for RealMediaEngine {
                 self.fade_stop_target.clear();
                 self.current_volumes.clear();
                 self.chasing.clear();
+                self.chase_paused.clear();
                 self.html.clear();
                 self.pending_html_data.clear();
                 self.scripts.clear();
@@ -2507,13 +2552,22 @@ impl MediaEngine for RealMediaEngine {
                             .write_all(request.as_bytes())
                             .map_err(|e| e.to_string())?;
                         stream.flush().map_err(|e| e.to_string())?;
-                        // Antwort kurz mitlesen (Statuszeile), dann zu.
+                        // Statuszeile auswerten: Companion meldet z. B. 404 für
+                        // einen unbekannten Button – sonst schiene alles ok.
                         stream
-                            .set_read_timeout(Some(Duration::from_millis(500)))
+                            .set_read_timeout(Some(Duration::from_millis(1000)))
                             .ok();
                         let mut buf = [0u8; 256];
-                        let _ = stream.read(&mut buf);
-                        Ok(())
+                        let n = stream
+                            .read(&mut buf)
+                            .map_err(|e| format!("no answer: {e}"))?;
+                        let answer = String::from_utf8_lossy(&buf[..n]);
+                        let status = answer.lines().next().unwrap_or_default();
+                        match status.split_whitespace().nth(1) {
+                            Some(code) if code.starts_with('2') => Ok(()),
+                            Some(_) => Err(format!("{host}:{port}{path} → {status}")),
+                            None => Err(format!("{host}:{port}{path}: no HTTP answer")),
+                        }
                     })();
                     finish_send(events, cue_id, "companion cue", result);
                 });
@@ -2973,6 +3027,7 @@ impl MediaEngine for RealMediaEngine {
 
         self.tick_deferred_stops(now);
         self.release_covered_holds();
+        self.pause_chasing_when_timecode_stops(now);
 
         // Compositor: geänderte Stages neu aufbauen.
         self.composite_dirty_stages();

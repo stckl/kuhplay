@@ -293,8 +293,8 @@ pub fn draw_slides(ui: &mut egui::Ui, app: &mut ShowApp) {
 }
 
 /// Grid-Zeilen für Template-Daten (Data-Cue und Startdaten des HTML-Cues):
-/// Felder des Templates mit „Insert example JSON", JSON-Editor mit
-/// Highlighting und Prüfung gegen die Felder.
+/// JSON-Editor mit Highlighting, Prüfung gegen die Felder, darunter die
+/// Felder des Templates mit „Insert example JSON".
 fn template_data_rows(
     ui: &mut egui::Ui,
     schema: &Option<Result<crate::core::html_template::TemplateSchema, String>>,
@@ -302,6 +302,38 @@ fn template_data_rows(
     text_field_ids: &mut std::collections::HashSet<egui::Id>,
     editor_label: &str,
 ) {
+    theme::field_label(ui, editor_label);
+    super::json_editor(ui, text, text_field_ids);
+    ui.end_row();
+
+    theme::field_label(ui, "JSON valid");
+    if text.trim().is_empty() {
+        ui.label(RichText::new("empty").color(theme::palette::TEXT_DIM));
+    } else {
+        match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(payload) => {
+                let problems = match schema {
+                    Some(Ok(schema)) => schema.validate(&payload),
+                    _ => Vec::new(),
+                };
+                if problems.is_empty() {
+                    ui.colored_label(theme::palette::PLAYING, "ok");
+                } else {
+                    ui.vertical(|ui| {
+                        for problem in problems {
+                            ui.colored_label(theme::palette::ERROR, problem);
+                        }
+                    });
+                }
+            }
+            Err(err) => {
+                ui.colored_label(theme::palette::ERROR, err.to_string());
+            }
+        }
+    }
+    ui.end_row();
+
+    // Felder des Templates unter dem Editor: Übersicht + Beispiel.
     match schema {
         Some(Ok(schema)) => {
             theme::field_label(ui, "Template fields");
@@ -360,37 +392,6 @@ fn template_data_rows(
         }
         None => {}
     }
-
-    theme::field_label(ui, editor_label);
-    super::json_editor(ui, text, text_field_ids);
-    ui.end_row();
-
-    theme::field_label(ui, "JSON valid");
-    if text.trim().is_empty() {
-        ui.label(RichText::new("empty").color(theme::palette::TEXT_DIM));
-    } else {
-        match serde_json::from_str::<serde_json::Value>(text) {
-            Ok(payload) => {
-                let problems = match schema {
-                    Some(Ok(schema)) => schema.validate(&payload),
-                    _ => Vec::new(),
-                };
-                if problems.is_empty() {
-                    ui.colored_label(theme::palette::PLAYING, "ok");
-                } else {
-                    ui.vertical(|ui| {
-                        for problem in problems {
-                            ui.colored_label(theme::palette::ERROR, problem);
-                        }
-                    });
-                }
-            }
-            Err(err) => {
-                ui.colored_label(theme::palette::ERROR, err.to_string());
-            }
-        }
-    }
-    ui.end_row();
 }
 
 /// Tab „Data" (HTML-Data-Cue): Ziel-HTML (HTML5-Cues des Carts), JSON-Editor
