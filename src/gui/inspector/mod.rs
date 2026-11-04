@@ -44,6 +44,7 @@ mod basics;
 mod companion;
 mod curve;
 mod geometry;
+mod group;
 mod light;
 mod media;
 mod midi;
@@ -115,6 +116,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
             InspectorTab::Companion => companion::draw_companion(ui, app),
             InspectorTab::Timecode => timecode_tab::draw_timecode(ui, app),
             InspectorTab::ScriptTab => script::draw_script(ui, app),
+            InspectorTab::Group => group::draw_group(ui, app),
         });
 }
 
@@ -164,6 +166,7 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
         Some(CueType::Companion) => &[Basics, Triggers, Companion],
         Some(CueType::Timecode) => &[Basics, Triggers, Timecode],
         Some(CueType::Script) => &[Basics, Triggers, ScriptTab],
+        Some(CueType::Group) => &[Basics, Group, Triggers],
         // Group, Stop, Script, Control, Wait, Memo, keine Auswahl.
         _ => &[Basics, Triggers],
     }

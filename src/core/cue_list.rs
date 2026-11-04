@@ -864,8 +864,14 @@ impl CueList {
                 // Originalreihenfolge merken: Reset/Speichern bauen die Gruppe
                 // daraus wieder zusammen (auch nach Shuffle).
                 self.cues[index].dissolved_children = children.iter().map(|c| c.id).collect();
+                self.cues[index].group_iterations_done = 0;
                 if mode == GroupMode::Shuffle {
-                    shuffle_deterministic(&mut children, group_id_seed(group_id));
+                    let seed = if self.cues[index].group_shuffle_each_run {
+                        fresh_seed()
+                    } else {
+                        group_id_seed(group_id)
+                    };
+                    shuffle_deterministic(&mut children, seed);
                 }
                 let _ = self.cues[index].transition_status(CueStatus::Playing);
                 for (offset, mut child) in children.into_iter().enumerate() {
@@ -873,6 +879,10 @@ impl CueList {
                     self.cues.insert(index + 1 + offset, child);
                 }
                 self.cursor = index + 1;
+                // Play through: das erste Kind startet mit demselben GO.
+                if self.cues[index].group_play_through {
+                    self.play_through_next(group_id, commands);
+                }
             }
         }
     }
@@ -1127,8 +1137,43 @@ impl CueList {
             if let Some(outcome) = self.go() {
                 commands = outcome.commands;
             }
+        } else if changed && status == CueStatus::Completed {
+            // Play-through-Gruppe: Kind fertig → nächstes Kind derselben
+            // Gruppe (bei Loop nach dem Re-Arm wieder das erste).
+            let group = self
+                .find_cue(id)
+                .and_then(|c| c.parent_group)
+                .filter(|g| self.find_cue(*g).is_some_and(|g| g.group_play_through));
+            if let Some(group_id) = group {
+                self.play_through_next(group_id, &mut commands);
+            }
         }
         (result, commands)
+    }
+
+    /// Play through: startet das nächste armed Standby-Kind einer aufgelösten
+    /// Gruppe (ab Playhead) – aber nur, wenn es zu dieser Gruppe gehört und
+    /// die Gruppe noch läuft.
+    fn play_through_next(&mut self, group_id: Uuid, commands: &mut Vec<EngineCommand>) {
+        let running = self
+            .find_cue(group_id)
+            .is_some_and(|g| g.status == CueStatus::Playing);
+        if !running {
+            return;
+        }
+        let next = self
+            .cues
+            .iter()
+            .enumerate()
+            .skip(self.cursor)
+            .find(|(_, c)| c.is_armed && c.status == CueStatus::Standby)
+            .map(|(i, c)| (i, c.parent_group == Some(group_id)));
+        if let Some((index, true)) = next {
+            if let Some(outcome) = self.go() {
+                debug_assert_eq!(outcome.index, index);
+                commands.extend(outcome.commands);
+            }
+        }
     }
 
     /// Triggert den Cue an `index` (Dispatch wie in [`CueList::go`], aber ohne
@@ -1415,6 +1460,16 @@ fn push_volume_command(cue: &Cue, commands: &mut Vec<EngineCommand>) {
             volume: cue.volume.clamp(0.0, 1.0),
         });
     }
+}
+
+/// Neuer Seed bei jedem Aufruf (Shuffle „New order each run").
+fn fresh_seed() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    // Nie 0 (xorshift bliebe sonst bei 0 stehen).
+    (nanos ^ 0x9E37_79B9_7F4A_7C15) | 1
 }
 
 /// Deterministischer Seed aus einer Group-UUID (für [`GroupMode::Shuffle`]).
@@ -1762,6 +1817,90 @@ mod tests {
             list.find_cue(group_id).unwrap().status,
             CueStatus::Completed
         );
+    }
+
+    /// Play through: ein GO startet das erste Kind, jedes fertige Kind das
+    /// nächste; nach dem letzten ist Schluss (nicht der Cue hinter der Gruppe).
+    #[test]
+    fn play_through_group_plays_all_children_with_one_go() {
+        let mut list = CueList::new();
+        let mut group = Cue::new_group(
+            "1",
+            "Playlist",
+            GroupMode::Sequential,
+            vec![audio("1.1"), audio("1.2")],
+        );
+        group.group_play_through = true;
+        list.add(group);
+        list.add(audio("2"));
+
+        let outcome = list.go().unwrap();
+        assert!(
+            matches!(outcome.commands.first(), Some(EngineCommand::Play { .. })),
+            "erstes Kind startet mit dem GO: {:?}",
+            outcome.commands
+        );
+        let (id1, id2) = (list.cues()[1].id, list.cues()[2].id);
+        assert_eq!(list.cues()[1].status, CueStatus::Playing);
+
+        let (_, commands) = list.set_status_with_follow(id1, CueStatus::Completed);
+        assert!(!commands.is_empty(), "zweites Kind startet von selbst");
+        assert_eq!(list.find_cue(id2).unwrap().status, CueStatus::Playing);
+
+        let (_, commands) = list.set_status_with_follow(id2, CueStatus::Completed);
+        assert!(commands.is_empty(), "Cue 2 hinter der Gruppe bleibt stehen");
+        assert_eq!(list.cues()[0].status, CueStatus::Completed);
+        assert_eq!(list.cues()[3].status, CueStatus::Standby);
+    }
+
+    /// Loop + Play through: läuft genau n Runden von selbst; nach Reset
+    /// wieder volle n Runden.
+    #[test]
+    fn play_through_loop_group_repeats_count_times_also_after_reset() {
+        let mut list = CueList::new();
+        let mut group = Cue::new_group("1", "Loop", GroupMode::Loop, vec![audio("1.1")]);
+        group.loop_mode = LoopMode::Count(3);
+        group.group_play_through = true;
+        list.add(group);
+
+        for run in 0..2 {
+            let _ = list.go().unwrap();
+            let child = list.cues()[1].id;
+            let mut starts = 1;
+            for _ in 0..10 {
+                let (_, commands) = list.set_status_with_follow(child, CueStatus::Completed);
+                if commands.is_empty() {
+                    break;
+                }
+                starts += 1;
+            }
+            assert_eq!(starts, 3, "Lauf {run}: drei Runden");
+            assert_eq!(list.cues()[0].status, CueStatus::Completed);
+            list.reset();
+        }
+    }
+
+    /// Shuffle „new order each run" mischt nicht immer gleich, die
+    /// Standardeinstellung schon.
+    #[test]
+    fn shuffle_each_run_changes_order_default_keeps_it() {
+        let order = |each_run: bool, group_id: Uuid| {
+            let mut list = CueList::new();
+            let kids = (1..=8).map(|i| audio(&format!("1.{i}"))).collect();
+            let mut group = Cue::new_group("1", "Shuffle", GroupMode::Shuffle, kids);
+            group.id = group_id;
+            group.group_shuffle_each_run = each_run;
+            list.add(group);
+            let _ = list.go().unwrap();
+            list.cues()[1..]
+                .iter()
+                .map(|c| c.number.clone())
+                .collect::<Vec<_>>()
+        };
+        let id = Uuid::new_v4();
+        assert_eq!(order(false, id), order(false, id), "reproduzierbar");
+        let runs: std::collections::HashSet<_> = (0..6).map(|_| order(true, id)).collect();
+        assert!(runs.len() > 1, "neu gemischt: {runs:?}");
     }
 
     #[test]

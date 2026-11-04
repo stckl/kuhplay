@@ -110,6 +110,8 @@ pub enum InspectorTab {
     Timecode,
     /// Script (JavaScript-Quelltext) – Script-Cues.
     ScriptTab,
+    /// Group (Modus, Einstellungen je Modus, Timeline-Editor) – Group-Cues.
+    Group,
 }
 
 impl InspectorTab {
@@ -132,6 +134,7 @@ impl InspectorTab {
             InspectorTab::Companion => "Companion",
             InspectorTab::Timecode => "Timecode",
             InspectorTab::ScriptTab => "Script",
+            InspectorTab::Group => "Group",
         }
     }
 }

@@ -2993,3 +2993,83 @@ fn live_repaint_delay_taktet_bei_laufenden_cues_eng() {
     app.carts.active_mut().cues_mut()[0].status = CueStatus::Playing;
     assert!(app.any_cue_running());
 }
+
+/// Timeline-Gruppe: Tab „Group“ zeigt den Editor; Balken ziehen verschiebt
+/// den Start (Pre-Wait) des Kindes.
+#[test]
+fn timeline_group_editor_drags_child_start() {
+    use kuhplay::core::GroupMode;
+    let ctx = egui::Context::default();
+    icons::install(&ctx);
+    let mut app = demo_app();
+    let mut first = Cue::new("1.1", "Intro", CueType::Audio);
+    first.duration = Duration::from_secs(4);
+    let mut second = Cue::new("1.2", "Outro", CueType::Audio);
+    second.duration = Duration::from_secs(3);
+    second.pre_wait = Duration::from_secs(2);
+    let group = Cue::new_group("90", "Timeline", GroupMode::Timeline, vec![first, second]);
+    let group_id = group.id;
+    app.carts.active_mut().add(group);
+    let index = app.carts.active().len() - 1;
+    app.carts.active_mut().select(Some(index));
+    app.ui.inspector_visible = true;
+    app.ui.inspector_tab = InspectorTab::Group;
+
+    let mut time = 1.0;
+    let mut frame = |app: &mut ShowApp, events: Vec<egui::Event>| {
+        time += 0.05;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 1200.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        ctx.run(raw, |ctx| app.draw_workspace(ctx))
+    };
+    let press = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let _ = frame(&mut app, vec![]);
+    let out = frame(&mut app, vec![]);
+    assert!(output_has_text(&out, "play through") || output_has_text(&out, "own time"));
+    // Startzeit im Balken des zweiten Kindes (unterste „00:02.000“; die
+    // Skala darüber hat dieselbe Beschriftung).
+    let start = out
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.job.text == "00:02.000" => {
+                Some(egui::Rect::from_min_size(t.pos, t.galley.rect.size()).center())
+            }
+            _ => None,
+        })
+        .max_by(|a, b| a.y.total_cmp(&b.y))
+        .expect("Balken des zweiten Kindes");
+    let target = start + egui::vec2(120.0, 0.0);
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(start)]);
+    let _ = frame(&mut app, vec![press(start, true)]);
+    let _ = frame(
+        &mut app,
+        vec![egui::Event::PointerMoved(start + egui::vec2(10.0, 0.0))],
+    );
+    let _ = frame(&mut app, vec![egui::Event::PointerMoved(target)]);
+    let _ = frame(&mut app, vec![press(target, false)]);
+    let group = app.carts.active().find_cue(group_id).unwrap();
+    let moved = group.children[1].pre_wait;
+    assert!(
+        moved > Duration::from_secs(2),
+        "Start muss nach rechts wandern: {moved:?}"
+    );
+    assert_eq!(moved.as_millis() % 100, 0, "auf 0,1 s gerastet");
+    assert_eq!(
+        group.children[0].pre_wait,
+        Duration::ZERO,
+        "anderes Kind bleibt"
+    );
+}

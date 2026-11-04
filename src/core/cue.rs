@@ -622,6 +622,14 @@ pub struct Cue {
     /// Gruppe wieder zusammensetzen (siehe `CueList::fold_dissolved_groups`).
     #[serde(skip)]
     pub dissolved_children: Vec<Uuid>,
+    /// Sequential/Loop/Shuffle: ein GO spielt alle Kinder nacheinander ab
+    /// (das nächste startet, wenn das vorige fertig ist) – Playlist.
+    #[serde(default)]
+    pub group_play_through: bool,
+    /// Shuffle: bei jedem Start neu mischen. Sonst bei jedem Lauf dieselbe
+    /// (aus der Gruppen-ID abgeleitete) Reihenfolge – reproduzierbare Show.
+    #[serde(default)]
+    pub group_shuffle_each_run: bool,
     /// Aktion (nur für [`CueType::Control`]).
     #[serde(default)]
     pub control_action: ControlAction,
@@ -743,6 +751,8 @@ impl Cue {
             parent_group: None,
             group_iterations_done: 0,
             dissolved_children: Vec::new(),
+            group_play_through: false,
+            group_shuffle_each_run: false,
             control_action: ControlAction::Start,
             control_target: None,
             stage: None,
@@ -1124,6 +1134,7 @@ impl Cue {
     /// Setzt alle Zustände rekursiv auf Standby (Reset inkl. Kinder).
     pub fn reset_status_recursive(&mut self) {
         let _ = self.transition_status(CueStatus::Standby);
+        self.group_iterations_done = 0;
         for child in &mut self.children {
             child.reset_status_recursive();
         }
