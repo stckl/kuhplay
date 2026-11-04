@@ -554,25 +554,18 @@ pub fn draw_stage_previews(app: &mut ShowApp, ctx: &Context) {
             .with_position([80.0 + offset, 80.0 + offset]);
         let stage_frames = app.engine.stage_frames.clone();
         let stage_name = stage.name.clone();
-        let show_grid = stage.grid;
-        let grid_regions: Vec<(egui::Rect, Color32)> = stage
-            .regions
-            .iter()
-            .filter(|region| region.grid)
-            .map(|region| {
-                let color = region
-                    .route
-                    .and_then(|id| app.routes.find(id))
-                    .map_or(Color32::WHITE, |route| {
-                        Color32::from_rgb(route.color[0], route.color[1], route.color[2])
-                    });
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(region.x, region.y),
-                    egui::vec2(region.width, region.height),
-                );
-                (rect, color)
-            })
-            .collect();
+        // Testbilder wie auf den Ausgängen (Footer-Grid, Region-Grid,
+        // Route-Testbild) – gerechnet von route_renderer::stage_preview.
+        let routes: Vec<OutputRoute> = app.routes.routes().to_vec();
+        let needs_pattern = stage.grid
+            || stage.regions.iter().any(|region| {
+                region.grid
+                    || region
+                        .route
+                        .and_then(|id| routes.iter().find(|r| r.id == id))
+                        .is_some_and(|r| r.test_pattern)
+            });
+        let pattern_key = needs_pattern.then(|| format!("{:?}{:?}", stage, routes));
         ctx.show_viewport_deferred(
             ViewportId::from_hash_of(("kuhplay-stage-preview", stage_id)),
             builder,
@@ -594,6 +587,18 @@ pub fn draw_stage_previews(app: &mut ShowApp, ctx: &Context) {
                         let rect = egui::Rect::from_center_size(space.center(), size);
                         let frame = stage_frames.lock().unwrap().get(&stage_name).cloned();
                         if let Some(frame) = &frame {
+                            let frame = match &pattern_key {
+                                Some(key) => preview_with_pattern(
+                                    ui.ctx(),
+                                    stage_id,
+                                    key,
+                                    &stage,
+                                    frame,
+                                    &routes,
+                                    rect.size() * ui.ctx().pixels_per_point(),
+                                ),
+                                None => frame.clone(),
+                            };
                             let image = ColorImage::from_rgba_unmultiplied(
                                 [frame.width as usize, frame.height as usize],
                                 &frame.rgba,
@@ -617,42 +622,40 @@ pub fn draw_stage_previews(app: &mut ShowApp, ctx: &Context) {
                                 palette::TEXT_DIM,
                             );
                         }
-                        let scale = rect.width() / stage_w;
-                        let to_screen = |r: egui::Rect| {
-                            egui::Rect::from_min_size(
-                                rect.min + r.min.to_vec2() * scale,
-                                r.size() * scale,
-                            )
-                        };
-                        if show_grid {
-                            let stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
-                            ui.painter().rect_stroke(rect.shrink(0.5), 0.0, stroke);
-                            for part in 1..4 {
-                                let f = part as f32 / 4.0;
-                                ui.painter().vline(
-                                    rect.left() + rect.width() * f,
-                                    rect.y_range(),
-                                    stroke,
-                                );
-                                ui.painter().hline(
-                                    rect.x_range(),
-                                    rect.top() + rect.height() * f,
-                                    stroke,
-                                );
-                            }
-                        }
-                        for (region, color) in &grid_regions {
-                            let area = to_screen(*region);
-                            let stroke = egui::Stroke::new(1.0_f32, *color);
-                            ui.painter().rect_stroke(area.shrink(0.5), 0.0, stroke);
-                            ui.painter()
-                                .line_segment([area.left_top(), area.right_bottom()], stroke);
-                            ui.painter()
-                                .line_segment([area.right_top(), area.left_bottom()], stroke);
-                        }
                     });
                 ctx.request_repaint();
             },
         );
     }
+}
+
+/// Vorschau-Bild mit Testbildern, zwischengespeichert pro Stage: neu
+/// gerechnet nur, wenn sich Stage-Bild, Fenstergröße oder Grid-/Testbild-
+/// Einstellungen ändern.
+fn preview_with_pattern(
+    ctx: &Context,
+    stage_id: uuid::Uuid,
+    key: &str,
+    stage: &crate::core::Stage,
+    frame: &Arc<VideoFrame>,
+    routes: &[OutputRoute],
+    size_px: Vec2,
+) -> Arc<VideoFrame> {
+    let (w, h) = (
+        size_px.x.round().max(1.0) as u32,
+        size_px.y.round().max(1.0) as u32,
+    );
+    let full_key = format!("{:p}|{w}x{h}|{key}", Arc::as_ptr(frame));
+    let cache_id = egui::Id::new(("kuhplay-stage-preview-pattern", stage_id));
+    type Cached = (String, Arc<VideoFrame>);
+    if let Some((cached_key, cached)) = ctx.data(|d| d.get_temp::<Cached>(cache_id)) {
+        if cached_key == full_key {
+            return cached;
+        }
+    }
+    let rendered = Arc::new(crate::engine::route_renderer::stage_preview(
+        stage, frame, routes, w, h,
+    ));
+    ctx.data_mut(|d| d.insert_temp::<Cached>(cache_id, (full_key, rendered.clone())));
+    rendered
 }

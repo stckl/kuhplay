@@ -8,9 +8,9 @@
 //! Alle Arten teilen dieselben Elemente: 1 px weißer Rand exakt am Bildrand,
 //! 1 px Kreis in der Mitte und die Beschriftung im weißen Kasten.
 //!
-//! * **Grid** (Aufbau wie das Ausrichtungsraster): monochrom weiß auf
-//!   Schwarz, feines Raster mit Skala am Rand, Mittelachsen, Diagonalen und Kreise
-//!   in den Ecken. Alles 1 px breit.
+//! * **Grid** (Aufbau wie das Ausrichtungsraster): in der Screen-/Routenfarbe
+//!   auf Schwarz (Standard Weiß), feines Raster mit Skala am Rand, Mittelachsen,
+//!   Diagonalen und Kreise in den Ecken. Alles 1 px breit.
 //! * **Solid Color**: Fläche in der Screen-Farbe.
 //! * **Color Bars**: SMPTE-Balken.
 //! * **LED Wall**: nummerierte Kacheln und Pixelskala.
@@ -19,7 +19,7 @@
 //! Anzeigen angewendet. Texte nutzen die Ubuntu-Schrift, die egui mitbringt.
 //!
 //! **Wasserzeichen:** Die Kuh aus `kuh.svg` (einmalig gerastert, siehe
-//! [`super::kuh_mask`]) liegt in der Screen-/Routenfarbe mit 12 % Deckkraft
+//! [`super::kuh_mask`]) liegt in der Screen-/Routenfarbe mit 25 % Deckkraft
 //! **hinter** dem Grid – Reihenfolge: Hintergrund → Kuh → Grid-Linien/Kreis →
 //! Beschriftung. Im normalen Bild (ohne Testbild/Grid) erscheint keine Kuh.
 //!
@@ -36,8 +36,8 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use super::kuh_mask::kuh_mask;
 use crate::core::{TestPatternKind, TestPatternSpec};
 
-/// Deckkraft des Kuh-Wasserzeichens (dezent, ~12 %).
-const WATERMARK_STRENGTH: f32 = 0.12;
+/// Deckkraft des Kuh-Wasserzeichens (25 %, gut sichtbar hinter dem Grid).
+const WATERMARK_STRENGTH: f32 = 0.25;
 
 /// Größe der Kuh relativ zur kürzeren Canvas-Kante (~55 %).
 const WATERMARK_REL_SIZE: f32 = 0.55;
@@ -112,29 +112,26 @@ fn draw_text(
     }
 }
 
-/// Raster-Overlay für **eine Region** im Route-Bild („Region Grid“):
-/// feines Raster + Beschriftung, nur über dem Bereich dieser Region – die
-/// Region füllt den Route-Raster, also über das ganze Bild. Andere Regionen
-/// auf anderen Routen bleiben unberührt. Mit Kuh-Wasserzeichen in der
-/// Routenfarbe, hinter dem Grid (Stage-Grid ist weiß → Kuh weiß).
+/// Grid für **eine Region** bzw. die ganze Stage („Region Grid“, Footer-Grid):
+/// exakt dasselbe Bild wie das Grid-Testbild einer Route – Raster, Diagonalen,
+/// Eck- und Mittelkreis, Skala, Rahmen, Beschriftung, Kuh dahinter – nur mit
+/// eigenem Text und eigener Farbe (Stage-Grid: Weiß).
 pub fn draw_region_grid(rgba: &mut [u8], width: u32, height: u32, label: &str, color: [u8; 3]) {
-    let (w, h) = (width.max(1) as usize, height.max(1) as usize);
-    assert_eq!(
-        rgba.len(),
-        w * h * 4,
-        "rgba buffer must match width*height*4"
-    );
-    draw_solid_color(rgba, w, h, [0, 0, 0]);
-    draw_logo(rgba, w, h, color, WATERMARK_STRENGTH);
-    let (dim, major, diag, axis, scale) = grid_shades_of(color);
-    grid_lines(rgba, w, h, dim, major, diag, axis, scale);
-    draw_label(rgba, w, h, label);
-    draw_frame(rgba, w, h, color);
+    let spec = TestPatternSpec {
+        label: label.to_string(),
+        width,
+        height,
+        kind: TestPatternKind::Grid,
+        color,
+        index: 0,
+        checker_size: 64,
+    };
+    draw_test_pattern(rgba, width, height, &spec);
 }
 
 /// Zeichnet das Testbild vollständig in `rgba` (Größe `width`×`height`,
 /// Row-Major, 4 Bytes/Pixel). Reihenfolge: Hintergrund → Kuh-Wasserzeichen
-/// (12 %, Screen-Farbe) → Grid-Linien/Kreis → Beschriftung → Rand.
+/// (Screen-Farbe) → Grid-Linien/Kreis → Beschriftung → Rand.
 pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPatternSpec) {
     let (w, h) = (width.max(1) as usize, height.max(1) as usize);
     assert_eq!(
@@ -151,9 +148,10 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
         TestPatternKind::LedWall => draw_led_wall(rgba, w, h, spec),
     }
     // 2) Kuh-Wasserzeichen hinter Grid/Linien. Auf Solid Color in derselben
-    //    Farbe leicht aufgehellt, sonst wäre die Kuh unsichtbar.
+    //    Farbe leicht aufgehellt (helle Farben: abgedunkelt), sonst wäre die
+    //    Kuh unsichtbar.
     let logo_color = match spec.kind {
-        TestPatternKind::SolidColor => lighten(spec.color, 0.30),
+        TestPatternKind::SolidColor => contrast_tint(spec.color, 0.30),
         _ => spec.color,
     };
     draw_logo(rgba, w, h, logo_color, WATERMARK_STRENGTH);
@@ -174,19 +172,29 @@ pub fn draw_test_pattern(rgba: &mut [u8], width: u32, height: u32, spec: &TestPa
         _ => {}
     }
     // 4) Kreis, Beschriftung und Rand ganz oben (lesbar auf jedem Grund).
-    draw_circle(rgba, w, h);
+    //    Grid: Kreis und Rand in der Screen-/Routenfarbe (Weiß = klassisches
+    //    Testbild); sonst weiß, damit sie auf jeder Fläche sichtbar bleiben.
+    let accent = accent_color(spec);
+    draw_circle(rgba, w, h, accent);
     draw_label(rgba, w, h, &spec.label);
-    draw_frame(rgba, w, h, [255; 3]);
+    draw_frame(rgba, w, h, accent);
 }
 
-/// Mischt `color` Richtung Weiß (Kuh auf Solid Color in derselben Farbe).
-fn lighten(color: [u8; 3], f: f32) -> [u8; 3] {
+/// Farbe von Mittelkreis und Rand: beim Grid die Screen-/Routenfarbe, sonst Weiß.
+fn accent_color(spec: &TestPatternSpec) -> [u8; 3] {
+    match spec.kind {
+        TestPatternKind::Grid => spec.color,
+        _ => [255; 3],
+    }
+}
+
+/// Mischt `color` um `f` Richtung Weiß, bei hellen Farben Richtung Schwarz
+/// (Kuh auf Solid Color in derselben Farbe – Weiß aufgehellt bliebe Weiß).
+fn contrast_tint(color: [u8; 3], f: f32) -> [u8; 3] {
     let f = f.clamp(0.0, 1.0);
-    [
-        (color[0] as f32 + (255.0 - color[0] as f32) * f) as u8,
-        (color[1] as f32 + (255.0 - color[1] as f32) * f) as u8,
-        (color[2] as f32 + (255.0 - color[2] as f32) * f) as u8,
-    ]
+    let luma = 0.2126 * color[0] as f32 + 0.7152 * color[1] as f32 + 0.0722 * color[2] as f32;
+    let target = if luma > 160.0 { 0.0 } else { 255.0 };
+    color.map(|c| (c as f32 + (target - c as f32) * f).round() as u8)
 }
 
 /// Zeichnet die Kuh als Wasserzeichen: zentriert, `WATERMARK_REL_SIZE` der
@@ -582,7 +590,7 @@ fn grid_lines(
             (radius, bottom),
             (right, bottom),
         ] {
-            draw_circle_at(rgba, w, h, x, y, radius);
+            draw_circle_at(rgba, w, h, x, y, radius, scale);
         }
     }
 }
@@ -607,23 +615,32 @@ fn draw_frame(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
 }
 
 /// 1 px breiter Kreis in der Mitte, kantengeglättet und immer rund.
-fn draw_circle(rgba: &mut [u8], w: usize, h: usize) {
+fn draw_circle(rgba: &mut [u8], w: usize, h: usize, color: [u8; 3]) {
     // Pixelmitten: Der Mittelpunkt liegt bei gerader Größe zwischen zwei Pixeln.
     let (cx, cy) = ((w as f32 - 1.0) / 2.0, (h as f32 - 1.0) / 2.0);
     let radius = (w.min(h) as f32 - 1.0) / 2.0 - 1.0;
     if radius >= 4.0 {
-        draw_circle_at(rgba, w, h, cx, cy, radius);
+        draw_circle_at(rgba, w, h, cx, cy, radius, color);
     }
 }
 
-/// Kreis um (`cx`, `cy`). Der Abstand wird für jedes Pixel exakt berechnet.
-fn draw_circle_at(rgba: &mut [u8], w: usize, h: usize, cx: f32, cy: f32, radius: f32) {
+/// Kreis um (`cx`, `cy`) in `color`. Der Abstand wird für jedes Pixel exakt
+/// berechnet.
+fn draw_circle_at(
+    rgba: &mut [u8],
+    w: usize,
+    h: usize,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    color: [u8; 3],
+) {
     let mut blend = |x: usize, y: usize| {
         let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
         let coverage = (1.0 - (d - radius).abs()).clamp(0.0, 1.0);
         let i = (y * w + x) * 4;
-        for c in &mut rgba[i..i + 3] {
-            *c = (f32::from(*c) * (1.0 - coverage) + 255.0 * coverage) as u8;
+        for (c, target) in rgba[i..i + 3].iter_mut().zip(color) {
+            *c = (f32::from(*c) * (1.0 - coverage) + f32::from(target) * coverage) as u8;
         }
         rgba[i + 3] = 255;
     };
@@ -727,7 +744,7 @@ mod tests {
             (801, 601),
         ] {
             let mut rgba = vec![0u8; w * h * 4];
-            draw_circle(&mut rgba, w, h);
+            draw_circle(&mut rgba, w, h, [255; 3]);
             let lit: Vec<(usize, usize)> = (0..h)
                 .flat_map(|y| (0..w).map(move |x| (x, y)))
                 .filter(|(x, y)| rgba[(y * w + x) * 4] > 127)
@@ -1107,7 +1124,7 @@ mod watermark_tests {
         // Baseline ohne Wasserzeichen: Muster + Kreis + Label + Rand (alles außer Kuh).
         let mut plain = vec![0u8; w * h * 4];
         super::draw_solid_color(&mut plain, w, h, spec.color);
-        super::draw_circle(&mut plain, w, h);
+        super::draw_circle(&mut plain, w, h, [255; 3]);
         super::draw_label(&mut plain, w, h, &spec.label);
         super::draw_frame(&mut plain, w, h, [255; 3]);
         draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
@@ -1127,7 +1144,7 @@ mod watermark_tests {
             }
         }
         assert!(
-            max_diff > 0 && max_diff < 200,
+            max_diff > 0 && max_diff < 250,
             "Wasserzeichen soll dezent sichtbar sein, max_diff={max_diff}"
         );
         // Ecke (außerhalb der Kuh): bleibt die Solid-Color-Farbe.
@@ -1165,9 +1182,10 @@ mod watermark_tests {
                 super::draw_pixel_scale(&mut rgba, w, h, cell, (255, 255, 255));
             }
         }
-        super::draw_circle(&mut rgba, w, h);
+        let accent = super::accent_color(spec);
+        super::draw_circle(&mut rgba, w, h, accent);
         super::draw_label(&mut rgba, w, h, &spec.label);
-        super::draw_frame(&mut rgba, w, h, [255; 3]);
+        super::draw_frame(&mut rgba, w, h, accent);
         rgba
     }
 
@@ -1184,7 +1202,7 @@ mod watermark_tests {
         draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
         let plain = render_without_watermark(&spec, w, h);
         // Kuh in Layerfarbe: Abweichung nur im R-Kanal gegen schwarzen Grund
-        // (12 % von 255 ≈ 30).
+        // (25 % von 255 ≈ 64).
         let mut found = false;
         for y in 100..200 {
             for x in 120..278 {
@@ -1193,8 +1211,8 @@ mod watermark_tests {
                 if p != b {
                     assert_eq!((p[1], p[2]), (b[1], b[2]), "nur R-Kanal: {p:?} vs {b:?}");
                     assert!(
-                        p[0] > b[0] && p[0] <= 40,
-                        "Deckkraft ~12 % von 255: {p:?} vs {b:?}"
+                        p[0] > b[0] && p[0] <= 80,
+                        "Deckkraft ~25 % von 255: {p:?} vs {b:?}"
                     );
                     found = true;
                 }
@@ -1214,22 +1232,56 @@ mod watermark_tests {
     }
 
     #[test]
+    fn grid_circles_use_route_color() {
+        let (w, h) = (400usize, 300usize);
+        let spec = spec_with_kind(TestPatternKind::Grid, [255, 0, 0]);
+        let mut rgba = vec![0u8; w * h * 4];
+        draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
+        // Mittelkreis: Mitte (199.5, 149.5), Radius 148.5 → rechts bei x≈348.
+        let p = px4(&rgba, w, 348, 149);
+        assert!(
+            p[0] > 200 && p[1] < 60 && p[2] < 60,
+            "Mittelkreis rot: {p:?}"
+        );
+        // Eckkreis oben links: Mitte (50, 50), Radius 50 → oben bei (50, 0..1).
+        let p = px4(&rgba, w, 100, 50);
+        assert!(p[0] > 200 && p[1] < 60 && p[2] < 60, "Eckkreis rot: {p:?}");
+    }
+
+    #[test]
+    fn region_grid_is_the_same_picture_as_the_grid_test_pattern() {
+        let (w, h) = (400usize, 300usize);
+        let spec = TestPatternSpec {
+            label: "A: X".to_string(),
+            ..spec_with_kind(TestPatternKind::Grid, [0, 128, 255])
+        };
+        let mut pattern = vec![0u8; w * h * 4];
+        draw_test_pattern(&mut pattern, w as u32, h as u32, &spec);
+        let mut region = vec![0u8; w * h * 4];
+        super::draw_region_grid(&mut region, w as u32, h as u32, "A: X", [0, 128, 255]);
+        assert!(
+            pattern == region,
+            "ein Testbild für Route, Region und Stage"
+        );
+    }
+
+    #[test]
     fn region_grid_watermark_in_route_color() {
         let (w, h) = (200usize, 100usize);
         let mut rgba = vec![0u8; w * h * 4];
         super::draw_region_grid(&mut rgba, w as u32, h as u32, "A: X", [0, 255, 0]);
         // Kuh-Rechteck: 55 % von 100 = 55 px breit, zentriert → x 72..127, y 32..67.
-        // Volle Kuh innen: 12 % von 255 ≈ 30 im G-Kanal, R/B = 0.
+        // Volle Kuh innen: 25 % von 255 ≈ 64 im G-Kanal, R/B = 0.
         let mut found = false;
         for y in 34..65 {
             for x in 74..125 {
                 let p = px4(&rgba, w, x, y);
-                if p[0] == 0 && p[2] == 0 && (25..=35).contains(&p[1]) {
+                if p[0] == 0 && p[2] == 0 && (55..=75).contains(&p[1]) {
                     found = true;
                 }
             }
         }
-        assert!(found, "Kuh in Routenfarbe (12 % Grün auf Schwarz ≈ 30)");
+        assert!(found, "Kuh in Routenfarbe (25 % Grün auf Schwarz ≈ 64)");
         // Rahmen bleibt Routenfarbe.
         assert_eq!(px4(&rgba, w, 0, 0), [0, 255, 0, 255]);
     }
@@ -1253,6 +1305,24 @@ mod watermark_tests {
         assert!(found, "Kuh auf Solid Color aufgehellt (sichtbar)");
         // Ecke außerhalb der Kuh: reine Screen-Farbe.
         assert_eq!(px4(&rgba, w, 5, 5), [200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn solid_white_watermark_is_darkened_so_it_stays_visible() {
+        let (w, h) = (400usize, 300usize);
+        let spec = spec_with_kind(TestPatternKind::SolidColor, [255, 255, 255]);
+        let mut rgba = vec![0u8; w * h * 4];
+        draw_test_pattern(&mut rgba, w as u32, h as u32, &spec);
+        let plain = render_without_watermark(&spec, w, h);
+        // Kuh abgedunkelt: im Kuh-Rechteck dunkler als das Muster ohne Kuh.
+        let darker = (100..200)
+            .flat_map(|y| (120..278).map(move |x| (x, y)))
+            .any(|(x, y)| {
+                let (p, b) = (px4(&rgba, w, x, y), px4(&plain, w, x, y));
+                p[0] < b[0] && p[0] == p[1] && p[1] == p[2]
+            });
+        assert!(darker, "Kuh auf Weiß abgedunkelt (sichtbar)");
+        assert_eq!(px4(&rgba, w, 5, 5), [255, 255, 255, 255]);
     }
 
     #[test]
@@ -1310,13 +1380,14 @@ mod dump {
         };
         draw_test_pattern(&mut rgba, w, h, &spec);
         let img = image::RgbaImage::from_raw(w, h, rgba).unwrap();
-        img.save("/tmp/grid_test.png").unwrap();
+        img.save(std::env::temp_dir().join("grid_test.png"))
+            .unwrap();
         // Region-Grid-Variante
         let mut rgba2 = vec![0u8; (w * h * 4) as usize];
         draw_region_grid(&mut rgba2, w, h, "A: Route X", [255, 80, 0]);
         image::RgbaImage::from_raw(w, h, rgba2)
             .unwrap()
-            .save("/tmp/region_grid.png")
+            .save(std::env::temp_dir().join("region_grid.png"))
             .unwrap();
     }
 }

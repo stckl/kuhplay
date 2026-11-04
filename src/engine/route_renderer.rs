@@ -325,6 +325,92 @@ pub fn render_route(
     out
 }
 
+/// Vorschau einer Stage (Preview-Fenster) in `out_w`×`out_h` Pixeln: das
+/// Stage-Bild verkleinert, darüber dieselben Testbilder wie auf den
+/// Ausgängen – Stage-Grid (Footer, Weiß) über die ganze Stage, Region-Grid
+/// bzw. Route-Testbild (überdeckt den Inhalt) in der jeweiligen Region.
+/// Gezeichnet wird in Vorschau-Pixeln, damit die 1-px-Linien nicht beim
+/// Verkleinern verloren gehen.
+pub fn stage_preview(
+    stage: &Stage,
+    frame: &VideoFrame,
+    routes: &[OutputRoute],
+    out_w: u32,
+    out_h: u32,
+) -> VideoFrame {
+    let (out_w, out_h) = (out_w.max(1), out_h.max(1));
+    let mut out = match image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba.clone()) {
+        Some(img) => {
+            let small =
+                image::imageops::resize(&img, out_w, out_h, image::imageops::FilterType::Triangle);
+            VideoFrame::new(out_w, out_h, small.into_raw())
+        }
+        None => VideoFrame::black(out_w, out_h),
+    };
+    if stage.grid {
+        super::pattern::draw_region_grid(&mut out.rgba, out_w, out_h, &stage.name, [255; 3]);
+    }
+    let (sx, sy) = (
+        f(out_w) / stage.geometry.width.max(1.0),
+        f(out_h) / stage.geometry.height.max(1.0),
+    );
+    let letters: HashMap<uuid::Uuid, String> = regions_in_reading_order(stage.regions.iter())
+        .iter()
+        .enumerate()
+        .map(|(i, region)| (region.id, region_letter(i)))
+        .collect();
+    for region in &stage.regions {
+        let Some(route) = region
+            .route
+            .and_then(|id| routes.iter().find(|r| r.id == id))
+        else {
+            continue;
+        };
+        if !route.test_pattern && !region.grid {
+            continue;
+        }
+        // Region in Vorschau-Pixeln (am Bildrand abgeschnitten).
+        let x0 = (region.x * sx).round().clamp(0.0, f(out_w)) as u32;
+        let y0 = (region.y * sy).round().clamp(0.0, f(out_h)) as u32;
+        let x1 = ((region.x + region.width) * sx)
+            .round()
+            .clamp(0.0, f(out_w)) as u32;
+        let y1 = ((region.y + region.height) * sy)
+            .round()
+            .clamp(0.0, f(out_h)) as u32;
+        let (rw, rh) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
+        if rw < 2 || rh < 2 {
+            continue;
+        }
+        let mut tile = vec![0u8; (rw * rh * 4) as usize];
+        if route.test_pattern {
+            let spec = crate::core::TestPatternSpec {
+                label: route.label(),
+                width: rw,
+                height: rh,
+                kind: route.test_pattern_kind,
+                color: route.color,
+                index: 0,
+                checker_size: route.checker_size,
+            };
+            super::pattern::draw_test_pattern(&mut tile, rw, rh, &spec);
+        } else {
+            let label = format!(
+                "{}: {}",
+                letters.get(&region.id).cloned().unwrap_or_default(),
+                route.name
+            );
+            super::pattern::draw_region_grid(&mut tile, rw, rh, &label, route.color);
+        }
+        let row = (rw * 4) as usize;
+        for y in 0..rh as usize {
+            let dst = ((y0 as usize + y) * out_w as usize + x0 as usize) * 4;
+            out.rgba[dst..dst + row].copy_from_slice(&tile[y * row..(y + 1) * row]);
+        }
+    }
+    out
+}
+
 /// Bildet ein Route-Bild auf das Device ab: **Drehung**, dann
 /// **Spiegelung** (Rückprojektion), dann **Skalierung** (Center/Fit/
 /// Stretch/Fill, Arbeitsauftrag Phase 2). Hintergrund außerhalb der
@@ -831,15 +917,55 @@ mod tests {
     }
 
     #[test]
+    fn stage_preview_shows_the_same_test_pattern_as_the_output() {
+        let mut route = OutputRoute::new("Display 1", 1920, 1080);
+        route.test_pattern = true;
+        route.color = [255, 80, 0];
+        let mut region = Region::full_stage(1920.0, 1080.0);
+        region.route = Some(route.id);
+        let stage = make_stage("S", 0, vec![region]);
+        let frame = solid(1920, 1080, [255, 0, 0]);
+        let preview = stage_preview(&stage, &frame, std::slice::from_ref(&route), 960, 540);
+        let mut expected = vec![0u8; 960 * 540 * 4];
+        let spec = crate::core::TestPatternSpec {
+            label: route.label(),
+            width: 960,
+            height: 540,
+            kind: route.test_pattern_kind,
+            color: route.color,
+            index: 0,
+            checker_size: route.checker_size,
+        };
+        super::super::pattern::draw_test_pattern(&mut expected, 960, 540, &spec);
+        assert!(preview.rgba == expected, "Vorschau = Testbild des Ausgangs");
+    }
+
+    #[test]
+    fn stage_preview_draws_footer_grid_with_label() {
+        let stage = {
+            let mut s = make_stage("Stage 1", 0, Vec::new());
+            s.grid = true;
+            s
+        };
+        let frame = solid(1920, 1080, [0, 0, 0]);
+        let preview = stage_preview(&stage, &frame, &[], 960, 540);
+        let mut expected = vec![0u8; 960 * 540 * 4];
+        super::super::pattern::draw_region_grid(&mut expected, 960, 540, "Stage 1", [255; 3]);
+        assert!(
+            preview.rgba == expected,
+            "Footer-Grid = volles Testbild in Weiß"
+        );
+    }
+
+    #[test]
     fn route_test_pattern_stays_round_on_differently_shaped_stage() {
         // Route 800×600 (4:3), Stage 1920×1080 (16:9): Das Testbild wird
         // im Raster der Route gezeichnet, der Kreis bleibt rund.
         let mut route = OutputRoute::new("T", 800, 600);
         route.test_pattern = true;
-        // Grid liegt in Routenfarbe (Block W) – hier grün, damit nur der weiße
-        // Kreis die Helligkeitssuche trifft und das rote Stage-Bild als
-        // „Inhalt überdeckt“ erkennbar bleibt.
-        route.color = [0, 255, 0];
+        // Grid samt Kreisen liegt in Routenfarbe – hier Weiß (klassisches
+        // Testbild): Nur der Kreis in voller Farbe trifft die Helligkeitssuche,
+        // die Rasterlinien bleiben gedimmt.
         let mut region = Region::full_stage(1920.0, 1080.0);
         region.route = Some(route.id);
         let stage = make_stage("S", 0, vec![region]);
@@ -859,7 +985,7 @@ mod tests {
         // gleich weit entfernt sein (±2 px) – rund, nicht oval.
         let bright = |x: u32, y: u32| {
             let i = (y as usize * 800 + x as usize) * 4;
-            out.rgba[i] > 240 && out.rgba[i + 1] > 240
+            out.rgba[i] > 240 && out.rgba[i + 1] > 240 && out.rgba[i + 2] > 240
         };
         // Zeile 299 (nicht auf einer Rasterlinie): hellster Kreis-Punkt.
         // Bildrand (immer weiß) und Skalenstriche ausschließen: bis

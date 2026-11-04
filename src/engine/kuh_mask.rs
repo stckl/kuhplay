@@ -1,10 +1,10 @@
 //! Kuh-Wasserzeichen als Alpha-Maske – Quelle ist `kuh.svg` (potrace-Ausgabe:
-//! genau ein `<path>` aus M/c/l/Z im viewBox-Koordinatensystem).
+//! viele `<path>`-Elemente aus M/c/l/Z im viewBox-Koordinatensystem).
 //!
 //! Die Maske wird **einmalig zur Laufzeit** gerastert und gecacht ([`OnceLock`])
 //! – nicht je Bild, und ohne externes SVG-Crate: potrace-Pfade bestehen nur
 //! aus Geraden und kubischen Bézier-Segmenten, die hier flach gerechnet und
-//! per Scanline (even-odd, 2×2-Supersampling) gefüllt werden.
+//! per Scanline (Nonzero-Regel, 2×2-Supersampling) gefüllt werden.
 
 use std::sync::OnceLock;
 
@@ -344,7 +344,7 @@ fn path_to_segments(d: &str) -> Vec<[f32; 4]> {
 }
 
 /// Rastert das SVG einmalig in eine Alpha-Maske (viewBox-Auflösung,
-/// 2×2-Supersampling, Scanline even-odd mit Buckets pro Subpixel-Zeile).
+/// 2×2-Supersampling, Scanline mit Nonzero-Regel und Buckets pro Subpixel-Zeile).
 fn rasterize(svg: &str) -> KuhMask {
     let svg_start = svg.find("<svg").expect("kuh.svg: <svg> fehlt");
     let svg_end = svg[svg_start..]
@@ -368,15 +368,22 @@ fn rasterize(svg: &str) -> KuhMask {
         .map(|_| parse_transform(attr(g_tag, "transform").unwrap_or("")))
         .unwrap_or((0.0, 0.0, 1.0, 1.0));
 
-    let p_start = svg.find("<path").expect("kuh.svg: <path> fehlt");
-    let p_end = svg[p_start..]
-        .find('>')
-        .map(|e| p_start + e + 1)
-        .unwrap_or(svg.len());
-    let d = attr(&svg[p_start..p_end], "d").expect("kuh.svg: d-Attribut fehlt");
+    // potrace schreibt viele `<path>`-Elemente (kuh.svg: über 500) – alle lesen.
+    let mut path_segs: Vec<[f32; 4]> = Vec::new();
+    let mut rest = svg;
+    while let Some(p_start) = rest.find("<path") {
+        let p_end = rest[p_start..]
+            .find('>')
+            .map(|e| p_start + e + 1)
+            .unwrap_or(rest.len());
+        let d = attr(&rest[p_start..p_end], "d").expect("kuh.svg: d-Attribut fehlt");
+        path_segs.extend(path_to_segments(d));
+        rest = &rest[p_end..];
+    }
+    assert!(!path_segs.is_empty(), "kuh.svg: <path> fehlt");
 
     // In Zielpixel transformieren (lineare Transformation – Bézier bleibt Bézier).
-    let segs: Vec<[f32; 4]> = path_to_segments(d)
+    let segs: Vec<[f32; 4]> = path_segs
         .iter()
         .map(|s| {
             [
@@ -409,17 +416,32 @@ fn rasterize(svg: &str) -> KuhMask {
     for py in 0..hu {
         for syi in 0..SS {
             let y = py as f32 + (syi as f32 + 0.5) / SS as f32;
-            let mut xs: Vec<f32> = Vec::new();
+            // Schnittpunkte mit Laufrichtung (+1 abwärts, -1 aufwärts).
+            let mut xs: Vec<(f32, i32)> = Vec::new();
             for &si in &buckets[py * SS + syi] {
                 let s = &segs[si as usize];
                 let (y0, y1) = (s[1], s[3]);
                 if (y0 <= y && y < y1) || (y1 <= y && y < y0) {
-                    xs.push(s[0] + (y - y0) * (s[2] - s[0]) / (y1 - y0));
+                    let dir = if y1 > y0 { 1 } else { -1 };
+                    xs.push((s[0] + (y - y0) * (s[2] - s[0]) / (y1 - y0), dir));
                 }
             }
-            xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            for pair in xs.chunks_exact(2) {
-                let (xa, xb) = (pair[0], pair[1]);
+            xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            // Nonzero-Regel (SVG-Standard): gefüllt, solange die Windungszahl ≠ 0.
+            let mut spans: Vec<(f32, f32)> = Vec::new();
+            let mut winding = 0;
+            for &(x, dir) in &xs {
+                let was_inside = winding != 0;
+                winding += dir;
+                if !was_inside && winding != 0 {
+                    spans.push((x, x));
+                } else if was_inside && winding == 0 {
+                    if let Some(span) = spans.last_mut() {
+                        span.1 = x;
+                    }
+                }
+            }
+            for &(xa, xb) in &spans {
                 let px0 = (xa.floor() as i64 - 1).max(0) as usize;
                 let px1 = ((xb.ceil() as i64 + 1).max(0) as usize).min(wu);
                 for px in px0..px1 {
@@ -460,6 +482,18 @@ mod tests {
         // Irgendwo in der Mittelzeile ein voll deckendes Pixel.
         let row = &m.alpha[404 * 1280..405 * 1280];
         assert!(row.contains(&255), "Mittelzeile enthält deckende Pixel");
+    }
+
+    #[test]
+    fn alle_pfade_werden_gerastert_nicht_nur_der_erste() {
+        // kuh.svg hat über 500 <path>-Elemente; der erste ist nur der Kopf.
+        assert!(KUH_SVG.matches("<path").count() > 100);
+        let m = kuh_mask();
+        // Schulter und Bauch (dunkel im Original, nicht im ersten Pfad).
+        for (x, y) in [(368, 320), (700, 420)] {
+            let a = m.alpha[y * 1280 + x];
+            assert!(a > 200, "Körperpunkt ({x},{y}) gefüllt: alpha={a}");
+        }
     }
 
     #[test]
