@@ -65,6 +65,12 @@ fn main() -> eframe::Result<()> {
             } else {
                 "real (cpal/ffmpeg)".to_string()
             };
+            // `kuhplay <show.kuhplay>`: Show direkt beim Start öffnen.
+            if let Some(path) = std::env::args_os().nth(1) {
+                if let Err(err) = app.load_show(std::path::Path::new(&path)) {
+                    tracing::warn!(%err, ?path, "Show beim Start nicht geladen");
+                }
+            }
             app.apply_startup_output();
             #[cfg(target_os = "macos")]
             app.install_native_menu();

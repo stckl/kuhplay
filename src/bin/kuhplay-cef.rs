@@ -466,7 +466,9 @@ fn main() {
             let _ = writeln!(so, "{line}");
             let _ = so.flush();
         }
-        match cmd_rx.recv_timeout(Duration::from_millis(4)) {
+        // Kurz warten: CEF bekommt so spätestens jede Millisekunde Rechenzeit
+        // (4 ms ließen bei Animationen einzelne Bilder ausfallen).
+        match cmd_rx.recv_timeout(Duration::from_millis(1)) {
             Ok(cmd) => {
                 if cmd.get("close").and_then(|v| v.as_bool()) == Some(true) {
                     running = false;

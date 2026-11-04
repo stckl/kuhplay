@@ -21,7 +21,8 @@ use crate::core::error::{ShowError, ShowResult};
 pub enum HtmlSource {
     /// Lokale HTML/JS/CSS-Datei (Pfad relativ zur Show oder absolut).
     File(PathBuf),
-    /// URL (http/https) – wird von der WebView geladen.
+    /// URL (http/https, oder `file://` für lokale Seiten mit Query-Parametern
+    /// wie `index.html?view=overlay`) – wird vom Renderer geladen.
     Url(String),
     /// Inline-HTML (kein Dateizugriff; ideal für Lower-Thirds/Test-Cues).
     Inline(String),
@@ -103,9 +104,12 @@ impl HtmlSource {
                 Ok(())
             }
             HtmlSource::Url(url) => {
-                if !(url.starts_with("http://") || url.starts_with("https://")) {
+                if !["http://", "https://", "file://"]
+                    .iter()
+                    .any(|scheme| url.starts_with(scheme))
+                {
                     return Err(ShowError::InvalidParameter(format!(
-                        "invalid html url (http/https required): {url}"
+                        "invalid html url (http/https/file required): {url}"
                     )));
                 }
                 Ok(())

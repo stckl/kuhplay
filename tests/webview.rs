@@ -381,11 +381,27 @@ fn engine_requests_only_one_snapshot_until_the_answer_arrives() {
             post_wait: Duration::ZERO,
         })
         .unwrap();
+    let log_path = dir.path().join("requests.log");
+    let snapshots = || {
+        std::fs::read_to_string(&log_path)
+            .unwrap_or_default()
+            .matches("\"snapshot\"")
+            .count()
+    };
+    // Erste Anfrage abwarten (nach dem Load des Fakes – auf langsamen
+    // CI-Maschinen kann das dauern) …
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while snapshots() == 0 && std::time::Instant::now() < deadline {
+        engine.tick();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(snapshots(), 1, "erste Snapshot-Anfrage");
+    // … dann darf bis zum Timeout (2 s) keine zweite folgen.
     for _ in 0..40 {
         engine.tick();
         std::thread::sleep(Duration::from_millis(20));
     }
-    let log = std::fs::read_to_string(dir.path().join("requests.log")).unwrap();
+    let log = std::fs::read_to_string(&log_path).unwrap();
     assert_eq!(log.matches("\"snapshot\"").count(), 1, "{log}");
 }
 

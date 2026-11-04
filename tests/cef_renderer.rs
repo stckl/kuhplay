@@ -122,8 +122,9 @@ fn html_cue_renders_with_alpha_and_animation_through_the_engine() {
     }
     let fps = changes as f64 / start.elapsed().as_secs_f64();
     println!("CEF über die Engine: {fps:.1} Bilder/s bei 1280x720");
-    // Release: volle CEF-Bildrate (60); Debug: Pixel-Umrechnung unoptimiert.
-    let min = if cfg!(debug_assertions) { 15.0 } else { 50.0 };
+    // Release: volle CEF-Bildrate (60). Debug: Pixel-Umrechnung unoptimiert,
+    // auf CI-VMs ~9 fps – hier zählt nur, dass die Animation weiterläuft.
+    let min = if cfg!(debug_assertions) { 5.0 } else { 50.0 };
     assert!(fps >= min, "mindestens {min} Bilder/s, waren {fps:.1}");
 
     // Stop: Renderer beendet, Shared-Memory-Datei aufgeräumt.
