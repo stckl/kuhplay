@@ -228,3 +228,31 @@ fn triggers_serialize_roundtrip() {
         "Trigger über Show-Datei persistiert"
     );
 }
+
+/// Uhrzeit erreicht = GO auf den Cue: Playhead springt hin und rückt weiter,
+/// auch wenn der Cue schon gespielt hat.
+#[test]
+fn clock_trigger_acts_like_go_on_its_cue() {
+    let mut app = app_with_cue(vec![CueTrigger::Clock(ClockTrigger::daily(8, 0, 0))]);
+    let mut before = Cue::new("1", "davor", CueType::Wait);
+    before.duration = Duration::from_millis(50);
+    app.carts.active_mut().insert(0, before);
+    app.carts
+        .active_mut()
+        .add(Cue::new("6", "danach", CueType::Wait));
+    app.carts.active_mut().cues_mut()[1].status = CueStatus::Completed;
+    app.fire_clock_triggers_at(at(2026, 11, 5, 7, 59, 59));
+    app.fire_clock_triggers_at(at(2026, 11, 5, 8, 0, 0));
+    let list = app.carts.active();
+    assert_eq!(
+        list.cues()[1].status,
+        CueStatus::Playing,
+        "Cue mit Uhr-Trigger läuft"
+    );
+    assert_eq!(
+        list.cues()[0].status,
+        CueStatus::Standby,
+        "Cue davor bleibt"
+    );
+    assert_eq!(list.cursor(), 2, "Playhead rückt wie bei GO weiter");
+}

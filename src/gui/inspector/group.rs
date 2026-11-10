@@ -51,6 +51,18 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
             .collect(),
         None => Vec::new(),
     };
+    // Gesamtlaufzeit (None = unbekannt bzw. endlos) und Restzeit im Lauf.
+    let (runtime, remaining) = match app.carts.selected() {
+        Some(group) if group.cue_type == CueType::Group => (
+            app.group_runtime(group),
+            group
+                .status
+                .is_active()
+                .then(|| app.remaining_of(group))
+                .flatten(),
+        ),
+        _ => (None, None),
+    };
     let Some(cue) = app.carts.selected_mut() else {
         ui.label(RichText::new("No cue selected").weak());
         return;
@@ -77,6 +89,34 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
 
         theme::field_label(ui, "");
         ui.label(RichText::new(mode_help(cue.group_mode)).color(theme::palette::TEXT_DIM));
+        ui.end_row();
+
+        theme::field_label(ui, "Total");
+        let endless = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
+            && cue.loop_mode == LoopMode::Infinite;
+        let total = match runtime {
+            Some(total) => format_timecode(total),
+            None if endless => "∞ (endless)".to_string(),
+            None => "unknown – a child has no known length".to_string(),
+        };
+        let total = match remaining {
+            Some(left) => format!("{total}   (−{} left)", format_timecode(left)),
+            None => total,
+        };
+        ui.label(RichText::new(total).monospace());
+        ui.end_row();
+
+        theme::field_label(ui, "Fade");
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("In").color(theme::palette::TEXT_DIM));
+            super::time_field(ui, &mut cue.group_fade_in)
+                .on_hover_text("Fade sound and picture in when the group starts (0 = off)");
+            ui.add_space(theme::size::SPACE_MEDIUM);
+            ui.label(RichText::new("Out").color(theme::palette::TEXT_DIM));
+            super::time_field(ui, &mut cue.group_fade_out).on_hover_text(
+                "Fade sound and picture out before the group ends and when it is stopped (0 = off)",
+            );
+        });
         ui.end_row();
 
         let sequential = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle);

@@ -18,7 +18,7 @@ use std::time::Duration;
 use egui::RichText;
 use uuid::Uuid;
 
-use crate::core::{format_timecode, CueStatus, CueType, LoopMode};
+use crate::core::{format_timecode, Cue, CueStatus, CueType, GroupMode, LoopMode};
 
 use super::app::{ShowApp, SidebarTab};
 use super::icons::{self, Icon};
@@ -29,14 +29,10 @@ use super::theme::{self, palette, size};
 pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     draw_transport(ui, app);
     ui.add_space(size::SPACE_MEDIUM);
-    let holding = app
-        .carts
-        .active()
-        .cues()
-        .iter()
-        .filter(|c| !c.status.is_active() && app.is_holding(c.id))
-        .count();
-    let running = app.carts.running_count() + holding;
+    // Zeilen einmal sammeln: Tab-Zähler und Liste zeigen dasselbe
+    // (inkl. der gerade spielenden Kinder laufender Gruppen).
+    let rows = active_cue_rows(app);
+    let running = rows.len();
     theme::tab_bar(
         ui,
         &mut app.ui.sidebar_tab,
@@ -47,7 +43,7 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
     );
     match app.ui.sidebar_tab {
         SidebarTab::ListsCarts => draw_lists_carts(ui, app),
-        SidebarTab::ActiveCues => draw_active_cues(ui, app),
+        SidebarTab::ActiveCues => draw_active_cues(ui, app, &rows),
     }
 }
 
@@ -185,6 +181,10 @@ struct ActiveCueRow {
     total: Option<Duration>,
     /// Loop-Cue: Restzeit/Balken gelten für den aktuellen Durchlauf (↻).
     looping: bool,
+    /// Laufende Sequential/Shuffle-Gruppe: „eins weiter"-Button.
+    skippable: bool,
+    /// Verschachtelungstiefe (Kind einer laufenden Gruppe = 1, eingerückt).
+    depth: usize,
 }
 
 /// Gesamtlaufzeit eines laufenden Cues: eingetragene Dauer, sonst die des Mediums.
@@ -242,38 +242,61 @@ fn active_time_text(elapsed: Option<Duration>, total: Option<Duration>) -> Strin
     }
 }
 
-/// Tab „Active Cues": laufende Cues mit Einzel-Steuerung.
-fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
-    let mut rows: Vec<ActiveCueRow> = Vec::new();
-    for cue in app.carts.active().cues() {
+/// Laufende Cues des aktiven Carts; unter einer laufenden Gruppe ihre
+/// gerade aktiven Kinder (eingerückt).
+fn active_cue_rows(app: &ShowApp) -> Vec<ActiveCueRow> {
+    let mut rows = Vec::new();
+    collect_active_rows(app, app.carts.active().cues(), 0, &mut rows);
+    rows
+}
+
+fn collect_active_rows(app: &ShowApp, cues: &[Cue], depth: usize, rows: &mut Vec<ActiveCueRow>) {
+    for cue in cues {
         let holding = !cue.status.is_active() && app.is_holding(cue.id);
-        if cue.status.is_active() || holding {
-            let media = app.media_duration_of(cue);
-            let elapsed = app.elapsed_of(cue);
-            let window = cue
-                .slices
-                .is_empty()
-                .then(|| loop_window(cue.duration, media, cue.loop_mode, elapsed))
-                .flatten();
-            rows.push(ActiveCueRow {
-                holding,
-                id: cue.id,
-                number: cue.number.clone(),
-                name: cue.name.clone(),
-                cue_type: cue.cue_type,
-                status: cue.status,
-                duration: cue.duration,
-                elapsed: window.map_or(elapsed, |(_, within)| within),
-                media,
-                total: match window {
-                    Some((base, _)) => Some(base),
-                    None => planned_runtime(cue)
-                        .or_else(|| total_runtime(cue.duration, media, cue.loop_mode)),
-                },
-                looping: window.is_some(),
-            });
+        if !cue.status.is_active() && !holding {
+            continue;
+        }
+        let group = cue.cue_type == CueType::Group;
+        let media = app.media_duration_of(cue);
+        let elapsed = if group {
+            app.group_elapsed(cue)
+        } else {
+            app.elapsed_of(cue)
+        };
+        let window = (cue.slices.is_empty() && !group)
+            .then(|| loop_window(cue.duration, media, cue.loop_mode, elapsed))
+            .flatten();
+        rows.push(ActiveCueRow {
+            holding,
+            id: cue.id,
+            number: cue.number.clone(),
+            name: cue.name.clone(),
+            cue_type: cue.cue_type,
+            status: cue.status,
+            duration: cue.duration,
+            elapsed: window.map_or(elapsed, |(_, within)| within),
+            media,
+            total: match window {
+                // Gruppe: Gesamtlaufzeit (Restzeit und Balken für die ganze Gruppe).
+                _ if group => app.group_runtime(cue),
+                Some((base, _)) => Some(base),
+                None => planned_runtime(cue)
+                    .or_else(|| total_runtime(cue.duration, media, cue.loop_mode)),
+            },
+            looping: window.is_some() && !group,
+            skippable: group
+                && matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
+                && cue.status == CueStatus::Playing,
+            depth,
+        });
+        if cue.cue_type == CueType::Group {
+            collect_active_rows(app, &cue.children, depth + 1, rows);
         }
     }
+}
+
+/// Tab „Active Cues": laufende Cues mit Einzel-Steuerung.
+fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp, rows: &[ActiveCueRow]) {
     if rows.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(size::SPACE_LARGE);
@@ -281,7 +304,7 @@ fn draw_active_cues(ui: &mut egui::Ui, app: &mut ShowApp) {
         });
         return;
     }
-    for row in &rows {
+    for row in rows {
         draw_active_cue_row(ui, app, row);
     }
 }
@@ -300,6 +323,8 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         total: runtime,
         holding,
         looping,
+        skippable,
+        depth,
     } = row;
     let holding = *holding;
     let (id, cue_type, status, duration, elapsed, media, runtime) = (
@@ -322,6 +347,8 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         egui::vec2(ui.available_width(), 48.0),
         egui::Sense::click_and_drag(),
     );
+    // Kinder laufender Gruppen eingerückt unter ihrer Gruppe.
+    let rect = rect.with_min_x((rect.left() + 14.0 * *depth as f32).min(rect.right()));
     // Fortschrittsbalken im Hintergrund (über die ganze Zeilenbreite).
     ui.painter().rect_filled(rect, 5.0, palette::RAISED);
     let bar_width = rect.width() * progress;
@@ -400,9 +427,33 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         app.dispatch(commands);
     }
 
+    // Gruppe: „eins weiter" (nächstes Kind) links neben dem Stop-Button.
+    let mut right_edge = inner.right() - button.x;
+    if *skippable {
+        let mut skip_ui = child(
+            ui,
+            button_rect(right_edge - size::SPACE_SMALL - button.x / 2.0),
+            centered,
+        );
+        if icons::button(
+            &mut skip_ui,
+            Icon::SkipForward,
+            palette::TEXT_DIM,
+            button,
+            true,
+        )
+        .on_hover_text("Skip to the next cue in this group")
+        .clicked()
+        {
+            let commands = app.skip_in_group(id);
+            app.dispatch(commands);
+        }
+        right_edge -= size::SPACE_SMALL + button.x;
+    }
+
     // Name und Restzeit (docs/UI.md §5.4) je in einer Hälfte um die Mitte.
     let text_left = icon_rect.right() + size::SPACE_SMALL;
-    let text_right = (inner.right() - button.x - size::SPACE_SMALL).max(text_left);
+    let text_right = (right_edge - size::SPACE_SMALL).max(text_left);
     let name_rect = egui::Rect::from_min_max(
         egui::pos2(text_left, center_y - 18.0),
         egui::pos2(text_right, center_y),

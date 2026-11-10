@@ -46,8 +46,8 @@ use uuid::Uuid;
 
 use crate::core::{
     cue_type_for_file, default_routes_for_displays, CartManager, Cue, CueStatus, CueType,
-    DeviceRef, DisplayRefInfo, OutputRoute, Region, RouteManager, ScreenManager, ShowDocument,
-    ShowResult, Stage, StageGeometry, StageManager,
+    DeviceRef, DisplayRefInfo, GroupMode, LoopMode, OutputRoute, Region, RouteManager,
+    ScreenManager, ShowDocument, ShowResult, Stage, StageGeometry, StageManager,
 };
 use crate::engine::waveform::{Waveform, WaveformCache, WAVEFORM_BUCKETS};
 use crate::engine::{EngineCommand, EngineEvent, EngineHandle};
@@ -206,6 +206,8 @@ pub struct ShowApp {
     /// Startzeitpunkte von Cues in Pre-Wait (Countdown in der Pre-Wait-
     /// Spalte, docs/TODO-offen.md Phase 2).
     prewait_started: HashMap<Uuid, Instant>,
+    /// Gruppen, deren Fade-Out zum Ende schon läuft (nur einmal auslösen).
+    groups_fading_out: HashSet<Uuid>,
     /// Letzter gesendeter Scrub-Seek pro Cue (Zeitstempel, Fraktion) –
     /// Throttle gegen ffmpeg-Neustart-Spam beim Ziehen im Active-Cues-Balken.
     scrub_last: HashMap<Uuid, (Instant, f32)>,
@@ -603,6 +605,7 @@ impl ShowApp {
             properties_clipboard: None,
             banked: HashMap::new(),
             prewait_started: HashMap::new(),
+            groups_fading_out: HashSet::new(),
             scrub_last: HashMap::new(),
             stages,
             screens,
@@ -1059,8 +1062,10 @@ impl ShowApp {
     /// GO: nächsten armed Cue des aktiven Carts triggern, inkl.
     /// Auto-Continue-Ketten („Cue Sequences").
     pub fn go_now(&mut self) {
-        // Während Panic ausblendet, startet nichts Neues.
+        // Während Panic ausblendet, startet nichts Neues – sichtbar melden,
+        // sonst wirkt das GO einfach kaputt.
         if self.panic_deadline.is_some() {
+            self.last_error = Some("GO ignored: Panic is still fading out".to_string());
             return;
         }
         match self.carts.go_chained() {
@@ -1120,7 +1125,11 @@ impl ShowApp {
                 }
                 self.dispatch(commands);
             }
-            None => tracing::warn!("GO: no armed cue in standby"),
+            None => {
+                tracing::warn!("GO: no armed cue in standby");
+                self.last_error =
+                    Some("GO: no armed cue in Standby after the playhead".to_string());
+            }
         }
         self.remote_dirty = true;
     }
@@ -1245,6 +1254,11 @@ impl ShowApp {
     /// Stoppt einen einzelnen laufenden Cue → Commands zurückgeben.
     pub fn stop_running(&mut self, id: Uuid) -> Vec<EngineCommand> {
         self.carts.stop_running(id)
+    }
+
+    /// „Eins weiter" in einer laufenden Gruppe → Commands zurückgeben.
+    pub fn skip_in_group(&mut self, group_id: Uuid) -> Vec<EngineCommand> {
+        self.carts.skip_in_group(group_id)
     }
 
     /// Pausiert einen einzelnen laufenden Cue → Commands zurückgeben.
@@ -1754,7 +1768,9 @@ impl ShowApp {
                     problems: self.problems_of(cue),
                     warnings: super::problems::cue_warnings(cue, self),
                     loaded: self.loaded_cues.contains(&cue.id),
-                    elapsed: self.phase_elapsed_of(cue),
+                    elapsed: self
+                        .group_elapsed(cue)
+                        .or_else(|| self.phase_elapsed_of(cue)),
                     pre_wait_remaining: self.pre_wait_remaining(cue),
                     media_duration: self.listed_duration_of(cue),
                 },
@@ -1766,7 +1782,9 @@ impl ShowApp {
                         problems: self.problems_of(child),
                         warnings: super::problems::cue_warnings(child, self),
                         loaded: self.loaded_cues.contains(&child.id),
-                        elapsed: self.phase_elapsed_of(child),
+                        elapsed: self
+                            .group_elapsed(child)
+                            .or_else(|| self.phase_elapsed_of(child)),
                         pre_wait_remaining: self.pre_wait_remaining(child),
                         media_duration: self.listed_duration_of(child),
                     },
@@ -2539,6 +2557,9 @@ impl ShowApp {
 
     /// Dauer für die Cue-Liste: Bei In/Out oder Slices zählt, was wirklich läuft.
     fn listed_duration_of(&self, cue: &Cue) -> Option<Duration> {
+        if cue.cue_type == CueType::Group {
+            return self.group_runtime(cue);
+        }
         if cue.slices.is_empty() {
             return self.media_duration_of(cue);
         }
@@ -2548,6 +2569,185 @@ impl ShowApp {
                 .map(|slice| slice.duration().saturating_mul(slice.play_count.max(1)))
                 .sum(),
         )
+    }
+
+    /// Laufzeit eines Cues (ohne eigenes Pre-/Post-Wait), Gruppen als
+    /// Gesamtlaufzeit. `None`: unbekannt (Medium noch nicht geprüft, HTML/Text
+    /// ohne Dauer) oder endlos.
+    pub fn runtime_of(&self, cue: &Cue) -> Option<Duration> {
+        if cue.cue_type == CueType::Group {
+            return self.group_runtime(cue);
+        }
+        if !cue.slices.is_empty() {
+            return Some(
+                cue.slices
+                    .iter()
+                    .map(|slice| slice.duration().saturating_mul(slice.play_count.max(1)))
+                    .sum(),
+            );
+        }
+        let base = if !cue.duration.is_zero() {
+            cue.duration
+        } else {
+            match cue.cue_type {
+                CueType::Audio | CueType::Video => self.media_duration_of(cue)?,
+                CueType::Html
+                | CueType::SlideShow
+                | CueType::Text
+                | CueType::Fade
+                | CueType::Wait => return None,
+                // Sofort-Cues (Control, Netzwerk, MIDI, …).
+                _ => return Some(Duration::ZERO),
+            }
+        };
+        match cue.loop_mode {
+            LoopMode::Once => Some(base),
+            LoopMode::Count(n) => Some(base.saturating_mul(n.max(1))),
+            LoopMode::Infinite => None,
+        }
+    }
+
+    /// Gesamtlaufzeit einer Gruppe: Timeline = spätestes Ende eines Kindes,
+    /// Sequential/Shuffle = Summe der Kinder (inkl. Pre-/Post-Wait) mal
+    /// Durchgänge. `None`, wenn eine Länge unbekannt ist oder endlos.
+    pub fn group_runtime(&self, group: &Cue) -> Option<Duration> {
+        let armed = group.children.iter().filter(|c| c.is_armed);
+        match group.group_mode {
+            GroupMode::Timeline => armed
+                .map(|c| Some(c.pre_wait + self.runtime_of(c)?))
+                .try_fold(Duration::ZERO, |max, end| end.map(|e| max.max(e))),
+            GroupMode::Sequential | GroupMode::Shuffle => {
+                let pass = armed
+                    .map(|c| Some(c.pre_wait + self.runtime_of(c)? + c.post_wait))
+                    .try_fold(Duration::ZERO, |sum, d| d.map(|d| sum + d))?;
+                match group.loop_mode {
+                    LoopMode::Once => Some(pass),
+                    LoopMode::Count(n) => Some(pass.saturating_mul(n.max(1))),
+                    LoopMode::Infinite => None,
+                }
+            }
+        }
+    }
+
+    /// Restzeit eines laufenden Cues (Gruppen: bis zum Ende der Gruppe).
+    pub fn remaining_of(&self, cue: &Cue) -> Option<Duration> {
+        if cue.cue_type == CueType::Group {
+            return self.group_remaining(cue);
+        }
+        match cue.status {
+            CueStatus::Completed | CueStatus::Stopped | CueStatus::Error => Some(Duration::ZERO),
+            CueStatus::Standby => Some(cue.pre_wait + self.runtime_of(cue)? + cue.post_wait),
+            CueStatus::PreWait => Some(
+                self.pre_wait_remaining(cue).unwrap_or(cue.pre_wait)
+                    + self.runtime_of(cue)?
+                    + cue.post_wait,
+            ),
+            CueStatus::PostWait => Some(cue.post_wait),
+            _ => {
+                let elapsed = self.elapsed_of(cue).unwrap_or_default();
+                Some(self.runtime_of(cue)?.saturating_sub(elapsed) + cue.post_wait)
+            }
+        }
+    }
+
+    /// Gelaufene Zeit einer laufenden Gruppe (Gesamtlaufzeit − Restzeit);
+    /// `None` für andere Cues oder unbekannte Laufzeit.
+    pub fn group_elapsed(&self, cue: &Cue) -> Option<Duration> {
+        if cue.cue_type != CueType::Group || !cue.status.is_active() {
+            return None;
+        }
+        Some(
+            self.group_runtime(cue)?
+                .saturating_sub(self.group_remaining(cue)?),
+        )
+    }
+
+    /// Restzeit einer Gruppe: Timeline = das am längsten laufende Kind,
+    /// Sequential/Shuffle = laufendes + wartende Kinder + übrige Durchgänge.
+    fn group_remaining(&self, group: &Cue) -> Option<Duration> {
+        if !group.status.is_active() {
+            return match group.status {
+                CueStatus::Standby => self.group_runtime(group),
+                _ => Some(Duration::ZERO),
+            };
+        }
+        let armed = group.children.iter().filter(|c| c.is_armed);
+        match group.group_mode {
+            GroupMode::Timeline => armed
+                .map(|c| self.remaining_of(c))
+                .try_fold(Duration::ZERO, |max, r| r.map(|r| max.max(r))),
+            GroupMode::Sequential | GroupMode::Shuffle => {
+                let pass = armed
+                    .map(|c| self.remaining_of(c))
+                    .try_fold(Duration::ZERO, |sum, r| r.map(|r| sum + r))?;
+                let passes = match group.loop_mode {
+                    LoopMode::Infinite => return None,
+                    other => other.total_iterations(),
+                };
+                let left = passes.saturating_sub(group.group_iterations_done + 1);
+                if left == 0 {
+                    return Some(pass);
+                }
+                let full = armed_pass(self, group)?;
+                Some(pass + full.saturating_mul(left))
+            }
+        }
+    }
+
+    /// Fade-Out am Ende: blendet laufende Gruppen mit Fade-Out die letzten
+    /// Sekunden vor ihrem Ende aus (einmal je Lauf).
+    fn fade_out_ending_groups(&mut self) {
+        fn walk(app: &ShowApp, cues: &[Cue], out: &mut Vec<(Uuid, Vec<Uuid>, Duration)>) {
+            for cue in cues {
+                if cue.cue_type != CueType::Group {
+                    continue;
+                }
+                if cue.status == CueStatus::Playing
+                    && !cue.group_fade_out.is_zero()
+                    && !app.groups_fading_out.contains(&cue.id)
+                {
+                    if let Some(left) = app
+                        .group_remaining(cue)
+                        .filter(|left| *left <= cue.group_fade_out)
+                    {
+                        let children = cue
+                            .children
+                            .iter()
+                            .filter(|c| c.status.is_active())
+                            .map(|c| c.id)
+                            .collect();
+                        out.push((cue.id, children, left));
+                    }
+                }
+                walk(app, &cue.children, out);
+            }
+        }
+        let mut ending = Vec::new();
+        walk(self, self.carts.active().cues(), &mut ending);
+        // Nicht mehr laufende Gruppen dürfen beim nächsten Lauf wieder faden.
+        let carts = &self.carts;
+        self.groups_fading_out.retain(|id| {
+            carts
+                .find_cue_any(*id)
+                .is_some_and(|g| g.status == CueStatus::Playing)
+        });
+        let mut commands = Vec::new();
+        for (group, children, left) in ending {
+            self.groups_fading_out.insert(group);
+            for child in children {
+                commands.push(EngineCommand::Fade {
+                    cue_id: Uuid::new_v4(),
+                    target_cue: Some(child),
+                    from: None,
+                    volume: Some(0.0),
+                    opacity: Some(0.0),
+                    duration: left,
+                    curve: crate::core::FadeCurve::Decibel,
+                    stop_when_done: false,
+                });
+            }
+        }
+        self.dispatch(commands);
     }
 
     /// Elapsed-Zeit eines aktiven Cues (Playing: laufend akkumuliert,
@@ -3018,10 +3218,38 @@ impl ShowApp {
         if now <= last {
             return; // Uhr steht oder wurde zurückgestellt
         }
-        self.fire_matching_triggers(|t| match t {
+        // Uhrzeit erreicht = GO auf diesen Cue: Playhead dorthin und GO (mit
+        // Kill-Switch/„Vorherige beenden", Playhead rückt weiter). Der Cue
+        // darf schon gespielt haben – das Setzen des Playheads macht ihn
+        // wieder bereit. Cues anderer Carts starten direkt.
+        let due = |t: &CueTrigger| match t {
             CueTrigger::Clock(ct) => ct.next_after(last).is_some_and(|at| at <= now),
             _ => false,
-        });
+        };
+        let mut fire: Vec<(usize, Uuid)> = Vec::new();
+        for ci in 0..self.carts.cart_count() {
+            for cue in self.carts.cart(ci).cues() {
+                if cue.triggers.iter().any(due) {
+                    fire.push((ci, cue.id));
+                }
+            }
+        }
+        for (ci, id) in fire {
+            let index = self.carts.cart(ci).index_of_id(id);
+            match index {
+                Some(index) if ci == self.carts.active_index() => {
+                    let running = self.carts.active().cues()[index].status.is_active();
+                    if !running {
+                        self.carts.set_cursor(index);
+                        self.go_now();
+                    }
+                }
+                _ => {
+                    let cmds = self.carts.cart_mut(ci).trigger_id(id);
+                    self.dispatch(cmds);
+                }
+            }
+        }
     }
 
     /// Feuert Timecode-/MIDI-/Hotkey-/OSC-Trigger, die `match` erfüllen – in
@@ -3854,6 +4082,7 @@ impl eframe::App for ShowApp {
             ctx.request_repaint();
         }
         self.fire_clock_triggers();
+        self.fade_out_ending_groups();
         self.preload_standby_video();
         self.poll_remote_commands();
         self.handle_hotkeys(ctx);
@@ -3906,4 +4135,14 @@ impl eframe::App for ShowApp {
         self.save_ui_templates(storage);
         self.save_last_show(storage);
     }
+}
+
+/// Länge eines vollen Durchgangs einer Sequential/Shuffle-Gruppe.
+fn armed_pass(app: &ShowApp, group: &Cue) -> Option<Duration> {
+    group
+        .children
+        .iter()
+        .filter(|c| c.is_armed)
+        .map(|c| Some(c.pre_wait + app.runtime_of(c)? + c.post_wait))
+        .try_fold(Duration::ZERO, |sum, d| d.map(|d| sum + d))
 }

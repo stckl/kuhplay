@@ -843,6 +843,32 @@ impl CueList {
 
     /// Triggert einen Group-Cue (Kaskadierung je nach [`GroupMode`]).
     fn go_group(&mut self, index: usize, mode: GroupMode, commands: &mut Vec<EngineCommand>) {
+        let start = commands.len();
+        self.go_group_children(index, mode, commands);
+        // Fade-In: die mit dem GO der Gruppe gestarteten Kinder einblenden.
+        let fade_in = self.cues[index].group_fade_in;
+        if !fade_in.is_zero() {
+            let started: Vec<(Uuid, f32)> = commands[start..]
+                .iter()
+                .filter_map(|c| match c {
+                    EngineCommand::Play { cue_id, .. } => Some(*cue_id),
+                    _ => None,
+                })
+                .filter_map(|id| self.find_cue(id).map(|c| (id, c.volume)))
+                .collect();
+            for (id, volume) in started {
+                commands.push(group_fade(id, Some(0.0), volume, 1.0, fade_in, false));
+            }
+        }
+    }
+
+    /// Startet die Kinder einer Gruppe je nach Modus (siehe [`Self::go_group`]).
+    fn go_group_children(
+        &mut self,
+        index: usize,
+        mode: GroupMode,
+        commands: &mut Vec<EngineCommand>,
+    ) {
         let group_id = self.cues[index].id;
         match mode {
             GroupMode::Timeline => {
@@ -1355,11 +1381,72 @@ impl CueList {
     pub fn stop_running(&mut self, id: Uuid) -> Vec<EngineCommand> {
         let mut commands = Vec::new();
         let parent_group = match self.find_cue_mut(id) {
-            Some(cue) => cue.stop_running_collect(&mut commands),
+            Some(cue) => {
+                let fade_out = cue.group_fade_out;
+                let fades = cue.cue_type == CueType::Group && !fade_out.is_zero();
+                let parent = cue.stop_running_collect(&mut commands);
+                // Gruppe mit Fade-Out: die Kinder ausblenden, dann stoppen.
+                if fades {
+                    for command in &mut commands {
+                        if let EngineCommand::Stop { cue_id } = *command {
+                            if cue_id != id {
+                                *command = group_fade(cue_id, None, 0.0, 0.0, fade_out, true);
+                            }
+                        }
+                    }
+                }
+                parent
+            }
             None => return commands,
         };
         if let Some(group_id) = parent_group {
             self.close_group_if_done(group_id);
+        }
+        commands
+    }
+
+    /// „Eins weiter" in einer laufenden Sequential/Shuffle-Gruppe: das gerade
+    /// laufende Kind stoppen (zählt als fertig) und das nächste starten – nach
+    /// dem letzten wie am Ende eines Durchgangs (Wiederholung bzw. Schluss).
+    /// Rückgabe: die zu sendenden Commands (leer, wenn nichts zu tun ist).
+    pub fn skip_in_group(&mut self, group_id: Uuid) -> Vec<EngineCommand> {
+        let mut commands = Vec::new();
+        let Some(group) = self.find_cue_mut(group_id) else {
+            return commands;
+        };
+        let sequence = matches!(group.group_mode, GroupMode::Sequential | GroupMode::Shuffle);
+        if group.cue_type != CueType::Group || group.status != CueStatus::Playing || !sequence {
+            return commands;
+        }
+        for child in &mut group.children {
+            if !child.status.is_active() {
+                continue;
+            }
+            for grandchild in &mut child.children {
+                grandchild.stop_running_collect(&mut commands);
+            }
+            commands.push(EngineCommand::Stop { cue_id: child.id });
+            // Übersprungen zählt als fertig; das spätere `Stopped` der Engine
+            // lehnt die State-Machine dann ab (Completed → Stopped).
+            if child.status != CueStatus::Playing && child.status != CueStatus::PostWait {
+                let _ = child.transition_status(CueStatus::Playing);
+            }
+            let _ = child.transition_status(CueStatus::Completed);
+        }
+        self.group_step(group_id, &mut commands);
+        self.close_group_if_done(group_id);
+        // Nach dem letzten Kind neu gearmt (Wiederholung): gleich weiter.
+        let idle = self
+            .find_cue(group_id)
+            .is_some_and(|g| !g.children.iter().any(|c| c.status.is_active()));
+        if idle {
+            self.group_step(group_id, &mut commands);
+        }
+        // Ein GO pro Kind: Playhead weiter, wenn nichts mehr wartet.
+        if let Some(index) = self.index_of_id(group_id) {
+            if self.cursor == index && !self.group_has_pending(group_id) {
+                self.cursor = index + 1;
+            }
         }
         commands
     }
@@ -1398,6 +1485,28 @@ impl CueList {
         for cue in &mut self.cues {
             cue.reset_status_recursive();
         }
+    }
+}
+
+/// Fade eines Gruppen-Kinds für Fade-In/-Out der Gruppe. Eigene Fade-ID: das
+/// `Finished` dazu gehört zu keinem Cue der Liste.
+pub(crate) fn group_fade(
+    target: Uuid,
+    from: Option<f32>,
+    volume: f32,
+    opacity: f32,
+    duration: Duration,
+    stop_when_done: bool,
+) -> EngineCommand {
+    EngineCommand::Fade {
+        cue_id: Uuid::new_v4(),
+        target_cue: Some(target),
+        from,
+        volume: Some(volume),
+        opacity: Some(opacity),
+        duration,
+        curve: crate::core::FadeCurve::Decibel,
+        stop_when_done,
     }
 }
 

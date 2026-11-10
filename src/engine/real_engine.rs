@@ -2743,6 +2743,14 @@ impl MediaEngine for RealMediaEngine {
                                         playback.media_duration = media_duration;
                                     }
                                     self.audio_voices.lock().unwrap().insert(cue_id);
+                                    // Vor dem Start gesetzte Lautstärke (Cue-Volume,
+                                    // Fade-In ab 0) gleich übernehmen – sonst startet
+                                    // die Stimme einen Tick lang mit voller Lautstärke.
+                                    if let (Some(audio), Some(volume)) =
+                                        (self.audio.as_mut(), self.current_volumes.get(&cue_id))
+                                    {
+                                        audio.set_volume(cue_id, *volume);
+                                    }
                                 }
                                 // Fehler: nach dem Loop melden + Playback entfernen.
                                 Err(message) => start_errors.push((cue_id, message)),

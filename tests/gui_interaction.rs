@@ -3223,3 +3223,25 @@ fn drag_and_drop_inside_a_group_requests_move_by_id() {
         "Kind auf Kind gezogen"
     );
 }
+
+/// Gesamtlaufzeit einer Gruppe: Timeline = spätestes Ende, Sequential =
+/// Summe × Durchgänge, endlos = unbekannt.
+#[test]
+fn group_runtime_sums_or_takes_the_latest_end() {
+    let app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    let wait = |n: &str, secs: u64, pre: u64| {
+        let mut cue = Cue::new(n, n, CueType::Wait);
+        cue.duration = Duration::from_secs(secs);
+        cue.pre_wait = Duration::from_secs(pre);
+        cue
+    };
+    let kids = || vec![wait("1.1", 10, 0), wait("1.2", 5, 8)];
+    let timeline = Cue::new_group("1", "T", GroupMode::Timeline, kids());
+    assert_eq!(app.group_runtime(&timeline), Some(Duration::from_secs(13)));
+    let mut seq = Cue::new_group("2", "S", GroupMode::Sequential, kids());
+    assert_eq!(app.group_runtime(&seq), Some(Duration::from_secs(23)));
+    seq.loop_mode = kuhplay::core::LoopMode::Count(2);
+    assert_eq!(app.group_runtime(&seq), Some(Duration::from_secs(46)));
+    seq.loop_mode = kuhplay::core::LoopMode::Infinite;
+    assert_eq!(app.group_runtime(&seq), None);
+}

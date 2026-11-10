@@ -321,3 +321,93 @@ fn old_shows_load_simultaneous_and_loop_groups() {
     let seq: Cue = serde_json::from_str(&json).unwrap();
     assert_eq!(seq.group_mode, GroupMode::Sequential);
 }
+
+#[test]
+fn skip_in_group_jumps_to_the_next_child() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group("1", "Seq", GroupMode::Sequential, kids(3));
+    group.loop_mode = LoopMode::Count(2);
+    let group_id = group.id;
+    list.add(group);
+    let _ = list.go().unwrap();
+    assert_eq!(playing(&list).as_deref(), Some("1.0"));
+
+    let commands = list.skip_in_group(group_id);
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c, EngineCommand::Stop { .. })),
+        "current child is stopped"
+    );
+    assert_eq!(playing(&list).as_deref(), Some("1.1"));
+    // Das spätere Stopped-Event der Engine bringt die Gruppe nicht durcheinander.
+    let skipped = list.cues()[0].children[0].id;
+    assert!(list.set_status(skipped, CueStatus::Stopped).is_err());
+
+    let _ = list.skip_in_group(group_id);
+    let _ = list.skip_in_group(group_id); // nach dem letzten: zweiter Durchgang
+    assert_eq!(list.cues()[0].group_iterations_done, 1);
+    assert_eq!(playing(&list).as_deref(), Some("1.0"));
+    for _ in 0..3 {
+        let _ = list.skip_in_group(group_id);
+    }
+    assert_eq!(list.cues()[0].status, CueStatus::Completed);
+    assert!(
+        list.skip_in_group(group_id).is_empty(),
+        "nothing left to skip"
+    );
+}
+
+#[test]
+fn group_fade_in_fades_started_children_from_silence() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group("1", "T", GroupMode::Timeline, kids(2));
+    group.group_fade_in = Duration::from_secs(2);
+    list.add(group);
+    let outcome = list.go().unwrap();
+    let fades: Vec<_> = outcome
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            EngineCommand::Fade {
+                target_cue,
+                from,
+                volume,
+                duration,
+                stop_when_done,
+                ..
+            } => Some((*target_cue, *from, *volume, *duration, *stop_when_done)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(fades.len(), 2, "one fade per started child");
+    for (target, from, volume, duration, stop) in fades {
+        assert!(target.is_some());
+        assert_eq!(from, Some(0.0));
+        assert_eq!(volume, Some(1.0));
+        assert_eq!(duration, Duration::from_secs(2));
+        assert!(!stop);
+    }
+}
+
+#[test]
+fn stopping_a_group_with_fade_out_fades_its_children() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group("1", "T", GroupMode::Timeline, kids(2));
+    group.group_fade_out = Duration::from_secs(3);
+    let group_id = group.id;
+    list.add(group);
+    let _ = list.go().unwrap();
+    let commands = list.stop_running(group_id);
+    let fades = commands
+        .iter()
+        .filter(|c| {
+            matches!(c, EngineCommand::Fade { volume: Some(v), stop_when_done: true, duration, .. }
+                if *v == 0.0 && *duration == Duration::from_secs(3))
+        })
+        .count();
+    assert_eq!(fades, 2, "children fade out and stop: {commands:?}");
+    assert!(!commands
+        .iter()
+        .any(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id != group_id)));
+}

@@ -631,6 +631,13 @@ pub struct Cue {
     /// neu). `None` = aus der Gruppen-ID abgeleitet (ältere Shows).
     #[serde(default)]
     pub group_shuffle_seed: Option<u64>,
+    /// Gruppe: Ton und Bild beim Start der Gruppe über diese Zeit einblenden.
+    #[serde(default, with = "crate::core::duration_ms")]
+    pub group_fade_in: Duration,
+    /// Gruppe: am Ende der Gruppe bzw. beim Stoppen der Gruppe über diese
+    /// Zeit ausblenden.
+    #[serde(default, with = "crate::core::duration_ms")]
+    pub group_fade_out: Duration,
     /// Aktion (nur für [`CueType::Control`]).
     #[serde(default)]
     pub control_action: ControlAction,
@@ -775,6 +782,8 @@ impl Cue {
             group_go_per_child: false,
             group_shuffle_each_run: false,
             group_shuffle_seed: None,
+            group_fade_in: Duration::ZERO,
+            group_fade_out: Duration::ZERO,
             control_action: ControlAction::Start,
             control_target: None,
             stage: None,

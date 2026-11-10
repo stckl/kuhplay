@@ -298,6 +298,17 @@ impl CartManager {
         self.active_mut().stop_all_running();
     }
 
+    /// „Eins weiter" in einer laufenden Gruppe – über alle Carts gesucht
+    /// (siehe [`CueList::skip_in_group`]).
+    pub fn skip_in_group(&mut self, group_id: Uuid) -> Vec<EngineCommand> {
+        for cart in &mut self.carts {
+            if cart.find_cue(group_id).is_some() {
+                return cart.skip_in_group(group_id);
+            }
+        }
+        Vec::new()
+    }
+
     /// Stoppt einen einzelnen laufenden Cue (inkl. Kinder) – über alle Carts
     /// gesucht (Remote „Stop Cue" darf auch Cues anderer Carts treffen).
     pub fn stop_running(&mut self, id: Uuid) -> Vec<EngineCommand> {

@@ -120,6 +120,7 @@ mod glyphs {
     pub const PAINT_BRUSH: &str = "\u{E6F0}"; // paint-brush
     pub const PAUSE: &str = "\u{E39E}"; // pause
     pub const PLAY: &str = "\u{E3D0}"; // play
+    pub const SKIP_FORWARD: &str = "\u{E5A6}"; // skip-forward
     pub const PLUS: &str = "\u{E3D4}"; // plus
     pub const PROJECTOR_SCREEN: &str = "\u{E658}"; // projector-screen
     pub const RECTANGLE: &str = "\u{E3F0}"; // rectangle
@@ -240,6 +241,7 @@ pub enum Icon {
     CaretUp,
     CaretLeft,
     CaretRight,
+    SkipForward,
 }
 
 impl Icon {
@@ -337,6 +339,7 @@ impl Icon {
         Icon::CaretUp,
         Icon::CaretLeft,
         Icon::CaretRight,
+        Icon::SkipForward,
     ];
 
     /// Icon für einen Cue-Typ (Type-Spalte).
@@ -480,6 +483,7 @@ impl Icon {
             Icon::CaretUp => glyphs::CARET_UP,
             Icon::CaretLeft => glyphs::CARET_LEFT,
             Icon::CaretRight => glyphs::CARET_RIGHT,
+            Icon::SkipForward => glyphs::SKIP_FORWARD,
         }
     }
 
