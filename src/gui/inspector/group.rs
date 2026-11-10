@@ -72,158 +72,177 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
         return;
     }
 
-    theme::form_grid("inspector_group_grid").show(ui, |ui| {
-        theme::field_label(ui, "Mode");
-        let mut mode = cue.group_mode;
-        egui::ComboBox::from_id_salt("group_tab_mode_combo")
-            .selected_text(mode.label())
-            .show_ui(ui, |ui| {
-                for m in GroupMode::ALL {
-                    ui.selectable_value(&mut mode, m, m.label());
-                }
-            });
-        if mode != cue.group_mode {
-            cue.group_mode = mode;
-        }
-        ui.end_row();
-
-        theme::field_label(ui, "");
-        ui.label(RichText::new(mode_help(cue.group_mode)).color(theme::palette::TEXT_DIM));
-        ui.end_row();
-
-        theme::field_label(ui, "Total");
-        let endless = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
-            && cue.loop_mode == LoopMode::Infinite;
-        let total = match runtime {
-            Some(total) => format_timecode(total),
-            None if endless => "∞ (endless)".to_string(),
-            None => "unknown – a child has no known length".to_string(),
+    // Zwei Spalten: links Modus, Laufzeit, Fades – rechts die Einstellungen
+    // des Modus (Abspielen, Wiederholung, Shuffle bzw. Timeline-Fenster).
+    let mut open_timeline = false;
+    ui.columns(2, |cols| {
+        let [left_ui, right_ui] = cols else {
+            return;
         };
-        let total = match remaining {
-            Some(left) => format!("{total}   (−{} left)", format_timecode(left)),
-            None => total,
-        };
-        ui.label(RichText::new(total).monospace());
-        ui.end_row();
-
-        theme::field_label(ui, "Fade");
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("In").color(theme::palette::TEXT_DIM));
-            super::time_field(ui, &mut cue.group_fade_in)
-                .on_hover_text("Fade sound and picture in when the group starts (0 = off)");
-            ui.add_space(theme::size::SPACE_MEDIUM);
-            ui.label(RichText::new("Out").color(theme::palette::TEXT_DIM));
-            super::time_field(ui, &mut cue.group_fade_out).on_hover_text(
-                "Fade sound and picture out before the group ends and when it is stopped (0 = off)",
-            );
-        });
-        ui.end_row();
-
-        let sequential = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle);
-        if sequential {
-            theme::field_label(ui, "Playback");
-            ui.vertical(|ui| {
-                ui.radio_value(
-                    &mut cue.group_go_per_child,
-                    false,
-                    "play through (one GO plays all children in turn)",
-                );
-                ui.radio_value(
-                    &mut cue.group_go_per_child,
-                    true,
-                    "one GO per child (the group's GO starts the first)",
-                );
-            });
-            ui.end_row();
-        }
-
-        if sequential {
-            theme::field_label(ui, "Repeat");
-            ui.horizontal(|ui| {
-                let mut infinite = cue.loop_mode == LoopMode::Infinite;
-                let mut count = match cue.loop_mode {
-                    LoopMode::Count(n) => n.max(1),
-                    LoopMode::Once => 1,
-                    LoopMode::Infinite => 2,
-                };
-                let before = (infinite, count);
-                ui.radio_value(&mut infinite, false, "");
-                ui.add_enabled(
-                    !infinite,
-                    egui::DragValue::new(&mut count)
-                        .range(1..=9999)
-                        .suffix(" ×"),
-                );
-                ui.radio_value(&mut infinite, true, "until Devamp / Stop");
-                if (infinite, count) != before {
-                    cue.loop_mode = if infinite {
-                        LoopMode::Infinite
-                    } else if count == 1 {
-                        LoopMode::Once
-                    } else {
-                        LoopMode::Count(count)
-                    };
+        theme::form_grid("inspector_group_grid_left").show(left_ui, |ui| {
+                theme::field_label(ui, "Mode");
+                let mut mode = cue.group_mode;
+                egui::ComboBox::from_id_salt("group_tab_mode_combo")
+                    .selected_text(mode.label())
+                    .show_ui(ui, |ui| {
+                        for m in GroupMode::ALL {
+                            ui.selectable_value(&mut mode, m, m.label());
+                        }
+                    });
+                if mode != cue.group_mode {
+                    cue.group_mode = mode;
                 }
-            });
-            ui.end_row();
-            if cue.status == CueStatus::Playing {
-                theme::field_label(ui, "Pass");
-                let total = match cue.loop_mode {
-                    LoopMode::Infinite => "∞".to_string(),
-                    other => other.total_iterations().to_string(),
-                };
-                ui.label(format!("{} of {total}", cue.group_iterations_done + 1));
                 ui.end_row();
-            }
-        }
 
-        if cue.group_mode == GroupMode::Shuffle {
-            theme::field_label(ui, "Order");
-            ui.vertical(|ui| {
-                ui.radio_value(
-                    &mut cue.group_shuffle_each_run,
-                    false,
-                    "same shuffled order every show",
-                );
-                ui.radio_value(&mut cue.group_shuffle_each_run, true, "new order each run");
-            });
-            ui.end_row();
+                theme::field_label(ui, "");
+                ui.label(RichText::new(mode_help(cue.group_mode)).color(theme::palette::TEXT_DIM));
+                ui.end_row();
 
-            if !cue.group_shuffle_each_run {
-                theme::field_label(ui, "Shuffle ID");
+                theme::field_label(ui, "Total");
+                let endless = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
+                    && cue.loop_mode == LoopMode::Infinite;
+                let total = match runtime {
+                    Some(total) => format_timecode(total),
+                    None if endless => "∞ (endless)".to_string(),
+                    None => "unknown – a child has no known length".to_string(),
+                };
+                let total = match remaining {
+                    Some(left) => format!("{total}   (−{} left)", format_timecode(left)),
+                    None => total,
+                };
+                ui.label(RichText::new(total).monospace());
+                ui.end_row();
+
+                theme::field_label(ui, "Fade");
                 ui.horizontal(|ui| {
-                    ui.monospace(format!("{:08X}", cue.shuffle_seed() >> 32));
-                    if ui
-                        .button("New Shuffle")
-                        .on_hover_text("Roll a new fixed order for this group")
-                        .clicked()
-                    {
-                        cue.new_shuffle();
-                    }
+                    ui.label(RichText::new("In").color(theme::palette::TEXT_DIM));
+                    super::time_field(ui, &mut cue.group_fade_in)
+                        .on_hover_text("Fade sound and picture in when the group starts (0 = off)");
+                    ui.add_space(theme::size::SPACE_MEDIUM);
+                    ui.label(RichText::new("Out").color(theme::palette::TEXT_DIM));
+                    super::time_field(ui, &mut cue.group_fade_out).on_hover_text(
+                        "Fade sound and picture out before the group ends and when it is stopped (0 = off)",
+                    );
                 });
                 ui.end_row();
 
-                if !cue.children.is_empty() {
-                    theme::field_label(ui, "Shuffled");
-                    let order: Vec<&str> = cue
-                        .shuffled_children()
-                        .iter()
-                        .map(|c| c.number.as_str())
-                        .collect();
-                    ui.label(RichText::new(order.join(" → ")).color(theme::palette::TEXT_DIM));
+        });
+        theme::form_grid("inspector_group_grid_right").show(right_ui, |ui| {
+                let sequential = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle);
+                if sequential {
+                    theme::field_label(ui, "Playback");
+                    ui.vertical(|ui| {
+                        ui.radio_value(
+                            &mut cue.group_go_per_child,
+                            false,
+                            "play through (one GO plays all children in turn)",
+                        );
+                        ui.radio_value(
+                            &mut cue.group_go_per_child,
+                            true,
+                            "one GO per child (the group's GO starts the first)",
+                        );
+                    });
                     ui.end_row();
                 }
-            }
-        }
-    });
 
+                if sequential {
+                    theme::field_label(ui, "Repeat");
+                    ui.horizontal(|ui| {
+                        let mut infinite = cue.loop_mode == LoopMode::Infinite;
+                        let mut count = match cue.loop_mode {
+                            LoopMode::Count(n) => n.max(1),
+                            LoopMode::Once => 1,
+                            LoopMode::Infinite => 2,
+                        };
+                        let before = (infinite, count);
+                        ui.radio_value(&mut infinite, false, "");
+                        ui.add_enabled(
+                            !infinite,
+                            egui::DragValue::new(&mut count)
+                                .range(1..=9999)
+                                .suffix(" ×"),
+                        );
+                        ui.radio_value(&mut infinite, true, "until Devamp / Stop");
+                        if (infinite, count) != before {
+                            cue.loop_mode = if infinite {
+                                LoopMode::Infinite
+                            } else if count == 1 {
+                                LoopMode::Once
+                            } else {
+                                LoopMode::Count(count)
+                            };
+                        }
+                    });
+                    ui.end_row();
+                    if cue.status == CueStatus::Playing {
+                        theme::field_label(ui, "Pass");
+                        let total = match cue.loop_mode {
+                            LoopMode::Infinite => "∞".to_string(),
+                            other => other.total_iterations().to_string(),
+                        };
+                        ui.label(format!("{} of {total}", cue.group_iterations_done + 1));
+                        ui.end_row();
+                    }
+                }
+
+                if cue.group_mode == GroupMode::Shuffle {
+                    theme::field_label(ui, "Order");
+                    ui.vertical(|ui| {
+                        ui.radio_value(
+                            &mut cue.group_shuffle_each_run,
+                            false,
+                            "same shuffled order every show",
+                        );
+                        ui.radio_value(&mut cue.group_shuffle_each_run, true, "new order each run");
+                    });
+                    ui.end_row();
+
+                    if !cue.group_shuffle_each_run {
+                        theme::field_label(ui, "Shuffle ID");
+                        ui.horizontal(|ui| {
+                            ui.monospace(format!("{:08X}", cue.shuffle_seed() >> 32));
+                            if ui
+                                .button("New Shuffle")
+                                .on_hover_text("Roll a new fixed order for this group")
+                                .clicked()
+                            {
+                                cue.new_shuffle();
+                            }
+                        });
+                        ui.end_row();
+
+                        if !cue.children.is_empty() {
+                            theme::field_label(ui, "Shuffled");
+                            let order: Vec<&str> = cue
+                                .shuffled_children()
+                                .iter()
+                                .map(|c| c.number.as_str())
+                                .collect();
+                            ui.label(RichText::new(order.join(" → ")).color(theme::palette::TEXT_DIM));
+                            ui.end_row();
+                        }
+                    }
+                }
+            if cue.group_mode == GroupMode::Timeline {
+                theme::field_label(ui, "Timeline");
+                if ui
+                    .button("Open Timeline Editor")
+                    .on_hover_text("Large timeline with all cues of this group")
+                    .clicked()
+                {
+                    open_timeline = true;
+                }
+                ui.end_row();
+            }
+        });
+    });
+    let group_id = cue.id;
     ui.separator();
     if cue.children.is_empty() {
         ui.label(RichText::new("No children – drag cues onto the group in the cue list").weak());
-        return;
-    }
-    if cue.group_mode == GroupMode::Timeline {
-        timeline_editor(ui, cue, &lengths);
+    } else if cue.group_mode == GroupMode::Timeline {
+        timeline_editor(ui, cue, &lengths, &TimelineView::default());
     } else {
         for child in &cue.children {
             ui.horizontal(|ui| {
@@ -238,6 +257,118 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
                     ui.label(RichText::new("disarmed").color(theme::palette::TEXT_DIM));
                 }
             });
+        }
+    }
+    if open_timeline {
+        app.timeline_window = Some(group_id);
+    }
+}
+
+/// Großes Timeline-Fenster einer Gruppe: alle Kinder auf der gemeinsamen
+/// Zeitachse, verschiebbar (Start = Pre-Wait) und in der Länge änderbar, mit
+/// Zoom und mitlaufender Abspielposition.
+pub fn draw_timeline_window(ctx: &egui::Context, app: &mut ShowApp) {
+    let Some(group_id) = app.timeline_window else {
+        return;
+    };
+    let Some(group) = app
+        .carts
+        .find_cue_any(group_id)
+        .filter(|g| g.cue_type == CueType::Group)
+    else {
+        app.timeline_window = None;
+        return;
+    };
+    let lengths: Vec<Length> = group
+        .children
+        .iter()
+        .map(|child| child_length(app, child))
+        .collect();
+    let playhead = app.group_elapsed(group);
+    let runtime = app.group_runtime(group);
+    let title = format!("Timeline: {}  {}", group.number, group.name);
+    let mut open = true;
+    crate::gui::viewport_window::draw(
+        ctx,
+        &crate::gui::viewport_window::WindowSpec::new(
+            "kuhplay-group-timeline",
+            &title,
+            [1000.0, 480.0],
+            [560.0, 260.0],
+        )
+        .show_mode_badge(app.show_mode),
+        &mut open,
+        app,
+        |_ctx, ui, app| {
+            let editable = !app.show_mode;
+            let zoom_id = egui::Id::new(("timeline_zoom", group_id));
+            // Zoom = Pixel pro Sekunde (0 = ganze Gruppe ins Fenster einpassen).
+            let mut zoom: f32 = ui.data(|d| d.get_temp(zoom_id)).unwrap_or(0.0);
+            ui.horizontal(|ui| {
+                if let Some(total) = runtime {
+                    ui.label(
+                        RichText::new(format!("Total {}", format_timecode(total))).monospace(),
+                    );
+                    ui.add_space(theme::size::SPACE_MEDIUM);
+                }
+                ui.label(RichText::new("Zoom").color(theme::palette::TEXT_DIM));
+                let mut fit = zoom <= 0.0;
+                if ui.checkbox(&mut fit, "fit").changed() {
+                    zoom = if fit { 0.0 } else { 40.0 };
+                }
+                if !fit {
+                    ui.add(
+                        egui::Slider::new(&mut zoom, 2.0..=400.0)
+                            .logarithmic(true)
+                            .suffix(" px/s"),
+                    );
+                }
+            });
+            ui.data_mut(|d| d.insert_temp(zoom_id, zoom));
+            ui.separator();
+            let Some(group) = app.carts.find_cue_any_mut(group_id) else {
+                return;
+            };
+            if group.children.is_empty() {
+                ui.label(
+                    RichText::new("No children – drag cues onto the group in the cue list").weak(),
+                );
+                return;
+            }
+            let view = TimelineView {
+                row_height: 34.0,
+                px_per_s: (zoom > 0.0).then_some(zoom),
+                playhead,
+                editable,
+            };
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| timeline_editor(ui, group, &lengths, &view));
+        },
+    );
+    if !open {
+        app.timeline_window = None;
+    }
+}
+
+/// Darstellung des Timeline-Editors (Inspector: kompakt und eingepasst).
+struct TimelineView {
+    row_height: f32,
+    /// Fester Zoom; `None` = ganze Gruppe in die verfügbare Breite einpassen.
+    px_per_s: Option<f32>,
+    /// Abspielposition der laufenden Gruppe (senkrechte Linie).
+    playhead: Option<Duration>,
+    /// Ziehen erlaubt (nicht im Show-Mode).
+    editable: bool,
+}
+
+impl Default for TimelineView {
+    fn default() -> Self {
+        Self {
+            row_height: 24.0,
+            px_per_s: None,
+            playhead: None,
+            editable: true,
         }
     }
 }
@@ -267,6 +398,7 @@ fn child_length(app: &ShowApp, child: &crate::core::Cue) -> Length {
         },
         CueType::Html
         | CueType::SlideShow
+        | CueType::Image
         | CueType::Text
         | CueType::Fade
         | CueType::Wait
@@ -284,9 +416,14 @@ fn snap(d: Duration) -> Duration {
 /// Timeline-Editor: eine Zeile je Kind, Balken = [Pre-Wait, Pre-Wait + Länge].
 /// Balken ziehen verschiebt den Start, rechte Kante ziehen ändert die Länge
 /// (Doppelklick auf die Kante: wieder automatisch = Mediendauer).
-fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[Length]) {
+fn timeline_editor(
+    ui: &mut egui::Ui,
+    group: &mut crate::core::Cue,
+    lengths: &[Length],
+    view: &TimelineView,
+) {
     const LABEL_W: f32 = 150.0;
-    const ROW_H: f32 = 24.0;
+    let row_h = view.row_height;
     const RULER_H: f32 = 18.0;
     const EDGE: f32 = 6.0;
 
@@ -317,14 +454,25 @@ fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[L
     };
     ui.data_mut(|d| d.insert_temp(span_id, span));
 
+    let drag = if view.editable {
+        Sense::drag()
+    } else {
+        Sense::hover()
+    };
     let rows = group.children.len();
-    let width = ui.available_width().max(LABEL_W + 200.0);
+    // Fester Zoom: so breit wie nötig (Fenster scrollt), sonst eingepasst.
+    let width = match view.px_per_s {
+        Some(pps) => (LABEL_W + span * pps).max(ui.available_width()),
+        None => ui.available_width(),
+    }
+    .max(LABEL_W + 200.0);
     let (rect, _) = ui.allocate_exact_size(
-        vec2(width, RULER_H + rows as f32 * ROW_H + 4.0),
+        vec2(width, RULER_H + rows as f32 * row_h + 4.0),
         Sense::hover(),
     );
     let track = egui::Rect::from_min_max(pos2(rect.left() + LABEL_W, rect.top()), rect.max);
-    let px_per_s = track.width() / span;
+    let px_per_s = view.px_per_s.unwrap_or(track.width() / span);
+    let span = track.width() / px_per_s;
     let x_of = |d: Duration| track.left() + d.as_secs_f32() * px_per_s;
     let painter = ui.painter_at(rect);
 
@@ -351,8 +499,8 @@ fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[L
     }
 
     for (i, (child, length)) in group.children.iter_mut().zip(lengths).enumerate() {
-        let top = rect.top() + RULER_H + i as f32 * ROW_H;
-        let row = egui::Rect::from_min_size(pos2(rect.left(), top), vec2(width, ROW_H));
+        let top = rect.top() + RULER_H + i as f32 * row_h;
+        let row = egui::Rect::from_min_size(pos2(rect.left(), top), vec2(width, row_h));
         if i % 2 == 1 {
             painter.rect_filled(row, 0.0, theme::palette::TEXT_FAINT.gamma_multiply(0.06));
         }
@@ -380,7 +528,7 @@ fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[L
             // Sofort-Cue: Raute, nur der Start ist verschiebbar.
             let hit = egui::Rect::from_center_size(pos2(start_x, row.center().y), vec2(14.0, 14.0));
             let response = ui
-                .interact(hit, id.with("start"), Sense::drag())
+                .interact(hit, id.with("start"), drag)
                 .on_hover_cursor(CursorIcon::Grab);
             drag_start(ui, &response, child, px_per_s, id);
             let c = pos2(start_x, row.center().y);
@@ -401,7 +549,7 @@ fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[L
         let end_x = x_of(child.pre_wait + length.shown()).max(start_x + EDGE * 2.0);
         let bar = egui::Rect::from_min_max(pos2(start_x, bar_y.top()), pos2(end_x, bar_y.bottom()));
         let body = ui
-            .interact(bar.with_max_x(end_x - EDGE), id.with("body"), Sense::drag())
+            .interact(bar.with_max_x(end_x - EDGE), id.with("body"), drag)
             .on_hover_cursor(CursorIcon::Grab);
         drag_start(ui, &body, child, px_per_s, id);
         let edge = ui
@@ -411,7 +559,11 @@ fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[L
                     pos2(end_x + 2.0, bar.bottom()),
                 ),
                 id.with("edge"),
-                Sense::click_and_drag(),
+                if view.editable {
+                    Sense::click_and_drag()
+                } else {
+                    Sense::hover()
+                },
             )
             .on_hover_cursor(CursorIcon::ResizeHorizontal);
         let length_key = id.with("drag_length");
@@ -466,6 +618,17 @@ fn timeline_editor(ui: &mut egui::Ui, group: &mut crate::core::Cue, lengths: &[L
             format_timecode(child.pre_wait)
         ));
         edge.on_hover_text(length_text);
+    }
+
+    // Abspielposition der laufenden Gruppe.
+    if let Some(at) = view.playhead {
+        let x = x_of(at);
+        if x >= track.left() && x <= track.right() {
+            painter.line_segment(
+                [pos2(x, track.top()), pos2(x, rect.bottom())],
+                Stroke::new(2.0, theme::palette::PLAYING),
+            );
+        }
     }
 }
 

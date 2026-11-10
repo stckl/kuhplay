@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::core::audio::{AudioRoute, FadeCurve, FadeParam, MediaSlice, SLICE_TO_END};
 use crate::core::error::{ShowError, ShowResult};
 use crate::core::html::HtmlSource;
-use crate::core::slideshow::SlideShow;
+use crate::core::slideshow::{Slide, SlideShow};
 use crate::core::stage::SurfaceGeometry;
 use crate::core::timecode::Timecode;
 use crate::engine::EngineCommand;
@@ -49,6 +49,9 @@ pub enum CueType {
     /// Diashow-Cue: Fotoliste mit Hold-Zeiten, Crossfades und Auto-Advance
     /// (manuelles Schalten via Control-Cues `NextSlide`/`PrevSlide`).
     SlideShow,
+    /// Bild-Cue: zeigt ein Standbild ([`Cue::target_path`]) auf einer Stage,
+    /// bis er gestoppt wird bzw. seine `duration` abgelaufen ist (wie Video).
+    Image,
     /// Daten-Cue: pusht einen JSON-Payload an die WebView eines aktiven
     /// HTML5-Cues (dynamische Lower-Thirds, Spielstände, Countdowns).
     HtmlData,
@@ -81,7 +84,7 @@ pub enum CueType {
 
 impl CueType {
     /// Alle Cue-Typen (z. B. für ComboBoxen im Inspector).
-    pub const ALL: [CueType; 18] = [
+    pub const ALL: [CueType; 19] = [
         CueType::Audio,
         CueType::Video,
         CueType::Fade,
@@ -91,6 +94,7 @@ impl CueType {
         CueType::Control,
         CueType::Html,
         CueType::SlideShow,
+        CueType::Image,
         CueType::HtmlData,
         CueType::Wait,
         CueType::Memo,
@@ -114,6 +118,7 @@ impl CueType {
             CueType::Control => "◆",
             CueType::Html => "🌐",
             CueType::SlideShow => "🖼",
+            CueType::Image => "🏞",
             CueType::HtmlData => "📊",
             CueType::Wait => "⏳",
             CueType::Memo => "📝",
@@ -138,6 +143,7 @@ impl CueType {
             CueType::Control => "Control",
             CueType::Html => "HTML5",
             CueType::SlideShow => "Slideshow",
+            CueType::Image => "Image",
             CueType::HtmlData => "HTML Data",
             CueType::Wait => "Wait",
             CueType::Memo => "Memo",
@@ -155,7 +161,7 @@ impl CueType {
 /// (docs/TODO-offen.md Phase 6: Drag & Drop aus dem Finder legt passende Cues an).
 ///
 /// Audio-Endungen → Audio-Cue, Video-Endungen → Video-Cue, Bild-Endungen
-/// → Diashow-Cue (ein Bild = eine Slide). Unbekannt → `None`.
+/// → Bild-Cue, HTML → HTML5-Cue. Unbekannt → `None`.
 pub fn cue_type_for_file(path: &std::path::Path) -> Option<CueType> {
     const AUDIO: &[&str] = &[
         "mp3", "wav", "aif", "aiff", "m4a", "flac", "ogg", "opus", "wma", "mpga", "aac", "ac3",
@@ -169,12 +175,14 @@ pub fn cue_type_for_file(path: &std::path::Path) -> Option<CueType> {
         "png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic",
     ];
     let ext = path.extension()?.to_str()?.to_lowercase();
-    if AUDIO.contains(&ext.as_str()) {
+    if ext == "html" || ext == "htm" {
+        Some(CueType::Html)
+    } else if AUDIO.contains(&ext.as_str()) {
         Some(CueType::Audio)
     } else if VIDEO.contains(&ext.as_str()) {
         Some(CueType::Video)
     } else if IMAGE.contains(&ext.as_str()) {
-        Some(CueType::SlideShow)
+        Some(CueType::Image)
     } else {
         None
     }
@@ -1028,6 +1036,24 @@ impl Cue {
         })
     }
 
+    /// Bild-Cue als Diashow mit einer Folie (ohne Weiterschalten).
+    fn image_show(&self) -> ShowResult<SlideShow> {
+        let path = self
+            .target_path
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| {
+                ShowError::InvalidParameter(format!(
+                    "image cue \"{}\" ({}): no image file",
+                    self.number, self.name
+                ))
+            })?;
+        // Lange Standzeit: das Bild bleibt, bis gestoppt wird (bzw. Duration).
+        let hold = Duration::from_secs(365 * 24 * 3600);
+        let slide = Slide::new(path, hold)?;
+        SlideShow::new(vec![slide], Duration::ZERO, false)
+    }
+
     /// Validiert die Konfiguration vor dem Triggern. `Err` → der Cue geht
     /// kontrolliert in den Zustand [`CueStatus::Error`] (kein Panic im
     /// Live-Betrieb). Betrifft aktuell [`CueType::Html`],
@@ -1042,6 +1068,7 @@ impl Cue {
                     self.number, self.name
                 ))),
             },
+            CueType::Image => self.image_show().map(|_| ()),
             CueType::SlideShow => match &self.slideshow {
                 Some(show) => show.validate(),
                 None => Err(ShowError::InvalidParameter(format!(
@@ -1324,6 +1351,25 @@ impl Cue {
                     pre_wait: self.pre_wait,
                     post_wait: self.post_wait,
                 }),
+            // Bild: über die Diashow-Pipeline als eine Folie, die steht, bis
+            // der Cue gestoppt wird bzw. seine Duration abläuft.
+            CueType::Image => self
+                .image_show()
+                .ok()
+                .map(|show| EngineCommand::PlaySlideShow {
+                    cue_id: self.id,
+                    show,
+                    stage: self.stage.clone(),
+                    layer: self.layer,
+                    duration: if self.duration.is_zero() {
+                        None
+                    } else {
+                        Some(self.duration)
+                    },
+                    pre_wait: self.pre_wait,
+                    post_wait: self.post_wait,
+                    surface: self.surface,
+                }),
             CueType::SlideShow => self
                 .slideshow
                 .clone()
@@ -1519,6 +1565,31 @@ mod tests {
 
     /// Phase 6: Datei-Endung → passender Cue-Typ (Drag & Drop aus Finder).
     #[test]
+    fn image_cue_shows_its_file_as_a_single_held_slide() {
+        let cue = Cue::new("1", "Logo", CueType::Image)
+            .with_target("/media/logo.png")
+            .with_stage("Stage 1");
+        assert!(cue.validate_trigger().is_ok());
+        match cue.build_trigger_command() {
+            Some(EngineCommand::PlaySlideShow { show, stage, .. }) => {
+                assert_eq!(show.slides.len(), 1);
+                assert_eq!(
+                    show.slides[0].path,
+                    std::path::PathBuf::from("/media/logo.png")
+                );
+                assert!(!show.auto_advance);
+                assert_eq!(stage.as_deref(), Some("Stage 1"));
+            }
+            other => panic!("expected PlaySlideShow, got {other:?}"),
+        }
+        let empty = Cue::new("2", "leer", CueType::Image);
+        assert!(
+            empty.validate_trigger().is_err(),
+            "ohne Bilddatei: Error statt Panic"
+        );
+    }
+
+    #[test]
     fn cue_type_for_file_maps_extensions() {
         use std::path::Path;
         assert_eq!(
@@ -1539,11 +1610,15 @@ mod tests {
         );
         assert_eq!(
             cue_type_for_file(Path::new("/slides/bild.PNG")),
-            Some(CueType::SlideShow)
+            Some(CueType::Image)
         );
         assert_eq!(
             cue_type_for_file(Path::new("/slides/bild.jpg")),
-            Some(CueType::SlideShow)
+            Some(CueType::Image)
+        );
+        assert_eq!(
+            cue_type_for_file(Path::new("/show/lower-third.HTML")),
+            Some(CueType::Html)
         );
         assert_eq!(cue_type_for_file(Path::new("/etc/notes.txt")), None);
         assert_eq!(cue_type_for_file(Path::new("/etc/noext")), None);

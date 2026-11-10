@@ -77,6 +77,11 @@ fn collect_from_cue(cue: &Cue, cart_index: usize, cart_name: &str, out: &mut Vec
                 out.push(base("HTML", &path.display().to_string()));
             }
         }
+        CueType::Image => {
+            if let Some(path) = &cue.target_path {
+                out.push(base("Image", path));
+            }
+        }
         CueType::SlideShow => {
             if let Some(show) = &cue.slideshow {
                 for slide in &show.slides {

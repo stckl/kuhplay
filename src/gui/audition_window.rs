@@ -109,7 +109,7 @@ fn find_in_cue(cue: &Cue) -> Option<(String, CueStatus, uuid::Uuid)> {
     if cue.status.is_active()
         && matches!(
             cue.cue_type,
-            CueType::Video | CueType::Html | CueType::SlideShow
+            CueType::Video | CueType::Html | CueType::SlideShow | CueType::Image
         )
     {
         return Some((

@@ -47,6 +47,19 @@ pub struct GoOutcome {
     pub commands: Vec<EngineCommand>,
 }
 
+/// Wohin ein per Drag & Drop gezogener Cue relativ zur Zielzeile kommt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropPlace {
+    /// Direkt vor die Zielzeile (in deren Liste).
+    Before,
+    /// Direkt hinter die Zielzeile (in deren Liste).
+    After,
+    /// In die Ziel-Gruppe, als letzte Kinder.
+    Into,
+    /// In die Ziel-Gruppe, als erste Kinder.
+    IntoFirst,
+}
+
 /// Lineare Cue-Liste mit Playhead und GO-Trigger (Command-Pattern).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CueList {
@@ -65,6 +78,10 @@ pub struct CueList {
     /// Name des Carts (für [`crate::core::CartManager`]).
     #[serde(default = "default_cart_name")]
     name: String,
+    /// Per GO neu gestartete Cues: Das `Stopped` der alten Instanz kommt von
+    /// der Engine erst danach und darf den neuen Lauf nicht beenden.
+    #[serde(skip)]
+    restarted: std::collections::HashSet<Uuid>,
 }
 
 impl Default for CueList {
@@ -75,6 +92,7 @@ impl Default for CueList {
             selection_anchor: None,
             cursor: 0,
             name: default_cart_name(),
+            restarted: Default::default(),
         }
     }
 }
@@ -112,6 +130,33 @@ impl CueList {
         self.cues.insert(index, cue);
         if self.cursor >= index {
             self.cursor += 1;
+        }
+    }
+
+    /// Fügt `cue` relativ zu `target` ein: auf eine Gruppe → als letztes Kind,
+    /// sonst direkt dahinter in derselben Liste (oberste Ebene oder Gruppe);
+    /// ohne (bekanntes) Ziel am Ende der Liste.
+    pub fn insert_at_target(&mut self, target: Option<Uuid>, mut cue: Cue) {
+        let place = target.and_then(|t| {
+            if self.find_cue(t)?.cue_type == CueType::Group {
+                return Some((Some(t), None));
+            }
+            let (parent, i) = locate(&self.cues, t)?;
+            Some((parent, Some(i + 1)))
+        });
+        match place {
+            Some((Some(group_id), at)) => {
+                if let Some(group) = self.find_cue_mut(group_id) {
+                    cue.parent_group = Some(group_id);
+                    let at = at.unwrap_or(group.children.len()).min(group.children.len());
+                    group.children.insert(at, cue);
+                }
+            }
+            Some((None, Some(at))) => self.insert(at, cue),
+            _ => {
+                let end = self.cues.len();
+                self.insert(end, cue);
+            }
         }
     }
 
@@ -480,6 +525,31 @@ impl CueList {
     /// Liegen alle Cues in der Liste des Ziels vor ihm, landen sie dahinter,
     /// sonst davor. Die verschobenen Cues bleiben selektiert.
     pub fn move_ids_by_id(&mut self, ids: &[Uuid], target: Uuid, into_group: bool) -> bool {
+        let place = if into_group {
+            DropPlace::Into
+        } else {
+            let to = locate(&self.cues, target);
+            let down = to.is_some_and(|to| {
+                ids.iter().all(|id| {
+                    locate(&self.cues, *id).is_some_and(|from| from.0 == to.0 && from.1 < to.1)
+                })
+            });
+            if down {
+                DropPlace::After
+            } else {
+                DropPlace::Before
+            }
+        };
+        self.move_ids_to(ids, target, place)
+    }
+
+    /// Verschiebt Cues (auch eine Mehrfachauswahl) an eine genaue Stelle
+    /// relativ zur Zielzeile: davor, dahinter (in deren Liste) oder in die
+    /// Ziel-Gruppe (als letzte bzw. erste Kinder). Die Cues bleiben in
+    /// List-Reihenfolge zusammen; Kinder einer mitgezogenen Gruppe bleiben in
+    /// ihrer Gruppe. Die verschobenen Cues bleiben selektiert.
+    pub fn move_ids_to(&mut self, ids: &[Uuid], target: Uuid, place: DropPlace) -> bool {
+        let into_group = matches!(place, DropPlace::Into | DropPlace::IntoFirst);
         if ids.contains(&target) {
             return false;
         }
@@ -497,9 +567,9 @@ impl CueList {
         {
             return false;
         }
-        let Some(to) = locate(&self.cues, target) else {
+        if locate(&self.cues, target).is_none() {
             return false;
-        };
+        }
         // Nur die äußersten Cues bewegen (Kinder einer mitgezogenen Gruppe
         // wandern mit ihr), in List-Reihenfolge.
         let mut order = Vec::new();
@@ -519,9 +589,6 @@ impl CueList {
         if moved.is_empty() {
             return false;
         }
-        let down = moved
-            .iter()
-            .all(|id| locate(&self.cues, *id).is_some_and(|from| from.0 == to.0 && from.1 < to.1));
         let cursor_id = self.cues.get(self.cursor).map(|c| c.id);
         let cues: Vec<Cue> = moved
             .iter()
@@ -531,16 +598,21 @@ impl CueList {
             let Some(group) = self.find_cue_mut(target) else {
                 return false;
             };
-            for mut cue in cues {
+            let at = if place == DropPlace::IntoFirst {
+                0
+            } else {
+                group.children.len()
+            };
+            for (offset, mut cue) in cues.into_iter().enumerate() {
                 cue.parent_group = Some(target);
-                group.children.push(cue);
+                group.children.insert(at + offset, cue);
             }
         } else {
             // Zielliste + Position (nach dem Entnehmen neu bestimmt).
             let Some(at) = locate(&self.cues, target) else {
                 return false;
             };
-            let index = at.1 + usize::from(down);
+            let index = at.1 + usize::from(place == DropPlace::After);
             let (list, parent) = match at.0 {
                 None => (&mut self.cues, None),
                 Some(group_id) => match self.find_cue_mut(group_id) {
@@ -657,23 +729,58 @@ impl CueList {
     /// Index des getriggerten Cues und die zu sendenden Engine-Commands.
     /// `None`, wenn kein Cue in Standby ist.
     pub fn go(&mut self) -> Option<GoOutcome> {
+        self.go_with(false)
+    }
+
+    /// GO des Bedieners (GO-Button, Leertaste): wie [`Self::go`], aber der
+    /// nächste armed Cue ab dem Playhead startet auch, wenn er schon gespielt
+    /// hat oder noch läuft (dann neu). Nach einem Stop-Cue bleibt der Playhead
+    /// auf ihm (nur Cue-Typ Stop) – Stop ist Stop, bis der Playhead woanders
+    /// hin gesetzt wird.
+    pub fn go_operator(&mut self) -> Option<GoOutcome> {
+        self.go_with(true)
+    }
+
+    fn go_with(&mut self, restart: bool) -> Option<GoOutcome> {
         // Ein GO pro Kind: Playhead auf einer laufenden Gruppe → ihr nächstes Kind.
         if let Some(outcome) = self.go_group_child() {
             return Some(outcome);
         }
+        // Nächster armed Cue ab dem Playhead – auch einer, der schon gespielt
+        // hat oder noch läuft (zweiter Durchlauf, stehender Text/Bild): der
+        // wird neu gestartet. Nur laufende Gruppen bleiben unberührt.
         let index = self
             .cues
             .iter()
             .enumerate()
             .skip(self.cursor)
-            .find(|(_, c)| c.is_armed && c.status == CueStatus::Standby)
+            .find(|(_, c)| {
+                c.is_armed
+                    && (c.status == CueStatus::Standby
+                        || (restart && !(c.cue_type == CueType::Group && c.status.is_active())))
+            })
             .map(|(i, _)| i)?;
         let id = self.cues[index].id;
+        let mut commands = Vec::new();
+        if self.cues[index].status.is_active() {
+            commands.extend(self.stop_running(id));
+            self.restarted.insert(id);
+        }
+        if self.cues[index].status != CueStatus::Standby {
+            self.cues[index].reset_status_recursive();
+        }
+        // Nur der Cue-Typ Stop hält den Playhead an; Control-Cues mit der
+        // Aktion Stop steuern andere Cues, der Ablauf geht weiter.
+        let is_stop = self.cues[index].cue_type == CueType::Stop;
         self.cursor = index + 1;
         self.select_id(Some(id));
 
-        let mut commands = Vec::new();
         self.trigger_at(index, &mut commands);
+        // Stop ist Stop: der Playhead bleibt auf dem Stop-Cue.
+        if restart && is_stop {
+            self.cursor = index;
+            return Some(GoOutcome { index, commands });
+        }
         // Follow-Kette synchron weiterführen, wenn der getriggerte Cue sie selbst
         // anstößt (Sofort-Cue + AutoContinue bzw. Playing + AutoFollow, Review B6/B7).
         // Iterativ mit Guard in continue_chain_from – kein rekursiver Aufruf aus
@@ -691,11 +798,11 @@ impl CueList {
     /// Auto-Continue erreicht ist (Safety-Guard: max. 100 Verkettungen).
     /// Rückgabe: Index des ersten Cues + alle gesammelten Commands.
     pub fn go_chained(&mut self) -> Option<GoOutcome> {
-        // Beim GO feuert nur der Standby-Cue. Auto-Continue
+        // GO des Bedieners (siehe `go_operator`). Auto-Continue
         // feuert den Folge-Cue erst, wenn der laufende Cue abgeschlossen ist
         // (inkl. Post-Wait → `set_status_with_follow` bei Completed);
         // Auto-Follow feuert beim Start (Playing). Deshalb hier kein Chaining.
-        self.go()
+        self.go_operator()
     }
 
     /// Externer Timecode (LTC/MTC/OSC) erreicht die Liste: alle armed
@@ -955,6 +1062,10 @@ impl CueList {
             return;
         }
         let through = !group.group_go_per_child;
+        // Play through: immer nur ein Kind zur Zeit.
+        if through && group.children.iter().any(|c| c.status.is_active()) {
+            return;
+        }
         let order = group.group_play_order.clone();
         for id in order {
             let Some(child) = group.children.iter_mut().find(|c| c.id == id) else {
@@ -1008,10 +1119,23 @@ impl CueList {
             }
             ControlAction::Stop => match self.find_index_by_number(target_number.as_deref()) {
                 Some(t) => {
+                    // Wie der Stop-Button: Gruppen stoppen ihre Kinder mit
+                    // (inkl. Fade-Out der Gruppe), der Status folgt sofort.
+                    // Das Stop selbst nimmt auch ein stehendes letztes Bild weg.
                     let id = self.cues[t].id;
+                    commands.extend(self.stop_running(id));
                     commands.push(EngineCommand::Stop { cue_id: id });
                 }
-                None => commands.push(EngineCommand::StopAll),
+                None => {
+                    commands.push(EngineCommand::StopAll);
+                    // Die Engine kennt keine Gruppen: alles Laufende in der
+                    // Liste (auch Gruppen) gleich als gestoppt markieren –
+                    // außer diesem Control-Cue selbst.
+                    let own = self.cues[index].id;
+                    for cue in self.cues.iter_mut().filter(|c| c.id != own) {
+                        cue.stop_running_recursive();
+                    }
+                }
             },
             ControlAction::Pause => match self.find_index_by_number(target_number.as_deref()) {
                 Some(t) => {
@@ -1172,10 +1296,21 @@ impl CueList {
     /// Bei Children wird nach dem Update die Eltern-Gruppe geprüft
     /// (Close-if-done bzw. Loop-Re-Arm).
     pub fn set_status(&mut self, id: Uuid, status: CueStatus) -> ShowResult<()> {
+        // `Stopped` der alten Instanz eines per GO neu gestarteten Cues.
+        if status == CueStatus::Stopped && self.restarted.remove(&id) {
+            return Ok(());
+        }
         let parent_group = {
             let cue = self
                 .find_cue_mut(id)
                 .ok_or_else(|| ShowError::CueNotFound(id.to_string()))?;
+            // Verspätete Fertig-Meldung (z. B. `PostWaitElapsed` nach
+            // `Finished`) für einen Cue, der inzwischen wieder bereit ist –
+            // etwa ein Gruppen-Kind nach dem Re-Arm der Wiederholung: ignorieren,
+            // sonst gilt er als gespielt und die Gruppe startet das nächste Kind.
+            if status == CueStatus::Completed && cue.status == CueStatus::Standby {
+                return Ok(());
+            }
             cue.transition_status(status)?;
             cue.parent_group
         };
@@ -1405,8 +1540,9 @@ impl CueList {
         commands
     }
 
-    /// „Eins weiter" in einer laufenden Sequential/Shuffle-Gruppe: das gerade
-    /// laufende Kind stoppen (zählt als fertig) und das nächste starten – nach
+    /// „Eins weiter" in einer laufenden oder pausierten Sequential/Shuffle-
+    /// Gruppe: das aktuelle Kind stoppen (zählt als fertig) und das nächste
+    /// starten – nach
     /// dem letzten wie am Ende eines Durchgangs (Wiederholung bzw. Schluss).
     /// Rückgabe: die zu sendenden Commands (leer, wenn nichts zu tun ist).
     pub fn skip_in_group(&mut self, group_id: Uuid) -> Vec<EngineCommand> {
@@ -1415,8 +1551,13 @@ impl CueList {
             return commands;
         };
         let sequence = matches!(group.group_mode, GroupMode::Sequential | GroupMode::Shuffle);
-        if group.cue_type != CueType::Group || group.status != CueStatus::Playing || !sequence {
+        let running = matches!(group.status, CueStatus::Playing | CueStatus::Paused);
+        if group.cue_type != CueType::Group || !running || !sequence {
             return commands;
+        }
+        // Pausierte Gruppe: „eins weiter" spielt das nächste Kind ab.
+        if group.status == CueStatus::Paused {
+            let _ = group.transition_status(CueStatus::Playing);
         }
         for child in &mut group.children {
             if !child.status.is_active() {
@@ -1768,6 +1909,97 @@ mod tests {
         // Kein Gruppen-Ziel: nichts geht verloren.
         assert!(!list.move_ids_by_id(&[ids["1"]], ids["3"], true));
         assert_eq!(numbers(list.cues()), ["2", "1", "3"]);
+    }
+
+    /// GO des Bedieners: ein schon gespielter bzw. noch laufender Cue am
+    /// Playhead startet (neu); das `Stopped` der alten Instanz beendet den
+    /// neuen Lauf nicht. Nach einem Stop-Cue bleibt der Playhead stehen.
+    #[test]
+    fn operator_go_restarts_played_cues_and_stays_on_stop() {
+        let mut list = CueList::new();
+        let mut text = Cue::new("1", "Text", CueType::Wait);
+        text.duration = Duration::from_secs(60);
+        let text_id = text.id;
+        list.add(text);
+        list.add(Cue::new("2", "Blackout", CueType::Stop));
+        list.add(audio("3"));
+        let _ = list.go_operator().unwrap();
+        assert_eq!(list.cues()[0].status, CueStatus::Playing);
+        // Zweiter Durchlauf, der Text läuft noch: GO startet ihn neu.
+        list.set_cursor(0);
+        let outcome = list.go_operator().unwrap();
+        assert_eq!(outcome.index, 0);
+        assert!(outcome
+            .commands
+            .contains(&EngineCommand::Stop { cue_id: text_id }));
+        assert_eq!(list.cues()[0].status, CueStatus::Playing);
+        // Das späte Stopped der alten Instanz beendet den neuen Lauf nicht.
+        list.set_status(text_id, CueStatus::Stopped).unwrap();
+        assert_eq!(list.cues()[0].status, CueStatus::Playing);
+        // Stop-Cue: Playhead bleibt darauf, auch beim nächsten GO.
+        let outcome = list.go_operator().unwrap();
+        assert_eq!(outcome.index, 1);
+        assert_eq!(list.cursor(), 1, "playhead stays on the stop cue");
+        let outcome = list.go_operator().unwrap();
+        assert_eq!(outcome.index, 1, "GO on stop just stops again");
+        assert_eq!(list.cursor(), 1);
+        assert_eq!(
+            list.cues()[2].status,
+            CueStatus::Standby,
+            "cue after stop not started"
+        );
+
+        // Ein Control-Cue „Stop“ hält den Playhead nicht an.
+        let mut list = CueList::new();
+        list.add(Cue::new("1", "stop all", CueType::Control).with_control(ControlAction::Stop));
+        list.add(audio("2"));
+        let _ = list.go_operator().unwrap();
+        assert_eq!(list.cursor(), 1, "control stop moves on");
+    }
+
+    /// Stop ohne Ziel beendet auch laufende Gruppen (die Engine kennt sie
+    /// nicht); Stop auf eine Gruppe stoppt deren Kinder.
+    #[test]
+    fn stop_control_cue_stops_running_groups() {
+        let mut list = CueList::new();
+        let group = Cue::new_group("1", "G", GroupMode::Sequential, vec![audio("1.1")]);
+        list.add(group);
+        list.add(Cue::new("2", "stop", CueType::Control).with_control(ControlAction::Stop));
+        let _ = list.go().unwrap();
+        assert_eq!(list.cues()[0].status, CueStatus::Playing);
+        let outcome = list.go().unwrap();
+        assert!(outcome.commands.contains(&EngineCommand::StopAll));
+        assert_eq!(list.cues()[0].status, CueStatus::Stopped, "group stopped");
+        assert_eq!(list.cues()[0].children[0].status, CueStatus::Stopped);
+        assert_eq!(
+            list.cues()[1].status,
+            CueStatus::Completed,
+            "control cue itself done"
+        );
+
+        let mut list = CueList::new();
+        list.add(Cue::new_group(
+            "1",
+            "G",
+            GroupMode::Sequential,
+            vec![audio("1.1")],
+        ));
+        list.add(
+            Cue::new("2", "stop G", CueType::Control)
+                .with_control(ControlAction::Stop)
+                .with_control_target("1"),
+        );
+        let _ = list.go().unwrap();
+        let child = list.cues()[0].children[0].id;
+        let outcome = list.go().unwrap();
+        assert!(
+            outcome
+                .commands
+                .contains(&EngineCommand::Stop { cue_id: child }),
+            "children of the target group are stopped: {:?}",
+            outcome.commands
+        );
+        assert_eq!(list.cues()[0].status, CueStatus::Stopped);
     }
 
     #[test]

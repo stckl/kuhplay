@@ -18,6 +18,20 @@ use crate::gui::app::ShowApp;
 
 /// Tab „Basics".
 pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
+    // Vorschläge fürs Control-Ziel: alle Cues mit Nummer (inkl. Gruppen-Kinder).
+    let suggestions: Vec<(uuid::Uuid, String, String)> = {
+        fn walk(cues: &[crate::core::Cue], out: &mut Vec<(uuid::Uuid, String, String)>) {
+            for cue in cues {
+                if !cue.number.is_empty() {
+                    out.push((cue.id, cue.number.clone(), cue.name.clone()));
+                }
+                walk(&cue.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(app.carts.active().cues(), &mut out);
+        out
+    };
     let Some(cue) = app.carts.selected_mut() else {
         ui.label(RichText::new("No cue selected").weak());
         return;
@@ -50,7 +64,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
             // Target-Zeile: je nach Typ (Target prominent in Basics).
             theme::field_label(ui, "Target");
             match cue.cue_type {
-                CueType::Audio | CueType::Video => {
+                CueType::Audio | CueType::Video | CueType::Image => {
                     ui.horizontal(|ui| {
                         let mut path_text = cue.target_path.clone().unwrap_or_default();
                         let path_resp = ui
@@ -79,16 +93,76 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                     });
                 }
                 CueType::Control => {
+                    let own = cue.id;
                     ui.horizontal(|ui| {
-                        if let Some(target) = &mut cue.control_target {
-                            let r = ui
-                                .text_edit_singleline(target)
-                                .on_hover_text("Target cue number (empty = all)");
-                            app.text_field_ids.insert(r.id);
-                        } else if ui.small_button("add target").clicked() {
-                            cue.control_target = Some(String::new());
+                        let target = cue.control_target.get_or_insert_with(String::new);
+                        let r = ui
+                            .add(
+                                egui::TextEdit::singleline(target)
+                                    .hint_text("all")
+                                    .desired_width(field_width - 70.0),
+                            )
+                            .on_hover_text(
+                                "Target cue number (empty = all) – type, pick from ▾ \
+                                 or drag a cue here from the cue list",
+                            );
+                        app.text_field_ids.insert(r.id);
+                        // Cue aus der Liste hierher gezogen → seine Nummer.
+                        if let Some(id) = super::dropped_cue(ui, &r) {
+                            if let Some((_, number, _)) = suggestions
+                                .iter()
+                                .find(|(sid, ..)| *sid == id && *sid != own)
+                            {
+                                *target = number.clone();
+                            }
+                        }
+                        // Vorschläge: passend zum Getippten (Nummer oder Name).
+                        let query = target.trim().to_lowercase();
+                        ui.menu_button("▾", |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(260.0)
+                                .show(ui, |ui| {
+                                    if ui.button("— all —").clicked() {
+                                        target.clear();
+                                        ui.close_menu();
+                                    }
+                                    for (id, number, name) in &suggestions {
+                                        if *id == own {
+                                            continue;
+                                        }
+                                        let hit = query.is_empty()
+                                            || number.to_lowercase().contains(&query)
+                                            || name.to_lowercase().contains(&query);
+                                        if hit && ui.button(format!("{number}  {name}")).clicked() {
+                                            *target = number.clone();
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                        })
+                        .response
+                        .on_hover_text("Choose the target cue");
+                        // Aufgelöstes Ziel anzeigen (oder Warnung).
+                        let number = target.trim();
+                        if !number.is_empty() {
+                            match suggestions.iter().find(|(_, n, _)| n == number) {
+                                Some((_, _, name)) => {
+                                    ui.label(RichText::new(name).color(palette::TEXT_DIM));
+                                }
+                                None => {
+                                    ui.label(RichText::new("unknown").color(palette::ERROR));
+                                }
+                            }
                         }
                     });
+                    // Leer = „alle" bzw. der Cue selbst (wie ohne Ziel).
+                    if cue
+                        .control_target
+                        .as_deref()
+                        .is_some_and(|t| t.trim().is_empty())
+                    {
+                        cue.control_target = None;
+                    }
                 }
                 _ => {
                     ui.label(RichText::new("—").weak());
@@ -225,6 +299,7 @@ pub fn draw_basics(ui: &mut egui::Ui, app: &mut ShowApp) {
                 cue.cue_type,
                 CueType::Video
                     | CueType::SlideShow
+                    | CueType::Image
                     | CueType::Html
                     | CueType::Text
                     | CueType::Audio

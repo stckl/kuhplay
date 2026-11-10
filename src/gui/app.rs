@@ -230,6 +230,8 @@ pub struct ShowApp {
     pub displays: Vec<display_info::DisplayInfo>,
     /// Stage-Editor (eigenes Fenster): Stage-ID, oder `None` = zu.
     pub stage_editor_open: Option<Uuid>,
+    /// Offenes Timeline-Fenster (Gruppen-ID).
+    pub timeline_window: Option<Uuid>,
     /// Multi-Output-Assistent („New Stage → Multi-Output Stage…“).
     pub multi_output_wizard: Option<MultiOutputWizard>,
     /// Optionaler Auto-Demo-Modus (automatische GO-Abfolge für Screen-Tests).
@@ -614,6 +616,7 @@ impl ShowApp {
             closed_device_outputs: Default::default(),
             displays,
             stage_editor_open: None,
+            timeline_window: None,
             multi_output_wizard: None,
             autodemo,
             remote: None,
@@ -1079,7 +1082,11 @@ impl ShowApp {
                 let is_picture = |c: &Cue| {
                     matches!(
                         c.cue_type,
-                        CueType::Video | CueType::SlideShow | CueType::Html | CueType::Text
+                        CueType::Video
+                            | CueType::SlideShow
+                            | CueType::Image
+                            | CueType::Html
+                            | CueType::Text
                     )
                 };
                 let mut stops: Vec<Uuid> = Vec::new();
@@ -1113,7 +1120,7 @@ impl ShowApp {
                         cue_id: new_cue.id,
                         wait_for_picture: matches!(
                             new_cue.cue_type,
-                            CueType::Video | CueType::SlideShow | CueType::Html
+                            CueType::Video | CueType::SlideShow | CueType::Image | CueType::Html
                         ) && new_cue.stage.is_some(),
                         stops,
                         fade: if new_cue.kill_others {
@@ -1126,9 +1133,17 @@ impl ShowApp {
                 self.dispatch(commands);
             }
             None => {
-                tracing::warn!("GO: no armed cue in standby");
-                self.last_error =
-                    Some("GO: no armed cue in Standby after the playhead".to_string());
+                let list = self.carts.active();
+                if !list.is_empty() {
+                    // Ab dem Playhead ist nichts mehr startbar (Ende der Liste
+                    // oder nur noch laufende Cues wie ein stehender Text-Cue):
+                    // zurück an den Anfang, das nächste GO spielt den ersten Cue.
+                    self.carts.set_cursor(0);
+                } else {
+                    tracing::warn!("GO: no armed cue in standby");
+                    self.last_error =
+                        Some("GO: no armed cue in Standby after the playhead".to_string());
+                }
             }
         }
         self.remote_dirty = true;
@@ -1173,7 +1188,9 @@ impl ShowApp {
             let params: &[FadeParam] = match cue_type {
                 CueType::Audio => &[FadeParam::Volume],
                 CueType::Video => &[FadeParam::Volume, FadeParam::Opacity],
-                CueType::SlideShow | CueType::Html | CueType::Text => &[FadeParam::Opacity],
+                CueType::SlideShow | CueType::Image | CueType::Html | CueType::Text => {
+                    &[FadeParam::Opacity]
+                }
                 _ => &[],
             };
             // Panic: Fade auf 0 mit from=None (aktueller Wert, kein Sprung) –
@@ -1335,19 +1352,55 @@ impl ShowApp {
     /// Datei als Target, Dateiname als Cue-Name; neuer Cue wird selektiert.
     /// Im Show-Mode oder bei unbekannter Endung → `None`.
     /// Rückgabe: ID des neuen Cues. Public für headless GUI-Tests.
+    /// Datei-Drop: legt je Datei einen Cue an – auf eine Gruppe gezogen als
+    /// Kinder hinein, auf einen anderen Cue dahinter (in Reihenfolge). Ohne
+    /// Zeile unter dem Zeiger zählt die Auswahl, wenn sie eine Gruppe bzw. ein
+    /// Gruppen-Kind ist (macOS meldet beim Ziehen nicht immer die Position);
+    /// sonst ans Ende. Rückgabe: IDs der neuen Cues.
+    pub fn add_cues_from_files(&mut self, paths: &[PathBuf], target: Option<Uuid>) -> Vec<Uuid> {
+        if self.show_mode {
+            return Vec::new();
+        }
+        let list = self.carts.active();
+        let target = target.filter(|t| list.find_cue(*t).is_some()).or_else(|| {
+            list.primary_selection()
+                .and_then(|id| list.find_cue(id))
+                .filter(|c| c.cue_type == CueType::Group || c.parent_group.is_some())
+                .map(|c| c.id)
+        });
+        let into_group = target
+            .and_then(|t| list.find_cue(t))
+            .is_some_and(|c| c.cue_type == CueType::Group);
+        let mut at = target;
+        let mut added = Vec::new();
+        for path in paths {
+            let stage = self.stages.names().into_iter().next();
+            let number = self.carts.active().next_free_number();
+            let Some(cue) = cue_from_file(number, path, stage.as_deref()) else {
+                continue;
+            };
+            let id = cue.id;
+            self.carts.active_mut().insert_at_target(at, cue);
+            // Mehrere Dateien bleiben in ihrer Reihenfolge zusammen.
+            if !into_group {
+                at = Some(id);
+            }
+            added.push(id);
+        }
+        if let Some(last) = added.last() {
+            self.carts.active_mut().select_id(Some(*last));
+        }
+        added
+    }
+
     pub fn add_cue_from_file(&mut self, path: &Path) -> Option<Uuid> {
         if self.show_mode {
             return None;
         }
-        let cue_type = cue_type_for_file(path)?;
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let stage = self.stages.names().into_iter().next();
         let list = self.carts.active_mut();
-        let n = list.next_free_number();
+        let cue = cue_from_file(list.next_free_number(), path, stage.as_deref())?;
         let at = list.cues().len();
-        let cue = Cue::new(n.to_string(), name, cue_type).with_target(path.to_string_lossy());
         let id = cue.id;
         list.insert(at, cue);
         list.select(Some(at));
@@ -2593,6 +2646,7 @@ impl ShowApp {
                 CueType::Audio | CueType::Video => self.media_duration_of(cue)?,
                 CueType::Html
                 | CueType::SlideShow
+                | CueType::Image
                 | CueType::Text
                 | CueType::Fade
                 | CueType::Wait => return None,
@@ -3929,21 +3983,8 @@ impl ShowApp {
                     // Löschen stoppt laufende Cues vorher (Engine `Stop`).
                     self.delete_cue_by_id(*id);
                 }
-                if let Some((from, to)) = actions.move_to {
-                    self.carts.active_mut().move_to(from, to);
-                }
-                if let Some((dragged, target, into_group)) = actions.move_cue {
-                    self.carts
-                        .active_mut()
-                        .move_by_id(dragged, target, into_group);
-                }
-                if let Some((ids, target, into_group)) = &actions.move_cues {
-                    self.carts
-                        .active_mut()
-                        .move_ids_by_id(ids, *target, *into_group);
-                }
-                if let Some((cue, group)) = actions.move_into_group {
-                    self.carts.active_mut().move_into_group(cue, group);
+                if let Some((ids, target, place)) = &actions.move_cues {
+                    self.carts.active_mut().move_ids_to(ids, *target, *place);
                 }
                 if !actions.duplicate.is_empty() {
                     self.duplicate_cues(&actions.duplicate);
@@ -4005,6 +4046,7 @@ impl ShowApp {
         super::workspace_settings::draw(ctx, self);
         // Stage-Editor, Route-Editor und Multi-Output-Assistent (Video).
         super::stage_editor::draw(ctx, self);
+        super::inspector::draw_timeline_window(ctx, self);
         super::workspace_settings::draw_multi_output_wizard(ctx, self);
     }
 
@@ -4089,11 +4131,17 @@ impl eframe::App for ShowApp {
 
         // Datei-Drop aus dem Finder (docs/TODO-offen.md Phase 6): Audio-/Video-/
         // Bild-Dateien legen passende Cues im aktiven Cart an.
-        let dropped: Vec<egui::DroppedFile> = ctx.input(|i| i.raw.dropped_files.clone());
-        for file in &dropped {
-            if let Some(path) = &file.path {
-                self.add_cue_from_file(path);
-            }
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            let target: Option<Uuid> =
+                ctx.data_mut(|d| d.remove_temp(cue_table::file_drop_target_id()));
+            self.add_cues_from_files(&dropped, target);
         }
 
         #[cfg(target_os = "macos")]
@@ -4130,6 +4178,13 @@ impl eframe::App for ShowApp {
 
     /// Persistiert das UI-Layout (Panel-Sichtbarkeit, Tabs, Fenster) beim
     /// Beenden (Workspace bleibt über Neustarts erhalten).
+    /// egui-eigenen Zustand nicht speichern: Beim Wiederherstellen ging die
+    /// Icon-Schrift verloren (Absturz „phosphor is not bound to any fonts").
+    /// Layout & Co. speichert KuhPlay selbst (`save_ui_state`).
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_ui_state(storage);
         self.save_ui_templates(storage);
@@ -4145,4 +4200,34 @@ fn armed_pass(app: &ShowApp, group: &Cue) -> Option<Duration> {
         .filter(|c| c.is_armed)
         .map(|c| Some(c.pre_wait + app.runtime_of(c)? + c.post_wait))
         .try_fold(Duration::ZERO, |sum, d| d.map(|d| sum + d))
+}
+
+/// Cue für eine gedroppte Datei (Typ aus der Endung; `None` = nicht abspielbar).
+fn cue_from_file(number: impl std::fmt::Display, path: &Path, stage: Option<&str>) -> Option<Cue> {
+    let cue_type = cue_type_for_file(path)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let mut cue = Cue::new(number.to_string(), name, cue_type);
+    // Bild-Cues gleich auf die erste Stage (sonst wären sie nirgends zu sehen),
+    // HTML eine Ebene darüber – wie beim Ordner-Import.
+    if let Some(stage) = stage {
+        let layer = match cue_type {
+            CueType::Video | CueType::Image => Some(1),
+            CueType::Html => Some(2),
+            _ => None,
+        };
+        if let Some(layer) = layer {
+            cue = cue
+                .with_stage(stage)
+                .with_layer(layer)
+                .with_surface(crate::core::SurfaceGeometry::fit());
+        }
+    }
+    Some(match cue_type {
+        // HTML: Seite als Datei-Quelle (der Renderer lädt sie).
+        CueType::Html => cue.with_html_source(crate::core::HtmlSource::file(path)),
+        _ => cue.with_target(path.to_string_lossy()),
+    })
 }

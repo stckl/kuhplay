@@ -22,7 +22,7 @@
 
 use std::time::Duration;
 
-use kuhplay::core::{CartManager, ContinueMode, Cue, CueStatus, CueType, GroupMode};
+use kuhplay::core::{CartManager, ContinueMode, Cue, CueStatus, CueType, DropPlace, GroupMode};
 use kuhplay::engine::{EngineCommand, EngineEvent};
 use kuhplay::gui::state::{CueColumnLayout, FindState};
 use kuhplay::gui::{cue_table, ShowApp};
@@ -242,9 +242,7 @@ fn actions_nonempty(a: &cue_table::CueTableActions) -> bool {
         || !a.group.is_empty()
         || a.arm.is_some()
         || a.color.is_some()
-        || a.move_to.is_some()
-        || a.move_into_group.is_some()
-        || a.move_cue.is_some()
+        || a.move_cues.is_some()
 }
 
 /// Dreifach-Klick (Move → Press → Release) mit Modifikatoren und
@@ -1282,7 +1280,8 @@ fn triangle_click_collapses_and_expands_group() {
     );
 }
 
-/// Drag & Drop: Zeile 0 auf Zeile 2 ziehen meldet `move_to = (0, 2)`
+/// Drag & Drop: Zeile 0 auf die untere Hälfte von Zeile 2 ziehen meldet
+/// „hinter Zeile 2“
 /// (die Tabelle sortiert nicht selbst um).
 #[test]
 fn drag_and_drop_reorder_requests_move() {
@@ -1311,6 +1310,8 @@ fn drag_and_drop_reorder_requests_move() {
     );
     let y0 = find_row_y(&ctx, &mut carts, 0, &mut time).expect("Zeile 0 selektierbar");
     let y2 = find_row_y(&ctx, &mut carts, 2, &mut time).expect("Zeile 2 selektierbar");
+    // `find_row_y` liefert die Oberkante: Drop in die untere Hälfte von Zeile 2.
+    let y2 = y2 + (y2 - y0) / 2.0 * 0.75;
 
     // Press auf Zeile 0, dann (gedrückt) zur Zeile 2 bewegen, loslassen.
     time += 0.05;
@@ -1357,10 +1358,11 @@ fn drag_and_drop_reorder_requests_move() {
         time,
     );
 
+    let ids: Vec<_> = carts.active().cues().iter().map(|c| c.id).collect();
     assert_eq!(
-        actions.move_to,
-        Some((0, 2)),
-        "Drag & Drop meldet die Umordnung (von 0 auf 2)"
+        actions.move_cues,
+        Some((vec![ids[0]], ids[2], DropPlace::After)),
+        "Drag & Drop meldet die Umordnung (Zeile 0 hinter Zeile 2)"
     );
     assert_eq!(
         carts.active().cues()[0].number,
@@ -2829,11 +2831,16 @@ fn dropped_files_create_matching_cues() {
         CueType::Video
     );
     app.add_cue_from_file(Path::new("/slides/bild.png"))
-        .expect("png → Slideshow");
-    assert_eq!(
-        app.carts().active().cues().last().unwrap().cue_type,
-        CueType::SlideShow
-    );
+        .expect("png → Image");
+    let image = app.carts().active().cues().last().unwrap();
+    assert_eq!(image.cue_type, CueType::Image);
+    assert_eq!(image.target_path.as_deref(), Some("/slides/bild.png"));
+    assert!(image.stage.is_some(), "Bild liegt gleich auf einer Stage");
+    app.add_cue_from_file(Path::new("/show/lower-third.html"))
+        .expect("html → HTML5-Cue");
+    let html = app.carts().active().cues().last().unwrap();
+    assert_eq!(html.cue_type, CueType::Html);
+    assert!(html.html_source.is_some(), "HTML-Datei als Quelle");
 
     let n = app.carts().active().len();
     assert!(
@@ -3155,7 +3162,7 @@ fn fade_cue_ui_to_go_to_finished_chain() {
 }
 
 /// Drag & Drop innerhalb einer Gruppe: Kind 5.2 auf Kind 5.1 ziehen meldet
-/// `move_cue` mit den IDs (Gruppen-Kinder sind ziehbar und Ablageziel).
+/// „vor Kind A“ (Gruppen-Kinder sind ziehbar und Ablageziel).
 #[test]
 fn drag_and_drop_inside_a_group_requests_move_by_id() {
     let ctx = egui::Context::default();
@@ -3212,15 +3219,19 @@ fn drag_and_drop_inside_a_group_requests_move_by_id() {
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
-    let (from, to) = (egui::pos2(250.0, y_second), egui::pos2(250.0, y_first));
+    // Obere Hälfte von Kind A (y_first = Oberkante) = davor.
+    let (from, to) = (
+        egui::pos2(250.0, y_second),
+        egui::pos2(250.0, y_first + row * 0.2),
+    );
     step(vec![egui::Event::PointerMoved(from)], &mut time);
     step(vec![button(from, true)], &mut time);
     step(vec![egui::Event::PointerMoved(to)], &mut time);
     let actions = step(vec![button(to, false)], &mut time);
     assert_eq!(
-        actions.move_cue,
-        Some((second, first, false)),
-        "Kind auf Kind gezogen"
+        actions.move_cues,
+        Some((vec![second], first, DropPlace::Before)),
+        "Kind vor Kind gezogen"
     );
 }
 
@@ -3244,4 +3255,78 @@ fn group_runtime_sums_or_takes_the_latest_end() {
     assert_eq!(app.group_runtime(&seq), Some(Duration::from_secs(46)));
     seq.loop_mode = kuhplay::core::LoopMode::Infinite;
     assert_eq!(app.group_runtime(&seq), None);
+}
+
+/// Dateien auf eine Gruppe gezogen landen darin (in Reihenfolge), auf einen
+/// Cue gezogen direkt dahinter; ohne Zeile zählt eine ausgewählte Gruppe.
+#[test]
+fn dropped_files_land_in_the_group_or_behind_the_target() {
+    use std::path::PathBuf;
+    let mut app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    app.new_show();
+    let group = Cue::new_group("1", "Playlist", GroupMode::Sequential, vec![]);
+    let group_id = group.id;
+    let after = Cue::new("2", "danach", CueType::Memo);
+    let after_id = after.id;
+    app.carts_mut().active_mut().add(group);
+    app.carts_mut().active_mut().add(after);
+    let files = [PathBuf::from("/m/a.mp3"), PathBuf::from("/m/b.mp3")];
+
+    app.add_cues_from_files(&files, Some(group_id));
+    let names = |app: &ShowApp, i: usize| -> Vec<String> {
+        app.carts().active().cues()[i]
+            .children
+            .iter()
+            .map(|c| c.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&app, 0), ["a.mp3", "b.mp3"]);
+    let child = &app.carts().active().cues()[0].children[0];
+    assert_eq!(child.parent_group, Some(group_id));
+
+    // Auf einen Cue: dahinter, in Reihenfolge.
+    app.add_cues_from_files(&files, Some(after_id));
+    let top: Vec<String> = app
+        .carts()
+        .active()
+        .cues()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    assert_eq!(top, ["Playlist", "danach", "a.mp3", "b.mp3"]);
+
+    // Ohne Zeile unter dem Zeiger: ausgewählte Gruppe.
+    app.carts_mut().active_mut().select_id(Some(group_id));
+    app.add_cues_from_files(&[PathBuf::from("/m/c.wav")], None);
+    assert_eq!(names(&app, 0), ["a.mp3", "b.mp3", "c.wav"]);
+}
+
+/// GO ohne Playhead (am Listenende): Playhead an den Anfang statt Fehler.
+#[test]
+fn go_at_the_end_of_the_list_moves_the_playhead_to_the_first_cue() {
+    let mut app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    app.new_show();
+    app.carts_mut()
+        .active_mut()
+        .add(Cue::new("1", "eins", CueType::Memo));
+    app.carts_mut().active_mut().set_cursor(1);
+    app.go_now();
+    assert_eq!(app.carts().active().cursor(), 0);
+    assert!(app.last_error().is_none(), "kein Fehler am Listenende");
+    app.go_now();
+    assert_eq!(app.carts().active().cues()[0].status, CueStatus::Completed);
+
+    // Hinter dem Playhead nur noch ein laufender Cue (z. B. stehender Text):
+    // GO springt an den Anfang statt hängen zu bleiben.
+    let mut text = Cue::new("2", "Text", CueType::Wait);
+    text.duration = std::time::Duration::from_secs(60);
+    app.carts_mut().active_mut().add(text);
+    app.carts_mut().active_mut().set_cursor(1);
+    app.go_now();
+    assert!(app.carts().active().cues()[1].status.is_active());
+    app.go_now(); // nichts mehr startbar → Playhead an den Anfang
+    assert_eq!(app.carts().active().cursor(), 0, "wieder am Anfang");
+    assert!(app.last_error().is_none());
+    app.go_now();
+    assert_eq!(app.carts().active().cues()[0].status, CueStatus::Completed);
 }

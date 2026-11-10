@@ -83,7 +83,7 @@ pub use cue::{
     cue_type_for_file, format_timecode, parse_timecode, ContinueMode, ControlAction, Cue,
     CueStatus, CueTrigger, CueType, GroupMode, LoopMode, CUE_COLORS,
 };
-pub use cue_list::{CueList, GoOutcome};
+pub use cue_list::{CueList, DropPlace, GoOutcome};
 pub use error::{ShowError, ShowResult};
 pub use html::{HtmlSource, HtmlSourceKind};
 pub use light::{LightMessage, LightProtocol, ARTNET_PORT, DMX_CHANNELS, SACN_PORT};

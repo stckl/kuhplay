@@ -32,7 +32,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     };
     if !matches!(
         cue.cue_type,
-        CueType::Video | CueType::Html | CueType::SlideShow
+        CueType::Video | CueType::Html | CueType::SlideShow | CueType::Image
     ) {
         ui.label(RichText::new("Geometry only for video, HTML5 and slideshow cues").weak());
         return;
@@ -142,7 +142,10 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
         });
 
         // --- Surface (Surface auf der Stage) – nur Video/Diashow ---
-        if matches!(cue.cue_type, CueType::Video | CueType::SlideShow) {
+        if matches!(
+            cue.cue_type,
+            CueType::Video | CueType::SlideShow | CueType::Image
+        ) {
             theme::section_label(right, "Geometry");
             // Vorschau: abstrahiert, wie der Inhalt auf der Stage liegt
             // (Fit/Fill/Stretch/Custom sichtbar, inkl. Verzerrung).

@@ -139,7 +139,9 @@ fn fallback_frame(app: &ShowApp, stage_name: &str) -> Option<Arc<VideoFrame>> {
         }
         if !matches!(
             cue.cue_type,
-            crate::core::CueType::Video | crate::core::CueType::SlideShow
+            crate::core::CueType::Video
+                | crate::core::CueType::SlideShow
+                | crate::core::CueType::Image
         ) {
             continue;
         }

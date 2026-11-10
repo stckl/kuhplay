@@ -425,13 +425,20 @@ pub fn draw_data(ui: &mut egui::Ui, app: &mut ShowApp) {
                     .map(|(_, label)| label.clone())
             })
             .unwrap_or_else(|| "select target…".to_string());
-        egui::ComboBox::from_id_salt("html_data_target_combo")
+        let response = egui::ComboBox::from_id_salt("html_data_target_combo")
             .selected_text(selected_label)
             .show_ui(ui, |ui| {
                 for (id, label) in &targets {
                     ui.selectable_value(&mut target, Some(*id), label.as_str());
                 }
-            });
+            })
+            .response
+            .on_hover_text("Pick an HTML cue or drag one here from the cue list");
+        if let Some(id) = super::dropped_cue(ui, &response) {
+            if targets.iter().any(|(tid, _)| *tid == id) {
+                target = Some(id);
+            }
+        }
         if target != cue.data_target {
             cue.data_target = target;
         }

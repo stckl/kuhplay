@@ -2017,7 +2017,7 @@ fn active_cue_row_not_clipped_and_seek_dispatches() {
     let mut row_rects: Vec<egui::Rect> = Vec::new();
     for s in &out.shapes {
         if let egui::Shape::Rect(r) = &s.shape {
-            if r.rect.height() == 48.0 && r.rect.width() > 100.0 {
+            if r.rect.height() == 58.0 && r.rect.width() > 100.0 {
                 row_rects.push(r.rect);
             }
         }
@@ -2548,7 +2548,7 @@ fn active_cue_row_centers_buttons_and_contains_long_names() {
         .shapes
         .iter()
         .find_map(|s| match &s.shape {
-            egui::Shape::Rect(r) if r.rect.height() == 48.0 && r.rect.width() > 100.0 => {
+            egui::Shape::Rect(r) if r.rect.height() == 58.0 && r.rect.width() > 100.0 => {
                 Some(r.rect)
             }
             _ => None,
@@ -2618,7 +2618,11 @@ fn toolbar_buttons_share_one_line_and_toolbox_ends_above_inspector() {
             _ => None,
         })
         .collect();
-    assert_eq!(buttons.len(), 18, "ein Button pro Cue-Typ");
+    assert_eq!(
+        buttons.len(),
+        kuhplay::core::CueType::ALL.len(),
+        "ein Button pro Cue-Typ"
+    );
     assert!(buttons.iter().all(|b| b.top() == buttons[0].top()));
 
     let toolbox = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("toolbox"))

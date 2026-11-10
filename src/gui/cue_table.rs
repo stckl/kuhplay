@@ -78,7 +78,8 @@ use egui::{RichText, Sense};
 use uuid::Uuid;
 
 use crate::core::{
-    format_timecode, parse_timecode, ContinueMode, Cue, CueList, CueStatus, CueType, CUE_COLORS,
+    format_timecode, parse_timecode, ContinueMode, Cue, CueList, CueStatus, CueType, DropPlace,
+    CUE_COLORS,
 };
 
 use super::icons::{self, Icon};
@@ -155,16 +156,34 @@ pub struct CueTableActions {
     pub arm: Option<(Vec<Uuid>, bool)>,
     /// Farbe setzen: (IDs, Some(Farbe) = setzen / None = löschen).
     pub color: Option<(Vec<Uuid>, Option<[u8; 3]>)>,
-    /// Drag & Drop umsortieren: (von Index, auf Index).
-    pub move_to: Option<(usize, usize)>,
-    /// Drag & Drop in Gruppe: (Cue-Index, Gruppen-Index).
-    pub move_into_group: Option<(usize, usize)>,
-    /// Drag & Drop mit Gruppen-Kindern (Quelle oder Ziel ist ein Kind):
-    /// (gezogener Cue, Ziel-Zeile, in die Gruppe = Ziel ist eine Gruppe).
-    pub move_cue: Option<(Uuid, Uuid, bool)>,
-    /// Drag & Drop einer Mehrfachauswahl: (gezogene Cues, Ziel-Zeile,
-    /// in die Gruppe = Ziel ist eine Gruppe).
-    pub move_cues: Option<(Vec<Uuid>, Uuid, bool)>,
+    /// Drag & Drop: (gezogene Cues, Ziel-Zeile, Position davor/dahinter/
+    /// in die Gruppe) – auch Gruppen-Kinder und Mehrfachauswahl.
+    pub move_cues: Option<(Vec<Uuid>, Uuid, DropPlace)>,
+}
+
+/// Drop-Position aus der Zeigerhöhe in der Zielzeile: normale Zeile obere
+/// Hälfte = davor, untere = dahinter; Gruppe oben/unten ein Viertel davor/
+/// dahinter (aufgeklappt unten: als erstes Kind), dazwischen hinein.
+fn drop_place(rect: egui::Rect, y: f32, group: bool, expanded: bool) -> DropPlace {
+    let t = (y - rect.top()) / rect.height().max(1.0);
+    if !group {
+        return if t < 0.5 {
+            DropPlace::Before
+        } else {
+            DropPlace::After
+        };
+    }
+    if t < 0.25 {
+        DropPlace::Before
+    } else if t > 0.75 {
+        if expanded {
+            DropPlace::IntoFirst
+        } else {
+            DropPlace::After
+        }
+    } else {
+        DropPlace::Into
+    }
 }
 
 /// Inline-Edit-Feld einer Zelle (Doppelklick, docs/TODO-offen.md Phase 3).
@@ -204,15 +223,20 @@ struct CellEdit {
     focus_requested: bool,
 }
 
-/// Drag&Drop-Payload: gezogener Cue (oberste Ebene oder Gruppen-Kind).
+/// Drag&Drop-Payload: gezogener Cue (oberste Ebene oder Gruppen-Kind). Auch
+/// Target-Felder im Inspector nehmen ihn an ([`DragPayload::cue_id`]).
 #[derive(Debug, Clone)]
-struct DragPayload {
-    /// Index in der obersten Liste (nur sinnvoll, wenn `!child`).
-    index: usize,
+pub struct DragPayload {
     id: Uuid,
-    child: bool,
     /// Mitgezogene Mehrfachauswahl (leer = nur `id`).
     selection: Vec<Uuid>,
+}
+
+impl DragPayload {
+    /// Der gezogene Cue.
+    pub fn cue_id(&self) -> Uuid {
+        self.id
+    }
 }
 
 /// Bekannte egui-ID: Widget-ID des aktiven Zellen-Editors (leer, wenn
@@ -220,6 +244,12 @@ struct DragPayload {
 /// Esc-Hotkey-Gate (Esc bricht den Edit ab statt Panic auszulösen).
 pub fn cell_edit_active_id() -> egui::Id {
     egui::Id::new("kuhplay/cue_cell_edit_active")
+}
+
+/// Bekannte egui-ID: Zeile (Cue-ID) unter dem Zeiger, während Dateien aus
+/// dem Finder über die Liste gezogen werden – dort landen sie beim Drop.
+pub fn file_drop_target_id() -> egui::Id {
+    egui::Id::new("kuhplay/file_drop_target")
 }
 
 /// Zeichnet die Cue-Tabelle des aktiven Carts.
@@ -244,6 +274,11 @@ pub fn draw(
     // Rechtsklick abfangen, bevor die Zeile sie sieht.
     ui.style_mut().interaction.selectable_labels = false;
     let ctx = ui.ctx().clone();
+    // Dateien aus dem Finder über der Liste: Drop-Ziel je Frame neu bestimmen.
+    let files_hovering = editable && ctx.input(|i| !i.raw.hovered_files.is_empty());
+    if files_hovering {
+        ctx.data_mut(|d| d.remove::<Uuid>(file_drop_target_id()));
+    }
     // Painter des äußeren Ui: Zeilen-Hintergründe (Cue-Color-Tönung) werden
     // pro Zelle damit gemalt, landen so unter dem Zell-Text (siehe Modul-Doku).
     let painter = ui.painter().clone();
@@ -932,6 +967,20 @@ pub fn draw(
                 // gelesen werden – egui_extras panict sonst.
                 let response = row.response();
                 let clicked = response.clicked();
+                // Datei-Drop aus dem Finder: Zeile unter dem Zeiger ist das Ziel
+                // (Gruppe = hinein, sonst dahinter).
+                if files_hovering
+                    && ctx
+                        .input(|i| i.pointer.latest_pos())
+                        .is_some_and(|p| response.rect.contains(p))
+                {
+                    ctx.data_mut(|d| d.insert_temp(file_drop_target_id(), cue_id));
+                    painter.rect_stroke(
+                        response.rect,
+                        0.0,
+                        egui::Stroke::new(1.5_f32, palette::ACCENT),
+                    );
+                }
                 // `Response::union` (egui 0.30) überträgt das `double_clicked`-
                 // Feld der Zellen NICHT auf die Zeilen-Union. Doppelklick daher
                 // mit derselben Formel rekonstruieren, die egui intern in
@@ -952,42 +1001,63 @@ pub fn draw(
                         Vec::new()
                     };
                     response.dnd_set_drag_payload(DragPayload {
-                        index: list_index,
                         id: cue_id,
-                        child: is_child,
                         selection,
                     });
                 }
                 if editable {
-                    // Drop-Ziel: dezenter Rahmen während des Hover.
-                    if response.dnd_hover_payload::<DragPayload>().is_some() {
-                        painter.rect_stroke(
-                            response.rect,
-                            0.0,
-                            egui::Stroke::new(1.5_f32, palette::ACCENT),
-                        );
+                    let place = ctx
+                        .input(|i| i.pointer.latest_pos())
+                        .map(|p| drop_place(response.rect, p.y, is_group, !collapsed));
+                    // Drop-Ziel beim Ziehen: Einfügelinie zwischen den Zeilen
+                    // bzw. die ganze Gruppen-Zeile, wenn es hinein geht.
+                    let dragged_here = response
+                        .dnd_hover_payload::<DragPayload>()
+                        .filter(|p| p.id != cue_id && !p.selection.contains(&cue_id));
+                    if let (Some(_), Some(place)) = (dragged_here, place) {
+                        let marker = ctx.layer_painter(egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("cue_drop_marker"),
+                        ));
+                        let rect = response.rect;
+                        match place {
+                            DropPlace::Before | DropPlace::After => {
+                                let y = if place == DropPlace::Before {
+                                    rect.top()
+                                } else {
+                                    rect.bottom()
+                                };
+                                // Kinder eingerückt: die Linie beginnt dort.
+                                let left = rect.left() + if is_child { 24.0 } else { 0.0 };
+                                marker.line_segment(
+                                    [egui::pos2(left, y), egui::pos2(rect.right(), y)],
+                                    egui::Stroke::new(3.0, palette::ACCENT),
+                                );
+                                marker.circle_filled(
+                                    egui::pos2(left + 4.0, y),
+                                    4.5,
+                                    palette::ACCENT,
+                                );
+                            }
+                            DropPlace::Into | DropPlace::IntoFirst => {
+                                marker.rect_filled(rect, 3.0, palette::ACCENT.gamma_multiply(0.18));
+                                marker.rect_stroke(
+                                    rect,
+                                    3.0,
+                                    egui::Stroke::new(2.0, palette::ACCENT),
+                                );
+                            }
+                        }
                     }
                     // Drop: Aktion vormerken (Ausführung nach der Tabelle).
                     if let Some(payload) = response.dnd_release_payload::<DragPayload>() {
-                        let from = payload.index;
-                        if !payload.selection.is_empty() {
-                            // Mehrfachauswahl: gemeinsam (umsortieren, raus, rein).
-                            if !payload.selection.contains(&cue_id) {
-                                actions.move_cues =
-                                    Some((payload.selection.clone(), cue_id, is_group));
-                            }
-                        } else if payload.child || is_child {
-                            // Gruppen-Kinder: per ID (umsortieren, raus, rein).
-                            if payload.id != cue_id {
-                                actions.move_cue = Some((payload.id, cue_id, is_group));
-                            }
-                        } else if from != list_index && from < cue_list.len() {
-                            if is_group {
-                                // Drop auf eine Gruppe = hineinlegen.
-                                actions.move_into_group = Some((from, list_index));
-                            } else {
-                                actions.move_to = Some((from, list_index));
-                            }
+                        let ids = if payload.selection.is_empty() {
+                            vec![payload.id]
+                        } else {
+                            payload.selection.clone()
+                        };
+                        if let (false, Some(place)) = (ids.contains(&cue_id), place) {
+                            actions.move_cues = Some((ids, cue_id, place));
                         }
                     }
                 }
@@ -1536,6 +1606,12 @@ fn target_display(cue: &Cue) -> String {
                     }
                 }
             })
+            .unwrap_or_else(|| "–".to_string()),
+        CueType::Image => cue
+            .target_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "–".to_string()),
         CueType::SlideShow => cue
             .slideshow

@@ -45,6 +45,7 @@ mod companion;
 mod curve;
 mod geometry;
 mod group;
+pub use group::draw_timeline_window;
 mod light;
 mod media;
 mod midi;
@@ -158,6 +159,7 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
         Some(CueType::Fade) => &[Basics, Triggers, Curve],
         Some(CueType::Html) => &[Basics, Triggers, Geometry, Source],
         Some(CueType::SlideShow) => &[Basics, Triggers, Geometry, Slides],
+        Some(CueType::Image) => &[Basics, Triggers, Geometry],
         Some(CueType::HtmlData) => &[Basics, Triggers, Data],
         Some(CueType::Text) => &[Basics, Triggers, Geometry, Text],
         Some(CueType::Network) => &[Basics, Triggers, Network],
@@ -268,6 +270,22 @@ pub fn json_layout_job(text: &str) -> egui::text::LayoutJob {
 /// Cue-Liste). Akzeptiert `MM:SS.mmm`, `HH:MM:SS.mmm` und nackte
 /// Sekunden (siehe [`parse_timecode`]); ungültige Eingabe wird verworfen.
 /// DragValue-Ziehen bleibt erhalten (Schrittweite in Sekunden).
+/// Target-Feld als Drop-Ziel: Cue aus der Cue-Liste hierher gezogen →
+/// seine ID (Rahmen beim Drüberziehen).
+pub fn dropped_cue(ui: &egui::Ui, response: &egui::Response) -> Option<uuid::Uuid> {
+    use crate::gui::cue_table::DragPayload;
+    if response.dnd_hover_payload::<DragPayload>().is_some() {
+        ui.painter().rect_stroke(
+            response.rect.expand(2.0),
+            3.0,
+            egui::Stroke::new(1.5, theme::palette::ACCENT),
+        );
+    }
+    response
+        .dnd_release_payload::<DragPayload>()
+        .map(|p| p.cue_id())
+}
+
 pub fn time_field(ui: &mut egui::Ui, value: &mut Duration) -> egui::Response {
     let mut secs = value.as_secs_f64();
     let response = ui.add_sized(

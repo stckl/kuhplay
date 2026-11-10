@@ -23,6 +23,7 @@ const GROUPS: &[(&str, &[CueType])] = &[
             CueType::Video,
             CueType::Html,
             CueType::SlideShow,
+            CueType::Image,
             CueType::Text,
         ],
     ),

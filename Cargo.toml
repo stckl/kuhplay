@@ -8,7 +8,17 @@ license = "MIT"
 
 [dependencies]
 # GUI (plattformübergreifend, performant, Dark-Mode-freundlich)
-eframe = "0.30"
+# Ohne accesskit: Bedienungshilfen-Abfragen (z. B. Karabiner) brachten die App
+# zum Absturz, wenn ein fokussiertes Widget nicht im accesskit-Baum stand
+# (Doppelklick → Inline-Editor). `persistence` für das eframe-Storage
+# (UI-Layout, Workspace-Templates, zuletzt geöffnete Show).
+eframe = { version = "0.30", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+    "persistence",
+] }
 egui = "0.30"
 egui_extras = "0.30" # TableBuilder für die Cue-Liste
 

@@ -245,8 +245,9 @@ function h(tag, props = {}, ...kids) {
   return el;
 }
 function fmt(ms) {
-  const t = Math.max(0, Math.round(ms)), m = Math.floor(t / 60000), s = Math.floor(t / 1000) % 60;
-  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + String(t % 1000).padStart(3, '0');
+  const t = Math.max(0, Math.round(ms)), h = Math.floor(t / 3600000);
+  const m = Math.floor(t / 60000) % 60, s = Math.floor(t / 1000) % 60, p = n => String(n).padStart(2, '0');
+  return (h ? p(h) + ':' : '') + p(m) + ':' + p(s) + '.' + String(t % 1000).padStart(3, '0');
 }
 function parseTime(text) {
   const parts = text.trim().split(':').map(Number);

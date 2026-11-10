@@ -28,7 +28,7 @@ pub fn draw_triggers(ui: &mut egui::Ui, app: &mut ShowApp) {
     // Zeitachse.
     let can_chase = matches!(
         cue.cue_type,
-        CueType::Audio | CueType::Video | CueType::Html | CueType::SlideShow
+        CueType::Audio | CueType::Video | CueType::Html | CueType::SlideShow | CueType::Image
     );
     if can_chase {
         ui.label(RichText::new("Follow timecode (chase)").strong());

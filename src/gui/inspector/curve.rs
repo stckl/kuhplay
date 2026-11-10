@@ -49,14 +49,22 @@ fn target_combo(
                 .map(|(l, _)| l.clone())
         })
         .unwrap_or_else(|| "— none —".to_string());
-    egui::ComboBox::from_id_salt(id_salt)
+    let response = egui::ComboBox::from_id_salt(id_salt)
         .selected_text(selected.to_string())
         .show_ui(ui, |ui| {
             ui.selectable_value(target, None, "— none —");
             for (label, id) in choices {
                 ui.selectable_value(target, Some(*id), label);
             }
-        });
+        })
+        .response
+        .on_hover_text("Pick a cue or drag one here from the cue list");
+    // Cue aus der Liste hierher gezogen.
+    if let Some(id) = super::dropped_cue(ui, &response) {
+        if choices.iter().any(|(_, cid)| *cid == id) {
+            *target = Some(id);
+        }
+    }
 }
 
 /// Optionaler 0..1-Zielwert: Checkbox + DragValue.

@@ -14,7 +14,7 @@ macOS, Windows und Linux und lässt sich komplett aus dem Browser bedienen.
 
 | Bereich | Funktionen |
 |---|---|
-| **Cues** | Audio, Video, HTML5, Diashow, Fade, Group, Stop, Control, HTML-Data, **Wait, Memo, Text, Network, MIDI, Light (Art-Net DMX)**; Pre-Wait, Duration, Post-Wait, Auto-Continue und Auto-Follow |
+| **Cues** | Audio, Video, Bild, HTML5, Diashow, Fade, Group, Stop, Control, HTML-Data, **Wait, Memo, Text, Network, MIDI, Light (Art-Net DMX)**; Pre-Wait, Duration, Post-Wait, Auto-Continue und Auto-Follow; Dateien (Audio, Video, Bild, HTML) per Drag & Drop in die Liste oder direkt in Gruppen, Cues verschieben mit Einfügelinie, Ziele per Drag & Drop oder Auswahlliste |
 | **Ablauf** | Playhead und GO, mehrere Cue-Listen (Carts), Gruppen (Sequential, Timeline mit Timeline-Editor, Shuffle mit fester Shuffle-ID und „New Shuffle“; ein GO spielt die Kinder nacheinander oder je GO eins, Wiederholung bis endlos, „eins weiter“, Fade-In/-Out der ganzen Gruppe, Gesamtlaufzeit auch in Active Cues), Load-/Unload-Cues zum gezielten Vorladen, alte Cues beim Start ausblenden (je Stage), Timecode-Chasing (LTC/MTC) |
 | **Audio** | Dekodierung mit symphonia, Ausgabe mit cpal, Geräteauswahl, Fades (Volume, Rate, Opacity; linear oder dB), Slices mit Play-Count |
 | **Audio-Routing** | Pro Cue: Datei-Kanal → 16 benannte Kanäle; Patch-Matrix in den Workspace Settings: Kanal → mehrere Ausgänge UND mehrere Ausgabegeräte parallel; Umlegen wirkt live |

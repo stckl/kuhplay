@@ -354,6 +354,7 @@ impl Icon {
             CueType::Control => Icon::Control,
             CueType::Html => Icon::Html,
             CueType::SlideShow => Icon::SlideShow,
+            CueType::Image => Icon::Image,
             CueType::HtmlData => Icon::HtmlData,
             CueType::Wait => Icon::Wait,
             CueType::Memo => Icon::Memo,

@@ -18,7 +18,7 @@ use std::time::Duration;
 use egui::RichText;
 use uuid::Uuid;
 
-use crate::core::{format_timecode, Cue, CueStatus, CueType, GroupMode, LoopMode};
+use crate::core::{Cue, CueStatus, CueType, GroupMode, LoopMode};
 
 use super::app::{ShowApp, SidebarTab};
 use super::icons::{self, Icon};
@@ -233,12 +233,20 @@ fn planned_runtime(cue: &crate::core::Cue) -> Option<Duration> {
     })
 }
 
-/// Zeitanzeige einer Zeile: Restzeit, ohne bekanntes Ende die gelaufene Zeit.
-fn active_time_text(elapsed: Option<Duration>, total: Option<Duration>) -> String {
-    match (elapsed, total) {
-        (Some(e), Some(t)) => format!("−{}", format_timecode(t.saturating_sub(e))),
-        (Some(e), None) => format_timecode(e),
-        _ => String::new(),
+/// Gut lesbare Zeit für Active Cues: `HH:MM:SS` bzw. `MM:SS` (immer
+/// zweistellig), unter 10 s mit Zehnteln. Ganze Sekunden werden aufgerundet,
+/// damit ein Countdown erst am Ende auf 00:00 steht.
+fn countdown_text(d: Duration) -> String {
+    if d < Duration::from_secs(10) {
+        let tenths = d.as_millis().div_ceil(100);
+        return format!("00:{:02}.{}", tenths / 10, tenths % 10);
+    }
+    let secs = d.as_millis().div_ceil(1000) as u64;
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    if h > 0 {
+        format!("{h:02}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
     }
 }
 
@@ -286,7 +294,7 @@ fn collect_active_rows(app: &ShowApp, cues: &[Cue], depth: usize, rows: &mut Vec
             looping: window.is_some() && !group,
             skippable: group
                 && matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
-                && cue.status == CueStatus::Playing,
+                && matches!(cue.status, CueStatus::Playing | CueStatus::Paused),
             depth,
         });
         if cue.cue_type == CueType::Group {
@@ -344,7 +352,7 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         palette::PLAYING
     };
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 48.0),
+        egui::vec2(ui.available_width(), 58.0),
         egui::Sense::click_and_drag(),
     );
     // Kinder laufender Gruppen eingerückt unter ihrer Gruppe.
@@ -451,16 +459,50 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
         right_edge -= size::SPACE_SMALL + button.x;
     }
 
-    // Name und Restzeit (docs/UI.md §5.4) je in einer Hälfte um die Mitte.
+    // Groß die Restzeit – das Wichtigste im Lauf.
     let text_left = icon_rect.right() + size::SPACE_SMALL;
     let text_right = (right_edge - size::SPACE_SMALL).max(text_left);
+    let remaining = match (elapsed, runtime) {
+        (Some(e), Some(t)) if !holding => Some(t.saturating_sub(e)),
+        _ => None,
+    };
+    let (big, big_color) = if holding {
+        ("HOLD".to_string(), palette::TEXT_DIM)
+    } else if let Some(left) = remaining {
+        let color = if left <= Duration::from_secs(5) {
+            palette::PANIC
+        } else if left <= Duration::from_secs(10) {
+            palette::ACCENT
+        } else {
+            palette::TEXT
+        };
+        (format!("−{}", countdown_text(left)), color)
+    } else {
+        // Ohne bekanntes Ende: gelaufene Zeit (gedimmt, kein Countdown).
+        (
+            countdown_text(elapsed.unwrap_or_default()),
+            palette::TEXT_DIM,
+        )
+    };
+    let big_text =
+        RichText::new(big)
+            .monospace()
+            .size(20.0)
+            .strong()
+            .color(if status == CueStatus::Paused {
+                palette::PAUSED
+            } else {
+                big_color
+            });
+    // Oben der Name über die ganze Breite, darunter linksbündig groß nur
+    // die Restzeit (bei Loops mit ↻).
     let name_rect = egui::Rect::from_min_max(
-        egui::pos2(text_left, center_y - 18.0),
-        egui::pos2(text_right, center_y),
+        egui::pos2(text_left, rect.top() + 4.0),
+        egui::pos2(text_right, rect.top() + 22.0),
     );
-    let time_rect = egui::Rect::from_min_max(
-        egui::pos2(text_left, center_y),
-        egui::pos2(text_right, center_y + 16.0),
+    let lower = egui::Rect::from_min_max(
+        egui::pos2(text_left, rect.top() + 22.0),
+        egui::pos2(text_right, rect.bottom() - 2.0),
     );
     let mut name_ui = child(ui, name_rect, centered);
     name_ui.add(
@@ -468,27 +510,11 @@ fn draw_active_cue_row(ui: &mut egui::Ui, app: &mut ShowApp, row: &ActiveCueRow)
             .selectable(false)
             .truncate(),
     );
-    let time = if holding {
-        "Holding last frame".to_string()
-    } else {
-        let text = active_time_text(elapsed, runtime);
-        if *looping {
-            format!("↻ {text}")
-        } else {
-            text
-        }
-    };
-    let mut time_ui = child(ui, time_rect, centered);
-    time_ui.add(
-        egui::Label::new(
-            RichText::new(time)
-                .monospace()
-                .size(11.0)
-                .color(palette::TEXT_DIM),
-        )
-        .selectable(false)
-        .truncate(),
-    );
+    let mut big_ui = child(ui, lower, centered);
+    if *looping && !holding {
+        big_ui.label(RichText::new("↻").size(16.0).color(palette::TEXT_DIM));
+    }
+    big_ui.add(egui::Label::new(big_text).selectable(false).truncate());
     // Spulen („Scrub"): Ziehen/Klick auf der Zeile springt im Medium an
     // die Stelle – Bild und Ton bekommen im selben Engine-Command den Seek.
     let total = if duration > Duration::ZERO {
@@ -552,10 +578,7 @@ mod active_time_tests {
     fn video_without_own_duration_counts_down_from_its_media_length() {
         let total = total_runtime(Duration::ZERO, Some(SECOND * 100), LoopMode::Once);
         assert_eq!(total, Some(SECOND * 100));
-        assert_eq!(
-            active_time_text(Some(SECOND * 40), total),
-            format!("−{}", format_timecode(SECOND * 60))
-        );
+        assert_eq!(countdown_text(total.unwrap() - SECOND * 40), "01:00");
     }
 
     #[test]
@@ -572,7 +595,7 @@ mod active_time_tests {
             (SECOND * 10, Some(SECOND * 3)),
             "3. Durchlauf, 3 s"
         );
-        assert_eq!(active_time_text(within, Some(base)), "−00:07.000");
+        assert_eq!(countdown_text(base - within.unwrap()), "00:07.0");
         // Ohne bekannte Länge kein Fenster (dann zählt die Uhr nur hoch).
         assert_eq!(
             loop_window(Duration::ZERO, None, LoopMode::Count(3), Some(SECOND)),
@@ -593,9 +616,14 @@ mod active_time_tests {
         let endless = total_runtime(SECOND, Some(SECOND), LoopMode::Infinite);
         assert_eq!(endless, None);
         assert_eq!(total_runtime(Duration::ZERO, None, LoopMode::Once), None);
-        assert_eq!(
-            active_time_text(Some(SECOND * 7), None),
-            format_timecode(SECOND * 7)
-        );
+        assert_eq!(countdown_text(SECOND * 7), "00:07.0");
+    }
+
+    #[test]
+    fn countdown_rounds_up_and_shows_hours() {
+        assert_eq!(countdown_text(Duration::from_millis(59_200)), "01:00");
+        assert_eq!(countdown_text(Duration::from_millis(9_850)), "00:09.9");
+        assert_eq!(countdown_text(SECOND * 3725), "01:02:05");
+        assert_eq!(countdown_text(Duration::ZERO), "00:00.0");
     }
 }

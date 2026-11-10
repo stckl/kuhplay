@@ -41,6 +41,7 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                     t.cue_type,
                     CueType::Video
                         | CueType::SlideShow
+                        | CueType::Image
                         | CueType::Html
                         | CueType::Text
                         | CueType::Group
@@ -85,6 +86,13 @@ pub fn cue_problems(cue: &Cue, app: &ShowApp) -> Vec<String> {
                     }
                     Err(_) => problems.push("initial data: invalid JSON".to_string()),
                 }
+            }
+        }
+        CueType::Image => {
+            check_stage(cue, app, &mut problems);
+            match cue.target_path.as_deref().filter(|p| !p.trim().is_empty()) {
+                None => problems.push("no image file".to_string()),
+                Some(path) => check_file(path, &mut problems),
             }
         }
         CueType::SlideShow => {
@@ -207,7 +215,7 @@ fn check_file(path: &str, problems: &mut Vec<String>) {
 pub fn cue_warnings(cue: &Cue, app: &ShowApp) -> Vec<String> {
     let visual = matches!(
         cue.cue_type,
-        CueType::Video | CueType::Html | CueType::SlideShow | CueType::Text
+        CueType::Video | CueType::Html | CueType::SlideShow | CueType::Image | CueType::Text
     );
     let Some(stage) = cue.stage.as_deref().filter(|_| visual) else {
         return Vec::new();

@@ -58,7 +58,7 @@ pub fn cues_from_folder(dir: &Path) -> Vec<Cue> {
                 .with_target(path.to_string_lossy()),
         );
     }
-    let slides: Vec<Slide> = of_type(CueType::SlideShow)
+    let slides: Vec<Slide> = of_type(CueType::Image)
         .filter_map(|path| Slide::new(path.clone(), Duration::from_secs(5)).ok())
         .collect();
     if let Ok(show) = SlideShow::new(slides, Duration::from_millis(500), true) {

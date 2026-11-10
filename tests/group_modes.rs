@@ -411,3 +411,87 @@ fn stopping_a_group_with_fade_out_fades_its_children() {
         .iter()
         .any(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id != group_id)));
 }
+
+/// Engine meldet nach `Finished` noch `PostWaitElapsed` (Post-Wait 0): nach
+/// dem Re-Arm einer Endlos-Gruppe darf das nicht das zweite Kind zusätzlich
+/// starten.
+#[test]
+fn late_post_wait_event_does_not_start_a_second_child_after_rearm() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group("1", "Seq", GroupMode::Sequential, kids(3));
+    group.loop_mode = LoopMode::Infinite;
+    list.add(group);
+    let _ = list.go().unwrap();
+    for _ in 0..3 {
+        let id = list.cues()[0]
+            .children
+            .iter()
+            .find(|c| c.status == CueStatus::Playing)
+            .unwrap()
+            .id;
+        let _ = list.set_status_with_follow(id, CueStatus::Completed); // Finished
+        let _ = list.set_status_with_follow(id, CueStatus::Completed); // PostWaitElapsed
+    }
+    let active: Vec<String> = list.cues()[0]
+        .children
+        .iter()
+        .filter(|c| c.status.is_active())
+        .map(|c| c.number.clone())
+        .collect();
+    assert_eq!(active, ["1.0"], "second pass plays one child at a time");
+    assert!(list.cues()[0].children[1..]
+        .iter()
+        .all(|c| c.status == CueStatus::Standby));
+}
+
+#[test]
+fn skip_in_a_paused_group_plays_the_next_child() {
+    let mut list = CueList::new();
+    let group = Cue::new_group("1", "Seq", GroupMode::Sequential, kids(3));
+    let group_id = group.id;
+    list.add(group);
+    let _ = list.go().unwrap();
+    let _ = list.pause_running(group_id);
+    assert_eq!(list.cues()[0].status, CueStatus::Paused);
+    let commands = list.skip_in_group(group_id);
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, EngineCommand::Play { .. })));
+    assert_eq!(list.cues()[0].status, CueStatus::Playing);
+    assert_eq!(playing(&list).as_deref(), Some("1.1"));
+    assert_eq!(list.cues()[0].children[0].status, CueStatus::Completed);
+}
+
+#[test]
+fn drop_places_put_cues_exactly_before_after_or_into() {
+    use kuhplay::core::DropPlace;
+    let mut list = CueList::new();
+    let (a, b, c) = (audio("1"), audio("2"), audio("3"));
+    let ids = [a.id, b.id, c.id];
+    let group = Cue::new_group("4", "G", GroupMode::Sequential, kids(2));
+    let gid = group.id;
+    list.add(a);
+    list.add(b);
+    list.add(c);
+    list.add(group);
+    let numbers = |l: &CueList| {
+        l.cues()
+            .iter()
+            .map(|c| c.number.clone())
+            .collect::<Vec<_>>()
+    };
+    // 3 vor 1, dann 1 hinter 2.
+    assert!(list.move_ids_to(&[ids[2]], ids[0], DropPlace::Before));
+    assert_eq!(numbers(&list), ["3", "1", "2", "4"]);
+    assert!(list.move_ids_to(&[ids[0]], ids[1], DropPlace::After));
+    assert_eq!(numbers(&list), ["3", "2", "1", "4"]);
+    // In die Gruppe: hinten bzw. vorne.
+    assert!(list.move_ids_to(&[ids[1]], gid, DropPlace::Into));
+    assert!(list.move_ids_to(&[ids[2]], gid, DropPlace::IntoFirst));
+    let kids: Vec<String> = list.cues()[1]
+        .children
+        .iter()
+        .map(|c| c.number.clone())
+        .collect();
+    assert_eq!(kids, ["3", "1.0", "1.1", "2"]);
+}
