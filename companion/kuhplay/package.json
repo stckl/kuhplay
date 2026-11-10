@@ -1,6 +1,6 @@
 {
   "name": "companion-module-kuhplay",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "KuhPlay Show Control module for Bitfocus Companion",
   "main": "index.js",
   "type": "commonjs",
