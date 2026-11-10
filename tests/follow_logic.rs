@@ -175,7 +175,7 @@ fn d11b_goto_auf_gruppe_feuert_kinder() {
     list.add(Cue::new_group(
         "1",
         "grp",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![audio("1.1"), audio("1.2")],
     ));
     list.add(audio("2"));
@@ -207,7 +207,7 @@ fn d11b_timecode_auf_gruppe_feuert_kinder() {
     let mut group = Cue::new_group(
         "1",
         "grp",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![audio("1.1"), audio("1.2")],
     );
     group.tc_trigger = Some(Timecode::from_hmsf(0, 0, 10, 0, kuhplay::core::Fps::Fps25));

@@ -1193,7 +1193,7 @@ fn triangle_click_collapses_and_expands_group() {
         let mut group = Cue::new_group(
             "1".to_string(),
             "Meine Gruppe".to_string(),
-            GroupMode::Simultaneous,
+            GroupMode::Timeline,
             vec![Cue::new(
                 "1.1".to_string(),
                 "Kind-Cue".to_string(),

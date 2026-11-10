@@ -71,10 +71,6 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
                 }
             });
         if mode != cue.group_mode {
-            // Loop ohne Wiederholung wäre wirkungslos: endlos vorschlagen.
-            if mode == GroupMode::Loop && cue.loop_mode == LoopMode::Once {
-                cue.loop_mode = LoopMode::Infinite;
-            }
             cue.group_mode = mode;
         }
         ui.end_row();
@@ -83,24 +79,25 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.label(RichText::new(mode_help(cue.group_mode)).color(theme::palette::TEXT_DIM));
         ui.end_row();
 
-        let sequential = matches!(
-            cue.group_mode,
-            GroupMode::Sequential | GroupMode::Loop | GroupMode::Shuffle
-        );
+        let sequential = matches!(cue.group_mode, GroupMode::Sequential | GroupMode::Shuffle);
         if sequential {
             theme::field_label(ui, "Playback");
             ui.vertical(|ui| {
-                ui.radio_value(&mut cue.group_play_through, false, "one child per GO");
                 ui.radio_value(
-                    &mut cue.group_play_through,
-                    true,
+                    &mut cue.group_go_per_child,
+                    false,
                     "play through (one GO plays all children in turn)",
+                );
+                ui.radio_value(
+                    &mut cue.group_go_per_child,
+                    true,
+                    "one GO per child (the group's GO starts the first)",
                 );
             });
             ui.end_row();
         }
 
-        if cue.group_mode == GroupMode::Loop {
+        if sequential {
             theme::field_label(ui, "Repeat");
             ui.horizontal(|ui| {
                 let mut infinite = cue.loop_mode == LoopMode::Infinite;
@@ -151,17 +148,38 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
                 ui.radio_value(&mut cue.group_shuffle_each_run, true, "new order each run");
             });
             ui.end_row();
+
+            if !cue.group_shuffle_each_run {
+                theme::field_label(ui, "Shuffle ID");
+                ui.horizontal(|ui| {
+                    ui.monospace(format!("{:08X}", cue.shuffle_seed() >> 32));
+                    if ui
+                        .button("New Shuffle")
+                        .on_hover_text("Roll a new fixed order for this group")
+                        .clicked()
+                    {
+                        cue.new_shuffle();
+                    }
+                });
+                ui.end_row();
+
+                if !cue.children.is_empty() {
+                    theme::field_label(ui, "Shuffled");
+                    let order: Vec<&str> = cue
+                        .shuffled_children()
+                        .iter()
+                        .map(|c| c.number.as_str())
+                        .collect();
+                    ui.label(RichText::new(order.join(" → ")).color(theme::palette::TEXT_DIM));
+                    ui.end_row();
+                }
+            }
         }
     });
 
     ui.separator();
     if cue.children.is_empty() {
-        let text = if cue.dissolved_children.is_empty() {
-            "No children – drag cues onto the group in the cue list"
-        } else {
-            "Group is running – its children are in the cue list"
-        };
-        ui.label(RichText::new(text).weak());
+        ui.label(RichText::new("No children – drag cues onto the group in the cue list").weak());
         return;
     }
     if cue.group_mode == GroupMode::Timeline {
@@ -187,13 +205,13 @@ pub fn draw_group(ui: &mut egui::Ui, app: &mut ShowApp) {
 /// Kurzbeschreibung je Modus.
 fn mode_help(mode: GroupMode) -> &'static str {
     match mode {
-        GroupMode::Simultaneous => "All armed children start together with one GO.",
         GroupMode::Timeline => {
             "All children start with one GO, each at its own time on the timeline below."
         }
         GroupMode::Sequential => "Children play one after another in list order.",
-        GroupMode::Loop => "Children play one after another and the sequence repeats.",
-        GroupMode::Shuffle => "Children play one after another in shuffled order.",
+        GroupMode::Shuffle => {
+            "Children play one after another in shuffled order (fixed by the Shuffle ID)."
+        }
     }
 }
 

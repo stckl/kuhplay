@@ -17,6 +17,10 @@ pub const UI_STATE_STORAGE_KEY: &str = "kuhplay.ui_state";
 /// `eframe::Storage` – benannte Layout-Vorlagen (Snapshots des [`UiState`]).
 pub const UI_TEMPLATES_STORAGE_KEY: &str = "kuhplay.ui_templates";
 
+/// Storage-Key der zuletzt geöffneten bzw. gespeicherten Show-Datei
+/// (Startet die App wieder mit dieser Show).
+pub const LAST_SHOW_STORAGE_KEY: &str = "kuhplay.last_show";
+
 /// Anzahl der Spalten der Cue-Tabelle (docs/TODO-offen.md Phase 3).
 /// Reihenfolge: Status | Type | Q# | Name | Target | Pre-wait | Duration |
 /// Post-wait | Continue.

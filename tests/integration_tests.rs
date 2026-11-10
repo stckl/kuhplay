@@ -89,7 +89,7 @@ fn build_show() -> CueList {
     list.add(Cue::new_group(
         "3",
         "Videos",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![
             Cue::new("3.1", "Video A", CueType::Video)
                 .with_target("/media/a.mp4")
@@ -268,7 +268,7 @@ fn sequential_group_show_flows_child_by_child() {
     let (mut engine, _clock) = MockMediaEngine::with_virtual_clock(tx);
 
     let mut list = CueList::new();
-    list.add(Cue::new_group(
+    let mut group = Cue::new_group(
         "1",
         "Sequenz",
         GroupMode::Sequential,
@@ -276,30 +276,29 @@ fn sequential_group_show_flows_child_by_child() {
             Cue::new("1.1", "Step A", CueType::Audio).with_duration(Duration::from_millis(100)),
             Cue::new("1.2", "Step B", CueType::Audio).with_duration(Duration::from_millis(100)),
         ],
-    ));
+    );
+    group.group_go_per_child = true;
+    list.add(group);
 
-    // GO 1: Gruppe splicet Kinder in die Liste.
+    // GO 1: Gruppe startet das erste Kind; die Kinder bleiben in der Gruppe.
     go(&mut engine, &mut list);
-    assert_eq!(list.len(), 3);
-
-    // GO 2: erstes Kind.
-    go(&mut engine, &mut list);
+    assert_eq!(list.len(), 1);
     engine.advance_time(Duration::from_millis(100)); // Started
     engine.advance_time(Duration::from_millis(100)); // Finished
     apply_events(&mut list, drain(&rx));
-    assert_eq!(list.cues()[1].status, CueStatus::Completed);
+    assert_eq!(list.cues()[0].children[0].status, CueStatus::Completed);
     assert_eq!(
         list.cues()[0].status,
         CueStatus::Playing,
         "group still open"
     );
 
-    // GO 3: zweites Kind.
+    // GO 2: zweites Kind.
     go(&mut engine, &mut list);
     engine.advance_time(Duration::from_millis(100));
     engine.advance_time(Duration::from_millis(100));
     apply_events(&mut list, drain(&rx));
-    assert_eq!(list.cues()[2].status, CueStatus::Completed);
+    assert_eq!(list.cues()[0].children[1].status, CueStatus::Completed);
     assert_eq!(
         list.cues()[0].status,
         CueStatus::Completed,
@@ -309,7 +308,7 @@ fn sequential_group_show_flows_child_by_child() {
 }
 
 #[test]
-fn cue_id_lookup_works_across_spliced_and_nested_children() {
+fn cue_id_lookup_works_across_running_and_nested_children() {
     let mut list = CueList::new();
     let group = Cue::new_group(
         "1",
@@ -319,9 +318,9 @@ fn cue_id_lookup_works_across_spliced_and_nested_children() {
     );
     let group_id = group.id;
     list.add(group);
-    let _ = list.go().unwrap(); // splicet child
+    let _ = list.go().unwrap(); // startet child
 
-    let child_id = list.cues()[1].id;
+    let child_id = list.cues()[0].children[0].id;
     assert!(list.find_cue(child_id).is_some());
     assert!(list.find_cue(group_id).is_some());
     assert!(list.find_cue(Uuid::new_v4()).is_none());

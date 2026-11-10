@@ -91,7 +91,7 @@ fn network_cue_in_group_completes_instantly() {
     list.add(kuhplay::core::Cue::new_group(
         "1",
         "g",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![child],
     ));
     let outcome = list.go().expect("GO must trigger group");

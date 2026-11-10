@@ -100,7 +100,7 @@ fn group_simultaneous_cascades_to_all_armed_children_at_once() {
     list.add(Cue::new_group(
         "1",
         "Scene",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![audio("1.1"), audio("1.2"), unarmed_child],
     ));
 
@@ -132,7 +132,7 @@ fn group_simultaneous_closes_when_all_triggered_children_finish() {
     list.add(Cue::new_group(
         "1",
         "Scene",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![audio("1.1"), audio("1.2"), unarmed_child],
     ));
     let _ = list.go().unwrap();
@@ -156,41 +156,41 @@ fn group_simultaneous_closes_when_all_triggered_children_finish() {
 }
 
 #[test]
-fn group_sequential_splices_children_into_the_stream() {
+fn group_sequential_steps_through_children_inside_the_group() {
     let mut list = CueList::new();
-    let group = Cue::new_group(
+    let mut group = Cue::new_group(
         "1",
         "Scene",
         GroupMode::Sequential,
         vec![audio("1.1"), audio("1.2"), audio("1.3")],
     );
+    group.group_go_per_child = true;
     let group_id = group.id;
     list.add(group);
 
-    // GO auf die Gruppe: keine Commands, Kinder werden eingespielt.
+    // GO auf die Gruppe: das erste Kind startet, die Kinder bleiben drin.
     let outcome = list.go().expect("group must trigger");
-    assert!(outcome.commands.is_empty());
-    assert_eq!(list.len(), 4, "group + 3 spliced children");
+    assert_eq!(
+        outcome.commands.len(),
+        1,
+        "first child starts with the group"
+    );
+    assert_eq!(list.len(), 1, "children stay inside the group");
     assert_eq!(list.cues()[0].status, CueStatus::Playing);
-    assert_eq!(list.cursor(), 1, "playhead must point at first child");
-    assert_eq!(list.cues()[1].parent_group, Some(group_id));
+    assert_eq!(list.cues()[0].children[0].status, CueStatus::Playing);
+    assert_eq!(list.cues()[0].children[0].parent_group, Some(group_id));
+    assert_eq!(list.cursor(), 0, "playhead stays on the group");
 
     // Jedes weitere GO triggert das nächste Kind der Reihe nach.
-    let id1 = list.cues()[1].id;
-    let o1 = list.go().unwrap();
-    assert_eq!(o1.index, 1);
-    assert_eq!(o1.commands.len(), 1);
-    list.set_status(id1, CueStatus::Completed).unwrap();
-
-    let id2 = list.cues()[2].id;
-    let o2 = list.go().unwrap();
-    assert_eq!(o2.index, 2);
-    list.set_status(id2, CueStatus::Completed).unwrap();
-
-    let id3 = list.cues()[3].id;
-    let o3 = list.go().unwrap();
-    assert_eq!(o3.index, 3);
-    list.set_status(id3, CueStatus::Completed).unwrap();
+    for i in 0..3 {
+        let id = list.cues()[0].children[i].id;
+        if i > 0 {
+            let outcome = list.go().unwrap();
+            assert_eq!(outcome.index, 0);
+            assert_eq!(outcome.commands.len(), 1);
+        }
+        list.set_status(id, CueStatus::Completed).unwrap();
+    }
 
     assert_eq!(
         list.cues()[0].status,
@@ -208,7 +208,7 @@ fn group_without_armed_children_finishes_immediately() {
     list.add(Cue::new_group(
         "1",
         "Empty",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![child],
     ));
 
@@ -225,16 +225,11 @@ fn nested_group_is_treated_as_instant_child() {
     // als Kind einer Simultaneous-Gruppe hat kein eigenes Engine-Command und
     // gilt als Sofort-Cue (ihre Kinder werden in V2 nicht rekursiv getriggert).
     let mut list = CueList::new();
-    let inner = Cue::new_group(
-        "1.1",
-        "Inner",
-        GroupMode::Simultaneous,
-        vec![audio("1.1.1")],
-    );
+    let inner = Cue::new_group("1.1", "Inner", GroupMode::Timeline, vec![audio("1.1.1")]);
     list.add(Cue::new_group(
         "1",
         "Outer",
-        GroupMode::Simultaneous,
+        GroupMode::Timeline,
         vec![inner],
     ));
 

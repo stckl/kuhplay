@@ -162,6 +162,9 @@ pub struct CueTableActions {
     /// Drag & Drop mit Gruppen-Kindern (Quelle oder Ziel ist ein Kind):
     /// (gezogener Cue, Ziel-Zeile, in die Gruppe = Ziel ist eine Gruppe).
     pub move_cue: Option<(Uuid, Uuid, bool)>,
+    /// Drag & Drop einer Mehrfachauswahl: (gezogene Cues, Ziel-Zeile,
+    /// in die Gruppe = Ziel ist eine Gruppe).
+    pub move_cues: Option<(Vec<Uuid>, Uuid, bool)>,
 }
 
 /// Inline-Edit-Feld einer Zelle (Doppelklick, docs/TODO-offen.md Phase 3).
@@ -208,6 +211,8 @@ struct DragPayload {
     index: usize,
     id: Uuid,
     child: bool,
+    /// Mitgezogene Mehrfachauswahl (leer = nur `id`).
+    selection: Vec<Uuid>,
 }
 
 /// Bekannte egui-ID: Widget-ID des aktiven Zellen-Editors (leer, wenn
@@ -938,11 +943,19 @@ pub fn draw(
                     });
 
                 // --- Drag & Drop (Edit-Mode, kein Zell-Edit; auch Gruppen-Kinder) ---
-                if editable && edit.is_none() {
+                if editable && edit.is_none() && response.drag_started() {
+                    // Zeile Teil einer Mehrfachauswahl → die ganze Auswahl ziehen.
+                    let selection = if cue_list.is_selected(cue_id) && cue_list.selection_len() > 1
+                    {
+                        cue_list.selection().to_vec()
+                    } else {
+                        Vec::new()
+                    };
                     response.dnd_set_drag_payload(DragPayload {
                         index: list_index,
                         id: cue_id,
                         child: is_child,
+                        selection,
                     });
                 }
                 if editable {
@@ -957,7 +970,13 @@ pub fn draw(
                     // Drop: Aktion vormerken (Ausführung nach der Tabelle).
                     if let Some(payload) = response.dnd_release_payload::<DragPayload>() {
                         let from = payload.index;
-                        if payload.child || is_child {
+                        if !payload.selection.is_empty() {
+                            // Mehrfachauswahl: gemeinsam (umsortieren, raus, rein).
+                            if !payload.selection.contains(&cue_id) {
+                                actions.move_cues =
+                                    Some((payload.selection.clone(), cue_id, is_group));
+                            }
+                        } else if payload.child || is_child {
                             // Gruppen-Kinder: per ID (umsortieren, raus, rein).
                             if payload.id != cue_id {
                                 actions.move_cue = Some((payload.id, cue_id, is_group));
@@ -1850,7 +1869,7 @@ mod tests {
         list.add(Cue::new_group(
             "1",
             "g",
-            GroupMode::Simultaneous,
+            GroupMode::Timeline,
             vec![Cue::new("1.1", "kind", CueType::Audio)],
         ));
         list.add(Cue::new("2", "solo", CueType::Audio));

@@ -568,7 +568,7 @@ fn group_children_problems_roll_up_to_the_group() {
     let group = Cue::new_group(
         "g1",
         "Gruppe",
-        kuhplay::core::GroupMode::Simultaneous,
+        kuhplay::core::GroupMode::Timeline,
         vec![Cue::new("g1.1", "Kind", CueType::Audio).with_target("/nonexistent/kid.wav")],
     );
     app.carts.active_mut().add(group);

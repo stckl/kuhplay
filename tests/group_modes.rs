@@ -1,5 +1,6 @@
 //! Tests für die erweiterten Group-Modi: Timeline (zeitversetzte Armierung),
-//! Loop (Kinder-Kette wiederholt sich) und Shuffle (deterministische Mischung).
+//! Sequential/Shuffle (Kinder nacheinander in der Gruppe, optional wiederholt)
+//! und Shuffle (Mischung nach Shuffle-ID).
 
 use std::time::Duration;
 
@@ -86,208 +87,237 @@ fn timeline_closes_when_all_children_complete() {
 }
 
 // ---------------------------------------------------------------------------
-// Loop
+// Sequential / Shuffle
 // ---------------------------------------------------------------------------
 
+fn kids(n: usize) -> Vec<Cue> {
+    (0..n).map(|i| audio(&format!("1.{i}"))).collect()
+}
+
+/// Nummer des gerade laufenden Kinds.
+fn playing(list: &CueList) -> Option<String> {
+    list.cues()[0]
+        .children
+        .iter()
+        .find(|c| c.status == CueStatus::Playing)
+        .map(|c| c.number.clone())
+}
+
+/// Meldet das laufende Kind fertig (wie das Engine-Event) und liefert es.
+fn finish_current(list: &mut CueList) -> Option<String> {
+    let child = list.cues()[0]
+        .children
+        .iter()
+        .find(|c| c.status == CueStatus::Playing)
+        .map(|c| (c.id, c.number.clone()))?;
+    let _ = list.set_status_with_follow(child.0, CueStatus::Completed);
+    Some(child.1)
+}
+
+/// Spielt eine Play-through-Gruppe einen Durchgang lang; liefert die Reihenfolge.
+fn play_pass(list: &mut CueList, n: usize) -> Vec<String> {
+    (0..n).filter_map(|_| finish_current(list)).collect()
+}
+
 #[test]
-fn loop_group_repeats_children_until_iterations_exhausted() {
+fn sequential_go_plays_all_children_inside_the_group() {
     let mut list = CueList::new();
-    let mut group = Cue::new_group(
-        "1",
-        "Loop",
-        GroupMode::Loop,
-        vec![audio("1.1"), audio("1.2")],
+    list.add(Cue::new_group("1", "Seq", GroupMode::Sequential, kids(3)));
+    list.add(audio("2"));
+
+    let outcome = list.go().unwrap();
+    assert_eq!(
+        outcome.commands.len(),
+        1,
+        "first child starts with the group"
     );
+    assert_eq!(list.len(), 2, "children stay inside the group");
+    assert_eq!(list.cues()[0].children.len(), 3);
+    assert_eq!(list.cursor(), 1, "playhead on the cue after the group");
+
+    assert_eq!(play_pass(&mut list, 3), ["1.0", "1.1", "1.2"]);
+    assert_eq!(list.cues()[0].status, CueStatus::Completed, "group closes");
+    assert_eq!(
+        list.cues()[1].status,
+        CueStatus::Standby,
+        "next cue untouched"
+    );
+}
+
+#[test]
+fn go_per_child_needs_a_go_for_every_child() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group("1", "Seq", GroupMode::Sequential, kids(3));
+    group.group_go_per_child = true;
+    list.add(group);
+    list.add(audio("2"));
+
+    let _ = list.go().unwrap();
+    assert_eq!(playing(&list).as_deref(), Some("1.0"));
+    assert_eq!(list.cursor(), 0, "playhead stays on the group");
+    finish_current(&mut list);
+    assert_eq!(playing(&list), None, "no automatic next child");
+
+    let outcome = list.go().unwrap();
+    assert_eq!(outcome.index, 0);
+    assert_eq!(playing(&list).as_deref(), Some("1.1"));
+    finish_current(&mut list);
+    let _ = list.go().unwrap();
+    assert_eq!(playing(&list).as_deref(), Some("1.2"));
+    assert_eq!(
+        list.cursor(),
+        1,
+        "after the last child the playhead moves on"
+    );
+    finish_current(&mut list);
+    assert_eq!(list.cues()[0].status, CueStatus::Completed);
+}
+
+#[test]
+fn sequential_group_repeats_count_times() {
+    let mut list = CueList::new();
+    let mut group = Cue::new_group("1", "Seq", GroupMode::Sequential, kids(2));
     group.loop_mode = LoopMode::Count(2);
     list.add(group);
 
-    // --- Erste Runde ---
-    let _ = list.go().unwrap(); // splicet Kinder
-    assert_eq!(list.len(), 3);
-    let _ = list.go().unwrap(); // Kind 1.1
-    let id1 = list.cues()[1].id;
-    list.set_status(id1, CueStatus::Completed).unwrap();
-    let _ = list.go().unwrap(); // Kind 1.2
-    let id2 = list.cues()[2].id;
-    list.set_status(id2, CueStatus::Completed).unwrap();
-
-    // Re-Arm: Kinder zurück auf Standby, Playhead auf erstes Kind.
-    assert_eq!(
-        list.cues()[0].status,
-        CueStatus::Playing,
-        "group loops again"
-    );
+    let _ = list.go().unwrap();
+    assert_eq!(play_pass(&mut list, 2), ["1.0", "1.1"]);
+    assert_eq!(list.cues()[0].status, CueStatus::Playing, "second pass");
     assert_eq!(list.cues()[0].group_iterations_done, 1);
-    assert_eq!(list.cues()[1].status, CueStatus::Standby, "child re-armed");
-    assert_eq!(list.cues()[2].status, CueStatus::Standby, "child re-armed");
-    assert_eq!(list.cursor(), 1, "playhead back at first child");
-
-    // --- Zweite (letzte) Runde ---
-    let _ = list.go().unwrap();
-    let id1 = list.cues()[1].id;
-    list.set_status(id1, CueStatus::Completed).unwrap();
-    let _ = list.go().unwrap();
-    let id2 = list.cues()[2].id;
-    list.set_status(id2, CueStatus::Completed).unwrap();
-
+    assert_eq!(play_pass(&mut list, 2), ["1.0", "1.1"]);
     assert_eq!(
         list.cues()[0].status,
         CueStatus::Completed,
-        "iterations exhausted → group completes"
+        "passes used up"
     );
-    assert!(list.go().is_none(), "stream exhausted");
+    assert!(list.go().is_none());
 }
 
 #[test]
-fn loop_group_with_count_1_behaves_like_sequential() {
-    let mut list = CueList::new();
-    let mut group = Cue::new_group("1", "Loop", GroupMode::Loop, vec![audio("1.1")]);
-    group.loop_mode = LoopMode::Count(1);
-    list.add(group);
-
-    let _ = list.go().unwrap(); // splicet
-    let _ = list.go().unwrap(); // Kind
-    let id1 = list.cues()[1].id;
-    list.set_status(id1, CueStatus::Completed).unwrap();
-    assert_eq!(
-        list.cues()[0].status,
-        CueStatus::Completed,
-        "Count(1) → keine Wiederholung"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Shuffle
-// ---------------------------------------------------------------------------
-
-#[test]
-fn shuffle_splices_a_permutation_of_all_children() {
-    let mut list = CueList::new();
-    let children: Vec<Cue> = (0..8).map(|i| audio(&format!("1.{i}"))).collect();
-    list.add(Cue::new_group("1", "Shuffle", GroupMode::Shuffle, children));
-
-    let _ = list.go().unwrap();
-    assert_eq!(list.len(), 9, "group + 8 spliced children");
-
-    let mut numbers: Vec<String> = list.cues()[1..].iter().map(|c| c.number.clone()).collect();
-    numbers.sort();
-    let expected: Vec<String> = (0..8).map(|i| format!("1.{i}")).collect();
-    assert_eq!(
-        numbers, expected,
-        "shuffle must contain every child exactly once"
-    );
-}
-
-#[test]
-fn shuffle_is_deterministic_for_the_same_group_id() {
-    // Gleiche Group-ID → gleiche Reihenfolge (reproduzierbare Shows).
-    let make_group = || {
-        Cue::new_group(
-            "1",
-            "Shuffle",
-            GroupMode::Shuffle,
-            (0..8).map(|i| audio(&format!("1.{i}"))).collect(),
-        )
-    };
-    let group_a = make_group();
-    let mut group_b = make_group();
-    group_b.id = group_a.id; // gleiche ID → gleicher Seed
-
-    let mut list_a = CueList::new();
-    list_a.add(group_a);
-    let mut list_b = CueList::new();
-    list_b.add(group_b);
-
-    let _ = list_a.go().unwrap();
-    let _ = list_b.go().unwrap();
-
-    let order_a: Vec<&str> = list_a.cues()[1..]
-        .iter()
-        .map(|c| c.number.as_str())
-        .collect();
-    let order_b: Vec<&str> = list_b.cues()[1..]
-        .iter()
-        .map(|c| c.number.as_str())
-        .collect();
-    assert_eq!(
-        order_a, order_b,
-        "same group id must produce the same shuffle"
-    );
-}
-
-#[test]
-fn shuffle_group_closes_like_sequential_after_last_child() {
-    let mut list = CueList::new();
-    list.add(Cue::new_group(
-        "1",
-        "Shuffle",
-        GroupMode::Shuffle,
-        vec![audio("1.1"), audio("1.2")],
-    ));
-    let _ = list.go().unwrap(); // splicet
-    assert_eq!(list.cues()[0].status, CueStatus::Playing);
-
-    for i in 1..3 {
-        let _ = list.go().unwrap();
-        let id = list.cues()[i].id;
-        list.set_status(id, CueStatus::Completed).unwrap();
-    }
-    assert_eq!(list.cues()[0].status, CueStatus::Completed, "group closes");
-}
-
-/// Sequential/Shuffle reihen die Kinder beim GO in die Liste ein. Speichern
-/// und Reset müssen die Gruppe wieder zusammensetzen (vorher ging sie
-/// dabei verloren bzw. Shuffle veränderte die Reihenfolge bleibend).
-#[test]
-fn dissolved_groups_are_restored_for_saving_and_on_reset() {
-    for mode in [GroupMode::Sequential, GroupMode::Shuffle, GroupMode::Loop] {
+fn sequential_and_shuffle_groups_can_repeat_endlessly() {
+    for mode in [GroupMode::Sequential, GroupMode::Shuffle] {
+        let mut group = Cue::new_group("1", "Playlist", mode, kids(6));
+        group.loop_mode = LoopMode::Infinite;
+        let preview: Vec<String> = group
+            .shuffled_children()
+            .iter()
+            .map(|c| c.number.clone())
+            .collect();
         let mut list = CueList::new();
-        let kids: Vec<Cue> = (1..=4)
-            .map(|i| Cue::new(format!("2.{i}"), format!("Kind {i}"), CueType::Wait))
-            .collect();
-        let order: Vec<String> = kids.iter().map(|c| c.number.clone()).collect();
-        list.add(Cue::new("1", "davor", CueType::Wait));
-        list.add(Cue::new_group("2", "Gruppe", mode, kids));
-        list.add(Cue::new("3", "danach", CueType::Wait));
-        list.go(); // Cue 1
-        list.go(); // Gruppe → Kinder eingereiht
-        assert!(
-            list.cues()[1].children.is_empty(),
-            "{mode:?}: Kinder eingereiht"
-        );
-
-        let saved = list.folded();
-        let numbers = |l: &CueList| {
-            l.cues()
-                .iter()
-                .map(|c| c.number.clone())
-                .collect::<Vec<_>>()
-        };
+        list.add(group);
+        let _ = list.go().unwrap();
+        let passes: Vec<Vec<String>> = (0..4).map(|_| play_pass(&mut list, 6)).collect();
         assert_eq!(
-            numbers(&saved),
-            ["1", "2", "3"],
-            "{mode:?}: gespeicherte Liste"
+            list.cues()[0].status,
+            CueStatus::Playing,
+            "{mode:?}: endless"
         );
-        let saved_kids: Vec<String> = saved.cues()[1]
-            .children
-            .iter()
-            .map(|c| c.number.clone())
-            .collect();
-        assert_eq!(saved_kids, order, "{mode:?}: Kinder in Originalreihenfolge");
-
-        list.reset();
-        assert_eq!(numbers(&list), ["1", "2", "3"], "{mode:?}: nach Reset");
-        let kids_after: Vec<String> = list.cues()[1]
-            .children
-            .iter()
-            .map(|c| c.number.clone())
-            .collect();
-        assert_eq!(kids_after, order, "{mode:?}: Reihenfolge nach Reset");
-        // Erneut startbar.
-        list.go();
         assert!(
-            list.go().is_some(),
-            "{mode:?}: Gruppe nach Reset wieder startbar"
+            playing(&list).is_some(),
+            "{mode:?}: next pass runs by itself"
         );
+        assert_eq!(list.cues()[0].group_iterations_done, 4);
+        for pass in &passes {
+            let mut sorted = pass.clone();
+            sorted.sort();
+            assert_eq!(
+                sorted,
+                preview
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                "{mode:?}: every child once per pass"
+            );
+        }
+        if mode == GroupMode::Shuffle {
+            assert_eq!(passes[0], preview, "first pass = shown shuffle");
+            assert!(passes.windows(2).any(|w| w[0] != w[1]), "passes reshuffled");
+        } else {
+            assert!(
+                passes.iter().all(|p| *p == passes[0]),
+                "list order each pass"
+            );
+        }
     }
+}
+
+#[test]
+fn shuffle_order_is_reproducible_for_the_same_shuffle_id() {
+    let group = Cue::new_group("1", "Shuffle", GroupMode::Shuffle, kids(8));
+    let run = |group: Cue| {
+        let mut group = group;
+        group.loop_mode = LoopMode::Count(3);
+        let mut list = CueList::new();
+        list.add(group);
+        let _ = list.go().unwrap();
+        (0..3).map(|_| play_pass(&mut list, 8)).collect::<Vec<_>>()
+    };
+    let a = run(group.clone());
+    assert_eq!(a, run(group.clone()), "same show day → same passes");
+    let mut sorted = a[0].clone();
+    sorted.sort();
+    assert_eq!(sorted, (0..8).map(|i| format!("1.{i}")).collect::<Vec<_>>());
+}
+
+#[test]
+fn new_shuffle_rolls_a_new_fixed_order() {
+    let mut group = Cue::new_group("1", "Shuffle", GroupMode::Shuffle, kids(8));
+    let order = |g: &Cue| -> Vec<String> {
+        g.shuffled_children()
+            .iter()
+            .map(|c| c.number.clone())
+            .collect()
+    };
+    let before = order(&group);
+    assert_eq!(before, order(&group), "fixed order stays the same");
+    let changed = (0..5).any(|_| {
+        group.new_shuffle();
+        order(&group) != before
+    });
+    assert!(changed, "New Shuffle must change the order");
+    let fixed = order(&group);
+
+    // GO spielt genau die Vorschau-Reihenfolge, auch nach Speichern/Laden.
+    let json = serde_json::to_string(&group).unwrap();
+    let group: Cue = serde_json::from_str(&json).unwrap();
+    let mut list = CueList::new();
+    list.add(group);
+    let _ = list.go().unwrap();
+    assert_eq!(play_pass(&mut list, 8), fixed);
+}
+
+#[test]
+fn reset_rearms_a_running_group_in_place() {
+    for mode in [GroupMode::Sequential, GroupMode::Shuffle] {
+        let mut list = CueList::new();
+        list.add(Cue::new_group("1", "G", mode, kids(3)));
+        let _ = list.go().unwrap();
+        finish_current(&mut list);
+        list.reset();
+        assert_eq!(list.len(), 1);
+        assert!(list.cues()[0]
+            .children
+            .iter()
+            .all(|c| c.status == CueStatus::Standby));
+        assert!(list.go().is_some(), "{mode:?}: startable again");
+        assert!(playing(&list).is_some());
+    }
+}
+
+#[test]
+fn old_shows_load_simultaneous_and_loop_groups() {
+    let mut timeline = Cue::new_group("1", "G", GroupMode::Timeline, kids(1));
+    let json = serde_json::to_string(&timeline)
+        .unwrap()
+        .replace("\"Timeline\"", "\"Simultaneous\"");
+    timeline = serde_json::from_str(&json).unwrap();
+    assert_eq!(timeline.group_mode, GroupMode::Timeline);
+    let seq = Cue::new_group("1", "G", GroupMode::Sequential, kids(1));
+    let json = serde_json::to_string(&seq)
+        .unwrap()
+        .replace("\"Sequential\"", "\"Loop\"");
+    let seq: Cue = serde_json::from_str(&json).unwrap();
+    assert_eq!(seq.group_mode, GroupMode::Sequential);
 }

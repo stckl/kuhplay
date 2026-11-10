@@ -181,42 +181,40 @@ pub fn cue_type_for_file(path: &std::path::Path) -> Option<CueType> {
 }
 
 /// Kaskadierungs-Modus eines Group-Cues.
+///
+/// Ältere Shows: „Simultaneous" lädt als [`GroupMode::Timeline`] (gleiches
+/// Verhalten bei Pre-Wait 0), „Loop" als [`GroupMode::Sequential`] (die
+/// Wiederholung steckt in [`Cue::loop_mode`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum GroupMode {
-    /// Alle armed Kinder starten gleichzeitig (ein GO triggert alle Commands).
-    #[default]
-    Simultaneous,
-    /// Kinder werden der Reihe nach in die Cue-Liste eingespielt
-    /// (jedes GO triggert das nächste Kind).
+    /// Ein GO der Gruppe spielt die Kinder nacheinander in List-Reihenfolge
+    /// (das nächste startet, wenn das vorige fertig ist); Wiederholung über
+    /// [`Cue::loop_mode`].
+    #[serde(alias = "Loop")]
     Sequential,
-    /// Timeline: wie [`GroupMode::Simultaneous`], aber die Kinder staffeln sich
-    /// über ihre individuellen Pre-Waits (zeitversetzter Ablauf).
+    /// Alle armed Kinder starten mit einem GO, zeitversetzt über ihre
+    /// individuellen Pre-Waits.
+    #[default]
+    #[serde(alias = "Simultaneous")]
     Timeline,
-    /// Wie [`GroupMode::Sequential`], aber die Kinder-Kette wiederholt sich
-    /// entsprechend [`Cue::loop_mode`] (Loop-Gruppe).
-    Loop,
-    /// Wie [`GroupMode::Sequential`], aber die Kinder-Reihenfolge wird beim
-    /// Triggern deterministisch (seed-basiert) gemischt.
+    /// Wie [`GroupMode::Sequential`], aber in gemischter Reihenfolge (Seed =
+    /// Shuffle-ID, siehe [`Cue::shuffle_seed`]).
     Shuffle,
 }
 
 impl GroupMode {
     /// Alle Modi (für UI-ComboBoxen).
-    pub const ALL: [GroupMode; 5] = [
-        GroupMode::Simultaneous,
+    pub const ALL: [GroupMode; 3] = [
         GroupMode::Sequential,
         GroupMode::Timeline,
-        GroupMode::Loop,
         GroupMode::Shuffle,
     ];
 
     /// Anzeige-Label.
     pub fn label(self) -> &'static str {
         match self {
-            GroupMode::Simultaneous => "Simultaneous",
             GroupMode::Sequential => "Sequential",
             GroupMode::Timeline => "Timeline",
-            GroupMode::Loop => "Loop",
             GroupMode::Shuffle => "Shuffle",
         }
     }
@@ -614,22 +612,25 @@ pub struct Cue {
     /// Eltern-Gruppe (wird beim Triggern gesetzt; reiner Laufzeit-Zustand).
     #[serde(default)]
     pub parent_group: Option<Uuid>,
-    /// Bereits absolvierte Iterationen (nur für [`GroupMode::Loop`]).
+    /// Bereits absolvierte Iterationen (Gruppen mit Wiederholung).
     #[serde(default)]
     pub group_iterations_done: u32,
-    /// Sequential/Loop/Shuffle-Gruppe während des Laufs: Reihenfolge der
-    /// Kinder vor dem Einreihen in die Liste – damit Reset und Speichern die
-    /// Gruppe wieder zusammensetzen (siehe `CueList::fold_dissolved_groups`).
+    /// Sequential/Shuffle-Gruppe während des Laufs: Abspielreihenfolge der
+    /// Kinder (IDs) im aktuellen Durchgang. Die Kinder bleiben in der Gruppe.
     #[serde(skip)]
-    pub dissolved_children: Vec<Uuid>,
-    /// Sequential/Loop/Shuffle: ein GO spielt alle Kinder nacheinander ab
-    /// (das nächste startet, wenn das vorige fertig ist) – Playlist.
+    pub group_play_order: Vec<Uuid>,
+    /// Sequential/Shuffle: jedes Kind braucht ein eigenes GO (das GO der
+    /// Gruppe startet das erste). Sonst spielt ein GO alle Kinder nacheinander.
     #[serde(default)]
-    pub group_play_through: bool,
+    pub group_go_per_child: bool,
     /// Shuffle: bei jedem Start neu mischen. Sonst bei jedem Lauf dieselbe
-    /// (aus der Gruppen-ID abgeleitete) Reihenfolge – reproduzierbare Show.
+    /// (aus der Shuffle-ID abgeleitete) Reihenfolge – reproduzierbare Show.
     #[serde(default)]
     pub group_shuffle_each_run: bool,
+    /// Shuffle-ID: Seed der festen Shuffle-Reihenfolge („New Shuffle" würfelt
+    /// neu). `None` = aus der Gruppen-ID abgeleitet (ältere Shows).
+    #[serde(default)]
+    pub group_shuffle_seed: Option<u64>,
     /// Aktion (nur für [`CueType::Control`]).
     #[serde(default)]
     pub control_action: ControlAction,
@@ -716,6 +717,26 @@ pub struct Cue {
 }
 
 impl Cue {
+    /// Seed der festen Shuffle-Reihenfolge (Shuffle-ID).
+    pub fn shuffle_seed(&self) -> u64 {
+        self.group_shuffle_seed.unwrap_or_else(|| {
+            let v = self.id.as_u128();
+            (v as u64) ^ ((v >> 64) as u64)
+        })
+    }
+
+    /// „New Shuffle": neue feste Shuffle-Reihenfolge würfeln.
+    pub fn new_shuffle(&mut self) {
+        self.group_shuffle_seed = Some(fresh_seed());
+    }
+
+    /// Kinder in der festen Shuffle-Reihenfolge (Vorschau im Inspector).
+    pub fn shuffled_children(&self) -> Vec<&Cue> {
+        let mut children: Vec<&Cue> = self.children.iter().collect();
+        shuffle_deterministic(&mut children, self.shuffle_seed());
+        children
+    }
+
     /// Erzeugt einen neuen Cue mit frischer UUID. Default: armed, Standby.
     pub fn new(number: impl Into<String>, name: impl Into<String>, cue_type: CueType) -> Self {
         Self {
@@ -746,13 +767,14 @@ impl Cue {
             continue_mode: ContinueMode::Off,
             slices: Vec::new(),
             route: None,
-            group_mode: GroupMode::Simultaneous,
+            group_mode: GroupMode::Timeline,
             children: Vec::new(),
             parent_group: None,
             group_iterations_done: 0,
-            dissolved_children: Vec::new(),
-            group_play_through: false,
+            group_play_order: Vec::new(),
+            group_go_per_child: false,
             group_shuffle_each_run: false,
+            group_shuffle_seed: None,
             control_action: ControlAction::Start,
             control_target: None,
             stage: None,
@@ -1453,6 +1475,35 @@ fn parse_whole_timecode(text: &str) -> Option<Duration> {
     Some(Duration::from_secs(hours * 3600 + minutes * 60 + seconds))
 }
 
+/// Neuer Seed bei jedem Aufruf (Shuffle „New order each run").
+pub(crate) fn fresh_seed() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    // Nie 0 (xorshift bliebe sonst bei 0 stehen).
+    (nanos ^ 0x9E37_79B9_7F4A_7C15) | 1
+}
+
+/// Deterministisches Fisher-Yates-Shuffle (xorshift64* PRNG).
+///
+/// Mit fester Shuffle-ID ([`Cue::shuffle_seed`]) liefert eine Shuffle-Gruppe an jedem Show-Tag dieselbe
+/// Reihenfolge (reproduzierbare Show); „new order each run" nimmt einen
+/// frischen Seed.
+pub(crate) fn shuffle_deterministic<T>(items: &mut [T], seed: u64) {
+    let mut state = seed | 1;
+    let mut next = move || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    };
+    for i in (1..items.len()).rev() {
+        let j = (next() % (i as u64 + 1)) as usize;
+        items.swap(i, j);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1780,7 +1831,7 @@ mod tests {
     fn find_locates_nested_children() {
         let child = Cue::new("1.1", "child", CueType::Audio);
         let child_id = child.id;
-        let group = Cue::new_group("1", "group", GroupMode::Simultaneous, vec![child]);
+        let group = Cue::new_group("1", "group", GroupMode::Timeline, vec![child]);
         assert!(group.find(child_id).is_some());
         assert!(group.find(Uuid::new_v4()).is_none());
     }

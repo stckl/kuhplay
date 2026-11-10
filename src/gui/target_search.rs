@@ -220,7 +220,7 @@ mod tests {
         list.add(show);
         // Gruppen-Kind mit Ziel.
         let mut child = Cue::new("4.1", "kind", CueType::Video).with_target("/media/v.mp4");
-        let group = Cue::new_group("4", "g", crate::core::GroupMode::Simultaneous, vec![child]);
+        let group = Cue::new_group("4", "g", crate::core::GroupMode::Timeline, vec![child]);
         child = group.children[0].clone();
         let mut with_group = CueList::new();
         with_group.add(group);

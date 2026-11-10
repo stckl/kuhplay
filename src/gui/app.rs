@@ -1509,6 +1509,37 @@ impl ShowApp {
         }
     }
 
+    /// Merkt sich die aktuelle Show-Datei für den nächsten Start (ohne Datei,
+    /// z. B. nach „New Show": startet wieder leer).
+    pub fn save_last_show(&self, storage: &mut dyn eframe::Storage) {
+        let path = self
+            .current_file
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        storage.set_string(super::state::LAST_SHOW_STORAGE_KEY, path);
+    }
+
+    /// Start-Show: die zuletzt geöffnete aus dem Storage, sonst eine leere
+    /// (nicht die Demo-Show). Fehlt die Datei, startet die App leer.
+    pub fn open_startup_show(&mut self, storage: Option<&dyn eframe::Storage>) {
+        // Auto-Demo (Screen-Tests) spielt die Demo-Show.
+        if self.autodemo.is_some() {
+            return;
+        }
+        let last = storage
+            .and_then(|s| s.get_string(super::state::LAST_SHOW_STORAGE_KEY))
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from);
+        if let Some(path) = last {
+            match self.load_show(&path) {
+                Ok(()) => return,
+                Err(err) => tracing::warn!(%err, ?path, "letzte Show nicht geladen"),
+            }
+        }
+        self.new_show();
+    }
+
     /// Speichert die Workspace-Templates als JSON im `eframe::Storage`
     /// (wird von `eframe::App::save` aufgerufen).
     pub fn save_ui_templates(&self, storage: &mut dyn eframe::Storage) {
@@ -2593,7 +2624,7 @@ impl ShowApp {
         let doc = ShowDocument {
             name: self.show_name.clone(),
             // Laufende Sequential-Gruppen zusammengesetzt speichern.
-            carts: self.carts.folded(),
+            carts: self.carts.clone(),
             stages: self.stages.clone(),
             routes: self.routes.clone(),
             screens: self.screens.clone(),
@@ -3678,6 +3709,11 @@ impl ShowApp {
                         .active_mut()
                         .move_by_id(dragged, target, into_group);
                 }
+                if let Some((ids, target, into_group)) = &actions.move_cues {
+                    self.carts
+                        .active_mut()
+                        .move_ids_by_id(ids, *target, *into_group);
+                }
                 if let Some((cue, group)) = actions.move_into_group {
                     self.carts.active_mut().move_into_group(cue, group);
                 }
@@ -3868,5 +3904,6 @@ impl eframe::App for ShowApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_ui_state(storage);
         self.save_ui_templates(storage);
+        self.save_last_show(storage);
     }
 }
