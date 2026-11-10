@@ -16,7 +16,7 @@
 
 name = "kuhplay"
 # Muss zu Cargo.toml passen, der Release-Workflow prüft das.
-version = "0.1.5"
+version = "0.1.6"
 product_name = "KuhPlay"
 identifier = "com.kuhplay.app"
 description = "Show control & cue playback. Optional: Blackmagic Desktop Video 16.0+ for DeckLink output (not bundled, see https://www.blackmagicdesign.com/de/support/download)."
