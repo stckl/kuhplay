@@ -106,12 +106,46 @@ mod col {
 }
 
 /// Eine anzeigbare Tabellenzeile: Top-Level-Cue oder eingerücktes Kind.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct RowRef {
-    /// Index des Cues in der Liste.
+    /// Index des Top-Level-Cues in der Liste.
     list_index: usize,
-    /// `Some(c)` = c-tes Kind der Gruppe an `list_index` (eingerückt).
-    child: Option<usize>,
+    /// Pfad durch die Gruppen-Kinder (leer = Top-Level-Cue; `[c]` = c-tes
+    /// Kind, `[c, e]` = e-tes Kind der verschachtelten Gruppe usw.).
+    path: Vec<usize>,
+}
+
+impl RowRef {
+    /// Verschachtelungstiefe (0 = Top-Level).
+    fn depth(&self) -> usize {
+        self.path.len()
+    }
+
+    /// Der Cue dieser Zeile.
+    fn cue<'a>(&self, list: &'a CueList) -> Option<&'a Cue> {
+        let mut cue = list.cues().get(self.list_index)?;
+        for &i in &self.path {
+            cue = cue.children.get(i)?;
+        }
+        Some(cue)
+    }
+}
+
+/// Zeilen für die Kinder einer (aufgeklappten) Gruppe – rekursiv, damit
+/// verschachtelte Gruppen ihre Kinder ebenfalls zeigen.
+fn push_child_rows(rows: &mut Vec<RowRef>, list_index: usize, path: &[usize], group: &Cue) {
+    if group.cue_type != CueType::Group || group.collapsed {
+        return;
+    }
+    for (c, child) in group.children.iter().enumerate() {
+        let mut child_path = path.to_vec();
+        child_path.push(c);
+        rows.push(RowRef {
+            list_index,
+            path: child_path.clone(),
+        });
+        push_child_rows(rows, list_index, &child_path, child);
+    }
 }
 
 /// Pro Cue vorberechnete Anzeige-Daten (docs/TODO-offen.md Phase 2).
@@ -159,6 +193,34 @@ pub struct CueTableActions {
     /// Drag & Drop: (gezogene Cues, Ziel-Zeile, Position davor/dahinter/
     /// in die Gruppe) – auch Gruppen-Kinder und Mehrfachauswahl.
     pub move_cues: Option<(Vec<Uuid>, Uuid, DropPlace)>,
+}
+
+/// Positionsanzeige beim Ziehen: Einfügelinie davor/dahinter (bei Kindern
+/// eingerückt) bzw. die ganze Gruppen-Zeile, wenn es hinein geht.
+fn paint_drop_marker(ctx: &egui::Context, rect: egui::Rect, place: DropPlace, depth: usize) {
+    let marker = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("cue_drop_marker"),
+    ));
+    match place {
+        DropPlace::Before | DropPlace::After => {
+            let y = if place == DropPlace::Before {
+                rect.top()
+            } else {
+                rect.bottom()
+            };
+            let left = rect.left() + 24.0 * depth as f32;
+            marker.line_segment(
+                [egui::pos2(left, y), egui::pos2(rect.right(), y)],
+                egui::Stroke::new(3.0, palette::ACCENT),
+            );
+            marker.circle_filled(egui::pos2(left + 4.0, y), 4.5, palette::ACCENT);
+        }
+        DropPlace::Into | DropPlace::IntoFirst => {
+            marker.rect_filled(rect, 3.0, palette::ACCENT.gamma_multiply(0.18));
+            marker.rect_stroke(rect, 3.0, egui::Stroke::new(2.0, palette::ACCENT));
+        }
+    }
 }
 
 /// Drop-Position aus der Zeigerhöhe in der Zielzeile: normale Zeile obere
@@ -246,8 +308,8 @@ pub fn cell_edit_active_id() -> egui::Id {
     egui::Id::new("kuhplay/cue_cell_edit_active")
 }
 
-/// Bekannte egui-ID: Zeile (Cue-ID) unter dem Zeiger, während Dateien aus
-/// dem Finder über die Liste gezogen werden – dort landen sie beim Drop.
+/// Bekannte egui-ID: Zeile (Cue-ID) und Position unter dem Zeiger, während
+/// Dateien aus dem Finder über die Liste gezogen werden – dort landen sie.
 pub fn file_drop_target_id() -> egui::Id {
     egui::Id::new("kuhplay/file_drop_target")
 }
@@ -277,7 +339,7 @@ pub fn draw(
     // Dateien aus dem Finder über der Liste: Drop-Ziel je Frame neu bestimmen.
     let files_hovering = editable && ctx.input(|i| !i.raw.hovered_files.is_empty());
     if files_hovering {
-        ctx.data_mut(|d| d.remove::<Uuid>(file_drop_target_id()));
+        ctx.data_mut(|d| d.remove::<(Uuid, DropPlace)>(file_drop_target_id()));
     }
     // Painter des äußeren Ui: Zeilen-Hintergründe (Cue-Color-Tönung) werden
     // pro Zelle damit gemalt, landen so unter dem Zell-Text (siehe Modul-Doku).
@@ -303,16 +365,9 @@ pub fn draw(
     for (i, cue) in cue_list.cues().iter().enumerate() {
         rows.push(RowRef {
             list_index: i,
-            child: None,
+            path: Vec::new(),
         });
-        if cue.cue_type == CueType::Group && !cue.collapsed {
-            for c in 0..cue.children.len() {
-                rows.push(RowRef {
-                    list_index: i,
-                    child: Some(c),
-                });
-            }
-        }
+        push_child_rows(&mut rows, i, &[], cue);
     }
 
     // Inline-Edit-Zustand (egui temp data, über Frames stabil).
@@ -344,7 +399,7 @@ pub fn draw(
         if last_cursor != Some(cursor) {
             scroll_to = rows
                 .iter()
-                .position(|r| r.child.is_none() && r.list_index == cursor);
+                .position(|r| r.path.is_empty() && r.list_index == cursor);
             ctx.data_mut(|d| d.insert_temp(scroll_state_id, cursor));
         }
     }
@@ -444,14 +499,14 @@ pub fn draw(
             body.rows(ROW_HEIGHT, rows.len(), |mut row| {
                 let index = row.index();
                 let row_ref = &rows[index];
-                let is_child = row_ref.child.is_some();
+                let depth = row_ref.depth();
+                let is_child = depth > 0;
                 let list_index = row_ref.list_index;
 
                 // Einmalig borgen; alle Spalten lesen daraus (NLL beendet
                 // den Borrow vor den mutierenden Aktionen am Zeilenende).
-                let cue: &Cue = match row_ref.child {
-                    Some(c) => &cue_list.cues()[list_index].children[c],
-                    None => &cue_list.cues()[list_index],
+                let Some(cue) = row_ref.cue(cue_list) else {
+                    return;
                 };
                 // ID kopieren: Nach den Zellen darf `cue` nicht mehr benutzt
                 // werden (die Klick-/Menü-Aktionen borgen cue_list mutabel).
@@ -506,7 +561,8 @@ pub fn draw(
                 let mut cell_rects = [None::<egui::Rect>; EDIT_FIELD_COUNT];
                 // Aufklapp-Dreieck angeklickt (Mutation erst am Zeilenende).
                 let mut triangle_clicked = false;
-                let is_group = !is_child && cue.cue_type == CueType::Group;
+                // Auch verschachtelte Gruppen: aufklappbar, Drop hinein möglich.
+                let is_group = cue.cue_type == CueType::Group;
                 let collapsed = cue.collapsed;
 
                 // --- Status-Spalte: Playhead / Broken-✕ / Status-Pille ---
@@ -721,9 +777,8 @@ pub fn draw(
                         return;
                     }
                     ui.add_space(6.0);
-                    if is_child {
-                        ui.add_space(20.0);
-                    }
+                    // Einrückung je Verschachtelungstiefe.
+                    ui.add_space(20.0 * depth as f32);
                     ui.label(RichText::new(&cue.name).color(name_color));
                 });
                 // --- Target ---
@@ -950,7 +1005,7 @@ pub fn draw(
                     // nächsten Top-Level-Cue („Cue Sequence").
                     if !is_child
                         && mode != ContinueMode::Off
-                        && rows[index + 1..].iter().any(|r| r.child.is_none())
+                        && rows[index + 1..].iter().any(|r| r.path.is_empty())
                     {
                         let r = ui.max_rect();
                         connectors.push((r.center().x, r.bottom()));
@@ -959,7 +1014,12 @@ pub fn draw(
 
                 // Aufklapp-Dreieck: nach allen Spalten anwenden (borrow-sicher).
                 if triangle_clicked {
-                    cue_list.set_collapsed(list_index, !collapsed);
+                    if let Some(group) = cue_list
+                        .find_cue_mut(cue_id)
+                        .filter(|c| c.cue_type == CueType::Group)
+                    {
+                        group.collapsed = !collapsed;
+                    }
                 }
 
                 // Nach allen Spalten: Union aller Zellen = ganze Zeile.
@@ -969,17 +1029,17 @@ pub fn draw(
                 let clicked = response.clicked();
                 // Datei-Drop aus dem Finder: Zeile unter dem Zeiger ist das Ziel
                 // (Gruppe = hinein, sonst dahinter).
-                if files_hovering
-                    && ctx
+                // Datei-Drop aus dem Finder: dieselbe Positionsanzeige wie beim
+                // Verschieben (davor/dahinter bzw. in die Gruppe).
+                if files_hovering {
+                    if let Some(p) = ctx
                         .input(|i| i.pointer.latest_pos())
-                        .is_some_and(|p| response.rect.contains(p))
-                {
-                    ctx.data_mut(|d| d.insert_temp(file_drop_target_id(), cue_id));
-                    painter.rect_stroke(
-                        response.rect,
-                        0.0,
-                        egui::Stroke::new(1.5_f32, palette::ACCENT),
-                    );
+                        .filter(|p| response.rect.contains(*p))
+                    {
+                        let place = drop_place(response.rect, p.y, is_group, !collapsed);
+                        ctx.data_mut(|d| d.insert_temp(file_drop_target_id(), (cue_id, place)));
+                        paint_drop_marker(&ctx, response.rect, place, depth);
+                    }
                 }
                 // `Response::union` (egui 0.30) überträgt das `double_clicked`-
                 // Feld der Zellen NICHT auf die Zeilen-Union. Doppelklick daher
@@ -1015,39 +1075,7 @@ pub fn draw(
                         .dnd_hover_payload::<DragPayload>()
                         .filter(|p| p.id != cue_id && !p.selection.contains(&cue_id));
                     if let (Some(_), Some(place)) = (dragged_here, place) {
-                        let marker = ctx.layer_painter(egui::LayerId::new(
-                            egui::Order::Foreground,
-                            egui::Id::new("cue_drop_marker"),
-                        ));
-                        let rect = response.rect;
-                        match place {
-                            DropPlace::Before | DropPlace::After => {
-                                let y = if place == DropPlace::Before {
-                                    rect.top()
-                                } else {
-                                    rect.bottom()
-                                };
-                                // Kinder eingerückt: die Linie beginnt dort.
-                                let left = rect.left() + if is_child { 24.0 } else { 0.0 };
-                                marker.line_segment(
-                                    [egui::pos2(left, y), egui::pos2(rect.right(), y)],
-                                    egui::Stroke::new(3.0, palette::ACCENT),
-                                );
-                                marker.circle_filled(
-                                    egui::pos2(left + 4.0, y),
-                                    4.5,
-                                    palette::ACCENT,
-                                );
-                            }
-                            DropPlace::Into | DropPlace::IntoFirst => {
-                                marker.rect_filled(rect, 3.0, palette::ACCENT.gamma_multiply(0.18));
-                                marker.rect_stroke(
-                                    rect,
-                                    3.0,
-                                    egui::Stroke::new(2.0, palette::ACCENT),
-                                );
-                            }
-                        }
+                        paint_drop_marker(&ctx, response.rect, place, depth);
                     }
                     // Drop: Aktion vormerken (Ausführung nach der Tabelle).
                     if let Some(payload) = response.dnd_release_payload::<DragPayload>() {
@@ -1092,13 +1120,7 @@ pub fn draw(
                             }
                             // Cue frisch borgen (der Zellen-Borrow `cue` darf
                             // die mutablen Aktionen davor nicht überdauern).
-                            let cue_ref = match row_ref.child {
-                                Some(c) => cue_list
-                                    .cues()
-                                    .get(list_index)
-                                    .and_then(|g| g.children.get(c)),
-                                None => cue_list.cues().get(list_index),
-                            };
+                            let cue_ref = row_ref.cue(cue_list);
                             if let Some(cue_ref) = cue_ref {
                                 start_edit = Some(CellEdit {
                                     cue_id,
@@ -1636,7 +1658,8 @@ pub fn find_bar_id() -> egui::Id {
 pub struct FindHit {
     /// Index in `CueList::cues()` (Top-Level; bei Kindern die Gruppe).
     pub list_index: usize,
-    /// Kind-Index innerhalb der Gruppe (`None` = Top-Level-Cue).
+    /// Index des Kindes in der Top-Level-Gruppe, unter dem der Treffer liegt
+    /// (`None` = Top-Level-Cue; bei verschachtelten Gruppen der äußerste Index).
     pub child: Option<usize>,
     /// Cue-ID (für Selektion).
     pub id: Uuid,
@@ -1669,17 +1692,27 @@ pub fn find_hits(list: &CueList, query: &str) -> Vec<FindHit> {
         }
         if cue.cue_type == CueType::Group && !cue.collapsed {
             for (c, child) in cue.children.iter().enumerate() {
-                if cue_matches(child, query) {
-                    hits.push(FindHit {
-                        list_index: i,
-                        child: Some(c),
-                        id: child.id,
-                    });
-                }
+                child_hits(child, i, c, query, &mut hits);
             }
         }
     }
     hits
+}
+
+/// Treffer in einem Gruppen-Kind und (aufgeklappt) seinen Kindern.
+fn child_hits(cue: &Cue, list_index: usize, child: usize, query: &str, hits: &mut Vec<FindHit>) {
+    if cue_matches(cue, query) {
+        hits.push(FindHit {
+            list_index,
+            child: Some(child),
+            id: cue.id,
+        });
+    }
+    if cue.cue_type == CueType::Group && !cue.collapsed {
+        for grandchild in &cue.children {
+            child_hits(grandchild, list_index, child, query, hits);
+        }
+    }
 }
 
 /// Nächster Treffer: Playhead (Cursor) + Selektion auf den Treffer setzen
@@ -1936,6 +1969,42 @@ mod tests {
     /// kapselt die Felder privat; hier über den Debug-Output).
     fn is_resizable(column: &egui_extras::Column) -> bool {
         format!("{column:?}").contains("resizable: Some(true)")
+    }
+
+    /// Verschachtelte Gruppen: Zeilen in beliebiger Tiefe, eingeklappte
+    /// innere Gruppe verbirgt nur ihre eigenen Kinder.
+    #[test]
+    fn nested_group_rows_follow_depth_and_collapse() {
+        let inner = Cue::new_group(
+            "1.2",
+            "inner",
+            GroupMode::Timeline,
+            vec![Cue::new("1.2.1", "enkel", CueType::Video)],
+        );
+        let mut outer = Cue::new_group(
+            "1",
+            "outer",
+            GroupMode::Sequential,
+            vec![Cue::new("1.1", "kind", CueType::Video), inner],
+        );
+        let rows_of = |g: &Cue| {
+            let mut rows = Vec::new();
+            push_child_rows(&mut rows, 0, &[], g);
+            rows.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(rows_of(&outer), vec![vec![0], vec![1], vec![1, 0]]);
+
+        let mut list = CueList::new();
+        list.add(outer.clone());
+        let enkel = RowRef {
+            list_index: 0,
+            path: vec![1, 0],
+        };
+        assert_eq!(enkel.depth(), 2);
+        assert_eq!(enkel.cue(&list).unwrap().number, "1.2.1");
+
+        outer.children[1].collapsed = true;
+        assert_eq!(rows_of(&outer), vec![vec![0], vec![1]]);
     }
 
     #[test]

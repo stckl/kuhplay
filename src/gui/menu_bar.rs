@@ -52,6 +52,16 @@ pub fn draw(ui: &mut egui::Ui, app: &mut ShowApp) {
                 app.save_show_as_dialog(ui.ctx());
                 ui.close_menu();
             }
+            if ui
+                .button("Export Show with Media…")
+                .on_hover_text(
+                    "Folder with the show file and copies of all media (backup / other computer)",
+                )
+                .clicked()
+            {
+                app.export_show_with_media_dialog();
+                ui.close_menu();
+            }
             ui.separator();
             if ui.button(sc("Quit", ShortcutAction::Quit)).clicked() {
                 app.quit(ui.ctx());

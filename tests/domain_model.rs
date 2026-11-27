@@ -220,10 +220,9 @@ fn group_without_armed_children_finishes_immediately() {
 }
 
 #[test]
-fn nested_group_is_treated_as_instant_child() {
-    // Dokumentierte V2-Grenze: Groups kaskadieren eine Ebene tief. Eine Gruppe
-    // als Kind einer Simultaneous-Gruppe hat kein eigenes Engine-Command und
-    // gilt als Sofort-Cue (ihre Kinder werden in V2 nicht rekursiv getriggert).
+fn nested_group_triggers_its_children() {
+    // Verschachtelte Gruppen kaskadieren rekursiv: Die innere Gruppe startet
+    // ihre Kinder und läuft, bis diese fertig sind.
     let mut list = CueList::new();
     let inner = Cue::new_group("1.1", "Inner", GroupMode::Timeline, vec![audio("1.1.1")]);
     list.add(Cue::new_group(
@@ -234,9 +233,17 @@ fn nested_group_is_treated_as_instant_child() {
     ));
 
     let outcome = list.go().unwrap();
-    assert!(outcome.commands.is_empty());
-    assert_eq!(list.cues()[0].status, CueStatus::Completed);
+    let grandchild = list.cues()[0].children[0].children[0].id;
+    assert!(outcome
+        .commands
+        .iter()
+        .any(|c| matches!(c, kuhplay::engine::EngineCommand::Play { cue_id, .. } if *cue_id == grandchild)));
+    assert_eq!(list.cues()[0].status, CueStatus::Playing);
+    assert_eq!(list.cues()[0].children[0].status, CueStatus::Playing);
+
+    let _ = list.set_status_with_follow(grandchild, CueStatus::Completed);
     assert_eq!(list.cues()[0].children[0].status, CueStatus::Completed);
+    assert_eq!(list.cues()[0].status, CueStatus::Completed);
 }
 
 // ---------------------------------------------------------------------------

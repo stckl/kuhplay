@@ -46,7 +46,7 @@ use uuid::Uuid;
 
 use crate::core::{
     cue_type_for_file, default_routes_for_displays, CartManager, Cue, CueStatus, CueType,
-    DeviceRef, DisplayRefInfo, GroupMode, LoopMode, OutputRoute, Region, RouteManager,
+    DeviceRef, DisplayRefInfo, DropPlace, GroupMode, LoopMode, OutputRoute, Region, RouteManager,
     ScreenManager, ShowDocument, ShowResult, Stage, StageGeometry, StageManager,
 };
 use crate::engine::waveform::{Waveform, WaveformCache, WAVEFORM_BUCKETS};
@@ -232,6 +232,14 @@ pub struct ShowApp {
     pub stage_editor_open: Option<Uuid>,
     /// Offenes Timeline-Fenster (Gruppen-ID).
     pub timeline_window: Option<Uuid>,
+    /// Stand beim letzten Speichern/Öffnen (ohne Laufzeit-Zustand).
+    saved_snapshot: Option<String>,
+    /// Nachfrage „Änderungen speichern?“ beim Schließen offen.
+    close_prompt: bool,
+    /// Schließen ist bestätigt (gespeichert oder verworfen).
+    close_confirmed: bool,
+    /// Sichtbare Bereiche je Modus (Edit/Show), in der Show gespeichert.
+    layouts: crate::core::ModeLayouts,
     /// Multi-Output-Assistent („New Stage → Multi-Output Stage…“).
     pub multi_output_wizard: Option<MultiOutputWizard>,
     /// Optionaler Auto-Demo-Modus (automatische GO-Abfolge für Screen-Tests).
@@ -617,6 +625,10 @@ impl ShowApp {
             displays,
             stage_editor_open: None,
             timeline_window: None,
+            saved_snapshot: None,
+            close_prompt: false,
+            close_confirmed: false,
+            layouts: Default::default(),
             multi_output_wizard: None,
             autodemo,
             remote: None,
@@ -644,6 +656,8 @@ impl ShowApp {
             problems_at: None,
             waveforms: WaveformCache::new(),
         };
+        // Sichtbare Bereiche: beide Modi zunächst wie das gespeicherte Layout.
+        app.layouts = crate::core::ModeLayouts::both(app.panel_layout());
         // Alle Stages beim Start an die Engine melden (Stage-Konfiguration).
         for stage in app.stages.stages().to_vec() {
             app.configure_stage(stage);
@@ -670,6 +684,7 @@ impl ShowApp {
         // Umgebungsvariablen – siehe RemoteConfig::from_env).
         app.remote_config = RemoteConfig::from_env();
         app.remote = RemoteServers::start(app.remote_config.clone());
+        app.mark_saved();
         app
     }
 
@@ -1352,26 +1367,27 @@ impl ShowApp {
     /// Datei als Target, Dateiname als Cue-Name; neuer Cue wird selektiert.
     /// Im Show-Mode oder bei unbekannter Endung → `None`.
     /// Rückgabe: ID des neuen Cues. Public für headless GUI-Tests.
-    /// Datei-Drop: legt je Datei einen Cue an – auf eine Gruppe gezogen als
-    /// Kinder hinein, auf einen anderen Cue dahinter (in Reihenfolge). Ohne
-    /// Zeile unter dem Zeiger zählt die Auswahl, wenn sie eine Gruppe bzw. ein
-    /// Gruppen-Kind ist (macOS meldet beim Ziehen nicht immer die Position);
-    /// sonst ans Ende. Rückgabe: IDs der neuen Cues.
-    pub fn add_cues_from_files(&mut self, paths: &[PathBuf], target: Option<Uuid>) -> Vec<Uuid> {
+    /// Datei-Drop: legt je Datei einen Cue an der Drop-Position an (davor/
+    /// dahinter bzw. in die Gruppe, wie beim Verschieben). Ohne Zeile unter
+    /// dem Zeiger (macOS meldet beim Ziehen nicht immer die Position): hinter
+    /// den ausgewählten Cue, sonst ans Ende. Mehrere Dateien bleiben in ihrer
+    /// Reihenfolge zusammen. Rückgabe: IDs der neuen Cues.
+    pub fn add_cues_from_files(
+        &mut self,
+        paths: &[PathBuf],
+        target: Option<(Uuid, DropPlace)>,
+    ) -> Vec<Uuid> {
         if self.show_mode {
             return Vec::new();
         }
         let list = self.carts.active();
-        let target = target.filter(|t| list.find_cue(*t).is_some()).or_else(|| {
-            list.primary_selection()
-                .and_then(|id| list.find_cue(id))
-                .filter(|c| c.cue_type == CueType::Group || c.parent_group.is_some())
-                .map(|c| c.id)
-        });
-        let into_group = target
-            .and_then(|t| list.find_cue(t))
-            .is_some_and(|c| c.cue_type == CueType::Group);
-        let mut at = target;
+        let mut at = target
+            .filter(|(t, _)| list.find_cue(*t).is_some())
+            .or_else(|| {
+                list.primary_selection()
+                    .filter(|id| list.find_cue(*id).is_some())
+                    .map(|id| (id, DropPlace::After))
+            });
         let mut added = Vec::new();
         for path in paths {
             let stage = self.stages.names().into_iter().next();
@@ -1380,11 +1396,9 @@ impl ShowApp {
                 continue;
             };
             let id = cue.id;
-            self.carts.active_mut().insert_at_target(at, cue);
-            // Mehrere Dateien bleiben in ihrer Reihenfolge zusammen.
-            if !into_group {
-                at = Some(id);
-            }
+            self.carts.active_mut().insert_at(at, cue);
+            // Die nächste Datei direkt dahinter (Reihenfolge bleibt).
+            at = Some((id, DropPlace::After));
             added.push(id);
         }
         if let Some(last) = added.last() {
@@ -1678,7 +1692,9 @@ impl ShowApp {
                         problems: cue_problems,
                     });
                 }
-                for child in &cue.children {
+                // Alle Nachfahren (auch verschachtelte Gruppen).
+                let mut stack: Vec<&Cue> = cue.children.iter().collect();
+                while let Some(child) = stack.pop() {
                     let child_problems = super::problems::cue_problems(child, self);
                     if !child_problems.is_empty() {
                         found.push(BrokenCue {
@@ -1689,6 +1705,7 @@ impl ShowApp {
                             problems: child_problems,
                         });
                     }
+                    stack.extend(child.children.iter());
                 }
             }
         }
@@ -1828,7 +1845,10 @@ impl ShowApp {
                     media_duration: self.listed_duration_of(cue),
                 },
             );
-            for child in &cue.children {
+            // Alle Nachfahren (auch verschachtelte Gruppen).
+            let mut stack: Vec<&Cue> = cue.children.iter().collect();
+            while let Some(child) = stack.pop() {
+                stack.extend(child.children.iter());
                 map.insert(
                     child.id,
                     cue_table::CueRowMeta {
@@ -1853,12 +1873,46 @@ impl ShowApp {
 
     /// Schaltet den Show-Mode um (Editing deaktiviert/aktiviert).
     pub fn set_show_mode(&mut self, show_mode: bool) {
+        // Sichtbare Bereiche je Modus: alte Anordnung merken, neue herstellen.
+        if show_mode != self.show_mode {
+            let current = self.panel_layout();
+            self.layouts.set(self.show_mode, current);
+            let next = self.layouts.get(show_mode);
+            self.apply_panel_layout(next);
+        }
         self.show_mode = show_mode;
         if show_mode {
             // Show-Mode: Test-Grid immer aus (kein Overlay im Playout).
             self.set_test_grid(false);
         }
         self.remote_dirty = true;
+    }
+
+    /// Aktuell sichtbare Bereiche.
+    pub fn panel_layout(&self) -> crate::core::PanelLayout {
+        crate::core::PanelLayout {
+            masthead: self.ui.masthead_visible,
+            toolbar: self.ui.toolbar_visible,
+            toolbox: self.ui.toolbox_visible,
+            sidebar: self.ui.sidebar_visible,
+            inspector: self.ui.inspector_visible,
+        }
+    }
+
+    /// Bereiche ein-/ausblenden.
+    pub fn apply_panel_layout(&mut self, layout: crate::core::PanelLayout) {
+        self.ui.masthead_visible = layout.masthead;
+        self.ui.toolbar_visible = layout.toolbar;
+        self.ui.toolbox_visible = layout.toolbox;
+        self.ui.sidebar_visible = layout.sidebar;
+        self.ui.inspector_visible = layout.inspector;
+    }
+
+    /// Anordnungen für Edit und Show inkl. der gerade sichtbaren (fürs Speichern).
+    pub fn mode_layouts(&self) -> crate::core::ModeLayouts {
+        let mut layouts = self.layouts;
+        layouts.set(self.show_mode, self.panel_layout());
+        layouts
     }
 
     /// Test-Grid über der ganzen Stage an/aus (Footer-Icon), für alle Stages.
@@ -2873,9 +2927,9 @@ impl ShowApp {
         self.audio_output.as_deref()
     }
 
-    /// Speichert die Show als JSON-Datei (`.kuhplay`).
-    pub fn save_show(&mut self, path: &Path) {
-        let doc = ShowDocument {
+    /// Die Show als Dokument (wie sie gespeichert wird).
+    fn show_document(&self) -> ShowDocument {
+        ShowDocument {
             name: self.show_name.clone(),
             // Laufende Sequential-Gruppen zusammengesetzt speichern.
             carts: self.carts.clone(),
@@ -2885,7 +2939,47 @@ impl ShowApp {
             audio_output: self.audio_output.clone(),
             audio_patch: self.audio_patch.clone(),
             panic_duration_ms: self.panic_duration.as_millis() as u64,
-        };
+            layouts: Some(self.mode_layouts()),
+        }
+    }
+
+    /// Inhalt der Show ohne Laufzeit-Zustand (Status, Playhead, Auswahl) –
+    /// Grundlage für „ungespeicherte Änderungen“.
+    fn edit_snapshot(&self) -> String {
+        fn settle(cue: &mut Cue) {
+            cue.status = CueStatus::Standby;
+            cue.group_iterations_done = 0;
+            cue.children.iter_mut().for_each(settle);
+        }
+        let mut doc = self.show_document();
+        for i in 0..doc.carts.cart_count() {
+            let cart = doc.carts.cart_mut(i);
+            cart.cues_mut().iter_mut().for_each(settle);
+            cart.set_cursor(0);
+            cart.select(None);
+        }
+        doc.to_json().unwrap_or_default()
+    }
+
+    /// Aktueller Stand gilt als gespeichert.
+    fn mark_saved(&mut self) {
+        self.saved_snapshot = Some(self.edit_snapshot());
+    }
+
+    /// Hat die Show Änderungen seit dem letzten Speichern/Öffnen?
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.saved_snapshot
+            .as_ref()
+            .is_none_or(|saved| *saved != self.edit_snapshot())
+    }
+
+    /// Speichert die Show als JSON-Datei (`.kuhplay`).
+    pub fn save_show(&mut self, path: &Path) {
+        let mut doc = self.show_document();
+        // Medien im Ordner der Show relativ speichern (portabler Show-Ordner).
+        if let Some(base) = path.parent() {
+            doc.make_paths_relative(base);
+        }
         let result = doc
             .to_json()
             .and_then(|json| std::fs::write(path, json).map_err(crate::core::ShowError::from));
@@ -2893,6 +2987,7 @@ impl ShowApp {
             Ok(()) => {
                 self.current_file = Some(path.to_path_buf());
                 self.last_error = None;
+                self.mark_saved();
             }
             Err(err) => {
                 self.last_error = Some(err.to_string());
@@ -2905,6 +3000,10 @@ impl ShowApp {
     pub fn load_show(&mut self, path: &Path) -> ShowResult<()> {
         let json = std::fs::read_to_string(path)?;
         let mut doc = ShowDocument::from_json(&json)?;
+        // Relative Medienpfade (Show-Ordner, Export mit Medien) auflösen.
+        if let Some(base) = path.parent() {
+            doc.resolve_paths(base);
+        }
         // Alte Shows (Screens/Stage.screen) migrieren: Routen + Regionen.
         // Vor der Übernahme der Felder, damit `doc` noch ganz ist.
         let displays: Vec<DisplayRefInfo> =
@@ -2951,6 +3050,12 @@ impl ShowApp {
         self.set_audio_output(doc.audio_output);
         self.set_audio_patch(doc.audio_patch);
         self.panic_duration = Duration::from_millis(doc.panic_duration_ms);
+        // Sichtbare Bereiche der Show (je Modus); ältere Shows: wie bisher.
+        self.layouts = doc
+            .layouts
+            .unwrap_or_else(|| crate::core::ModeLayouts::both(self.panel_layout()));
+        let layout = self.layouts.get(self.show_mode);
+        self.apply_panel_layout(layout);
         self.stage_windows.clear();
         // Alle Stages an die Engine melden.
         for stage in self.stages.stages().to_vec() {
@@ -2961,6 +3066,7 @@ impl ShowApp {
         self.current_file = Some(path.to_path_buf());
         self.clear_timing();
         self.last_error = None;
+        self.mark_saved();
         Ok(())
     }
 
@@ -2983,6 +3089,7 @@ impl ShowApp {
         self.current_file = None;
         self.show_mode = false;
         self.clear_timing();
+        self.mark_saved();
     }
 
     /// Öffnet den nativen Datei-Dialog und lädt die gewählte Show.
@@ -3022,6 +3129,156 @@ impl ShowApp {
         {
             self.save_show(&path);
         }
+    }
+
+    /// Schließen mit ungespeicherten Änderungen: erst nachfragen (Speichern /
+    /// Nicht speichern / Abbrechen). Gilt für Fenster-Schließen und ⌘Q.
+    fn handle_close_request(&mut self, ctx: &egui::Context) {
+        let requested = ctx.input(|i| i.viewport().close_requested());
+        if requested && !self.close_confirmed && self.has_unsaved_changes() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_prompt = true;
+        }
+        if !self.close_prompt {
+            return;
+        }
+        let mut choice = None;
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Save changes to \"{}\" before closing?",
+                    self.show_name
+                ));
+                ui.add_space(theme::size::SPACE_MEDIUM);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        choice = Some(CloseChoice::Save);
+                    }
+                    if ui.button("Don't Save").clicked() {
+                        choice = Some(CloseChoice::Discard);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(CloseChoice::Cancel);
+                    }
+                });
+            });
+        match choice {
+            Some(CloseChoice::Save) => {
+                // Ohne Datei fragt „Save As“; abgebrochen → Nachfrage bleibt.
+                self.save_show_dialog(ctx);
+                if !self.has_unsaved_changes() {
+                    self.close_now(ctx);
+                }
+            }
+            Some(CloseChoice::Discard) => self.close_now(ctx),
+            Some(CloseChoice::Cancel) => self.close_prompt = false,
+            None => {}
+        }
+    }
+
+    fn close_now(&mut self, ctx: &egui::Context) {
+        self.close_prompt = false;
+        self.close_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// „Export Show with Media…“: legt einen Ordner mit Show-Datei und allen
+    /// verwendeten Medien (Unterordner `Media`) an – für Backups und andere
+    /// Rechner. Die Pfade in der exportierten Show zeigen auf `Media/…`. Die
+    /// geöffnete Show bleibt unverändert.
+    pub fn export_show_with_media_dialog(&mut self) {
+        let Some(picked) = rfd::FileDialog::new()
+            .set_title("Export Show with Media")
+            .set_file_name(&self.show_name)
+            .save_file()
+        else {
+            return;
+        };
+        match self.export_show_with_media(&picked) {
+            Ok(report) => {
+                self.last_error = (!report.missing.is_empty()).then(|| {
+                    format!(
+                        "Exported {} files to {} – missing: {}",
+                        report.copied,
+                        report.folder.display(),
+                        report.missing.join(", ")
+                    )
+                });
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open")
+                    .arg(&report.folder)
+                    .spawn();
+            }
+            Err(err) => self.last_error = Some(format!("Export failed: {err}")),
+        }
+    }
+
+    /// Export in den Ordner `picked` (ohne Endung): `<Ordner>/<Name>.kuhplay`
+    /// und `<Ordner>/Media/`. Gleiche Dateien werden nur einmal kopiert,
+    /// Namenskonflikte bekommen eine Nummer.
+    pub fn export_show_with_media(&mut self, picked: &Path) -> Result<ExportReport, String> {
+        let folder = picked.with_extension("");
+        let stem = folder
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Show".to_string());
+        let media = folder.join("Media");
+        std::fs::create_dir_all(&media).map_err(|e| e.to_string())?;
+        let mut doc = self.show_document();
+        let mut copied: HashMap<PathBuf, PathBuf> = HashMap::new();
+        let mut used: HashSet<String> = HashSet::new();
+        let mut missing = Vec::new();
+        let mut errors = Vec::new();
+        doc.for_each_media_path(&mut |path| {
+            let source = path.clone();
+            if let Some(rel) = copied.get(&source) {
+                *path = rel.clone();
+                return;
+            }
+            if !source.is_file() {
+                missing.push(source.display().to_string());
+                return;
+            }
+            let name = source
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "media".to_string());
+            let mut unique = name.clone();
+            let mut n = 2;
+            while !used.insert(unique.to_lowercase()) {
+                let p = Path::new(&name);
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy())
+                    .unwrap_or_default();
+                unique = match p.extension() {
+                    Some(ext) => format!("{stem} {n}.{}", ext.to_string_lossy()),
+                    None => format!("{stem} {n}"),
+                };
+                n += 1;
+            }
+            match std::fs::copy(&source, media.join(&unique)) {
+                Ok(_) => {
+                    let rel = PathBuf::from("Media").join(&unique);
+                    copied.insert(source, rel.clone());
+                    *path = rel;
+                }
+                Err(e) => errors.push(format!("{}: {e}", source.display())),
+            }
+        });
+        if !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        let json = doc.to_json().map_err(|e| e.to_string())?;
+        std::fs::write(folder.join(format!("{stem}.kuhplay")), json).map_err(|e| e.to_string())?;
+        Ok(ExportReport {
+            folder,
+            copied: copied.len(),
+            missing,
+        })
     }
 
     /// Beendet die App (⌘Q / File → Quit).
@@ -3431,7 +3688,9 @@ impl ShowApp {
                 }
                 EngineEvent::Error { cue_id, message } => {
                     if let Some(id) = cue_id {
-                        self.apply_status(id, CueStatus::Error);
+                        // Mit Follow: ein kaputtes Kind einer Play-through-Gruppe
+                        // wird übersprungen, statt die Gruppe anzuhalten.
+                        self.apply_status_with_follow(id, CueStatus::Error);
                         self.note_finished(id);
                         self.broadcast_remote_event(RemoteEvent::CueError {
                             id,
@@ -4139,8 +4398,9 @@ impl eframe::App for ShowApp {
                 .collect()
         });
         if !dropped.is_empty() {
-            let target: Option<Uuid> =
-                ctx.data_mut(|d| d.remove_temp(cue_table::file_drop_target_id()));
+            let target_id = cue_table::file_drop_target_id();
+            let target: Option<(Uuid, DropPlace)> = ctx.data(|d| d.get_temp(target_id));
+            ctx.data_mut(|d| d.remove::<(Uuid, DropPlace)>(target_id));
             self.add_cues_from_files(&dropped, target);
         }
 
@@ -4163,6 +4423,7 @@ impl eframe::App for ShowApp {
         }
 
         self.flush_pending_go();
+        self.handle_close_request(ctx);
 
         // Hotkey-Gate für das nächste Frame aktualisieren (nach den Panels,
         // damit Klicks des aktuellen Frames berücksichtigt sind).
@@ -4211,11 +4472,10 @@ fn cue_from_file(number: impl std::fmt::Display, path: &Path, stage: Option<&str
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
     let mut cue = Cue::new(number.to_string(), name, cue_type);
     // Bild-Cues gleich auf die erste Stage (sonst wären sie nirgends zu sehen),
-    // HTML eine Ebene darüber – wie beim Ordner-Import.
+    // alle auf denselben Layer: der zuletzt gestartete liegt dann obenauf.
     if let Some(stage) = stage {
         let layer = match cue_type {
-            CueType::Video | CueType::Image => Some(1),
-            CueType::Html => Some(2),
+            CueType::Video | CueType::Image | CueType::Html => Some(1),
             _ => None,
         };
         if let Some(layer) = layer {
@@ -4230,4 +4490,22 @@ fn cue_from_file(number: impl std::fmt::Display, path: &Path, stage: Option<&str
         CueType::Html => cue.with_html_source(crate::core::HtmlSource::file(path)),
         _ => cue.with_target(path.to_string_lossy()),
     })
+}
+
+/// Antwort auf „Änderungen speichern?“ beim Schließen.
+enum CloseChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+/// Ergebnis von [`ShowApp::export_show_with_media`].
+#[derive(Debug)]
+pub struct ExportReport {
+    /// Angelegter Show-Ordner.
+    pub folder: PathBuf,
+    /// Anzahl kopierter Dateien.
+    pub copied: usize,
+    /// Fehlende Dateien (nicht kopiert, Pfad bleibt).
+    pub missing: Vec<String>,
 }

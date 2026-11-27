@@ -133,31 +133,43 @@ impl CueList {
         }
     }
 
-    /// Fügt `cue` relativ zu `target` ein: auf eine Gruppe → als letztes Kind,
-    /// sonst direkt dahinter in derselben Liste (oberste Ebene oder Gruppe);
-    /// ohne (bekanntes) Ziel am Ende der Liste.
-    pub fn insert_at_target(&mut self, target: Option<Uuid>, mut cue: Cue) {
-        let place = target.and_then(|t| {
-            if self.find_cue(t)?.cue_type == CueType::Group {
-                return Some((Some(t), None));
-            }
-            let (parent, i) = locate(&self.cues, t)?;
-            Some((parent, Some(i + 1)))
-        });
-        match place {
-            Some((Some(group_id), at)) => {
-                if let Some(group) = self.find_cue_mut(group_id) {
-                    cue.parent_group = Some(group_id);
-                    let at = at.unwrap_or(group.children.len()).min(group.children.len());
+    /// Fügt `cue` an einer Drop-Position ein: vor/hinter die Zielzeile (in
+    /// deren Liste – oberste Ebene oder Gruppe) bzw. als letztes/erstes Kind
+    /// in die Ziel-Gruppe. Ohne (bekanntes) Ziel ans Ende der Liste.
+    pub fn insert_at(&mut self, target: Option<(Uuid, DropPlace)>, mut cue: Cue) {
+        if let Some((t, place)) = target {
+            let into = matches!(place, DropPlace::Into | DropPlace::IntoFirst);
+            if into {
+                if let Some(group) = self
+                    .find_cue_mut(t)
+                    .filter(|c| c.cue_type == CueType::Group)
+                {
+                    cue.parent_group = Some(t);
+                    let at = if place == DropPlace::IntoFirst {
+                        0
+                    } else {
+                        group.children.len()
+                    };
                     group.children.insert(at, cue);
+                    return;
                 }
             }
-            Some((None, Some(at))) => self.insert(at, cue),
-            _ => {
-                let end = self.cues.len();
-                self.insert(end, cue);
+            if let Some((parent, i)) = locate(&self.cues, t) {
+                let at = i + usize::from(place != DropPlace::Before);
+                match parent {
+                    None => self.insert(at, cue),
+                    Some(group_id) => {
+                        if let Some(group) = self.find_cue_mut(group_id) {
+                            cue.parent_group = Some(group_id);
+                            group.children.insert(at.min(group.children.len()), cue);
+                        }
+                    }
+                }
+                return;
             }
         }
+        let end = self.cues.len();
+        self.insert(end, cue);
     }
 
     /// Entfernt einen Cue (Top-Level) anhand seines Index.
@@ -335,13 +347,21 @@ impl CueList {
         self.selection_anchor = Some(id);
     }
 
-    /// ⇧-Klick: Bereich von Anker bis `id` selektieren (Top-Level-Bereich).
-    /// Ohne Anker wie ein einfacher Klick.
+    /// ⇧-Klick: Bereich von Anker bis `id` selektieren – in der sichtbaren
+    /// Reihenfolge der Zeilen (auch Kinder aufgeklappter Gruppen, auch über
+    /// Gruppengrenzen). Ohne Anker wie ein einfacher Klick.
     pub fn select_range_to(&mut self, id: Uuid) {
-        let (a, b) = match (
-            self.selection_anchor.and_then(|a| self.index_of_id(a)),
-            self.index_of_id(id),
-        ) {
+        let mut rows = Vec::new();
+        for cue in &self.cues {
+            rows.push(cue.id);
+            if cue.cue_type == CueType::Group && !cue.collapsed {
+                rows.extend(cue.children.iter().map(|c| c.id));
+            }
+        }
+        let anchor = self
+            .selection_anchor
+            .and_then(|a| rows.iter().position(|r| *r == a));
+        let (a, b) = match (anchor, rows.iter().position(|r| *r == id)) {
             (Some(a), Some(b)) => (a, b),
             _ => {
                 self.select_id(Some(id));
@@ -349,11 +369,7 @@ impl CueList {
             }
         };
         let (lo, hi) = (a.min(b), a.max(b));
-        let mut ids = Vec::new();
-        for cue in &self.cues[lo..=hi] {
-            ids.push(cue.id);
-        }
-        self.selection = ids;
+        self.selection = rows[lo..=hi].to_vec();
     }
 
     /// Alle selektierten Cue-IDs (Klick-Reihenfolge, primär zuletzt).
@@ -1361,17 +1377,59 @@ impl CueList {
             if let Some(outcome) = self.go() {
                 commands = outcome.commands;
             }
-        } else if changed && status == CueStatus::Completed {
-            // Play through: Kind fertig → nächstes Kind derselben Gruppe (bei
-            // Wiederholung nach dem Re-Arm wieder das erste).
-            let through =
-                sequence.filter(|g| self.find_cue(*g).is_some_and(|g| !g.group_go_per_child));
-            if let Some(group_id) = through {
-                self.group_step(group_id, &mut commands);
-                self.close_group_if_done(group_id);
+        } else if changed && matches!(status, CueStatus::Completed | CueStatus::Error) {
+            // Kind fertig → Gruppe weiterschalten (Play through: nächstes Kind,
+            // bei Wiederholung nach dem Re-Arm wieder das erste; verschachtelte
+            // Gruppen melden sich danach bei ihrer Eltern-Gruppe). Ein Kind mit
+            // Fehler (z. B. Datei fehlt) wird gestoppt und übersprungen – sonst
+            // bliebe die Gruppe stehen und im Live-Betrieb passierte nichts.
+            if let Some(group_id) = self.find_cue(id).and_then(|c| c.parent_group) {
+                if status == CueStatus::Error {
+                    commands.push(EngineCommand::Stop { cue_id: id });
+                }
+                self.advance_group(group_id, &mut commands);
             }
         }
         (result, commands)
+    }
+
+    /// Ein Kind der Gruppe `group_id` ist fertig: Play-through-Gruppen starten
+    /// das nächste Kind, fertige Gruppen schließen ab. Ist die Gruppe damit
+    /// selbst fertig und Kind einer Gruppe (verschachtelt), geht es dort weiter.
+    fn advance_group(&mut self, group_id: Uuid, commands: &mut Vec<EngineCommand>) {
+        let mut current = group_id;
+        // Schutz gegen kaputte Eltern-Verweise (Zyklen): max. Tiefe.
+        for _ in 0..32 {
+            let Some(group) = self.find_cue(current) else {
+                return;
+            };
+            let through = matches!(group.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
+                && !group.group_go_per_child;
+            if through {
+                self.group_step(current, commands);
+            }
+            self.close_group_if_done(current);
+            // Nach dem Re-Arm einer Wiederholung gleich mit dem ersten Kind weiter.
+            if through {
+                let idle = self.find_cue(current).is_some_and(|g| {
+                    g.status == CueStatus::Playing
+                        && !g.children.iter().any(|c| c.status.is_active())
+                });
+                if idle {
+                    self.group_step(current, commands);
+                }
+            }
+            let Some(group) = self.find_cue(current) else {
+                return;
+            };
+            if !matches!(group.status, CueStatus::Completed | CueStatus::Error) {
+                return;
+            }
+            let Some(parent) = group.parent_group else {
+                return;
+            };
+            current = parent;
+        }
     }
 
     /// Triggert den Cue an `index` (Dispatch wie in [`CueList::go`], aber ohne
@@ -1449,22 +1507,33 @@ impl CueList {
             .iter()
             .filter(|c| c.status != CueStatus::Standby || c.is_armed)
             .peekable();
-        if triggered.peek().is_none() || !triggered.all(|c| c.status == CueStatus::Completed) {
+        // Kinder mit Fehler zählen als fertig (übersprungen), sonst bliebe die
+        // Gruppe für immer „Playing" stehen.
+        let done = |c: &Cue| matches!(c.status, CueStatus::Completed | CueStatus::Error);
+        if triggered.peek().is_none() || !triggered.all(done) {
             return;
         }
+        // Ist in dieser Runde jedes Kind fehlgeschlagen, nicht wiederholen –
+        // eine Endlosschleife aus lauter Fehlern hilft niemandem.
+        let any_ok = group
+            .children
+            .iter()
+            .any(|c| c.status == CueStatus::Completed);
 
         // Wiederholung (Sequential/Shuffle mit Repeat): Kinder erneut armen,
         // bis die Iterationen aufgebraucht sind.
         let repeats = matches!(group.group_mode, GroupMode::Sequential | GroupMode::Shuffle)
             && group.status == CueStatus::Playing
+            && any_ok
             && group.group_iterations_done + 1 < group.loop_mode.total_iterations();
         let Some(group) = self.find_cue_mut(group_id) else {
             return;
         };
         if repeats {
             for child in &mut group.children {
-                if child.status == CueStatus::Completed {
-                    let _ = child.transition_status(CueStatus::Standby);
+                if done(child) {
+                    // Rekursiv: verschachtelte Gruppen samt Kindern neu armen.
+                    child.reset_status_recursive();
                 }
             }
             group.group_iterations_done += 1;
@@ -1654,6 +1723,11 @@ pub(crate) fn group_fade(
 /// Triggert ein Gruppen-Kind. Rückgabe: `true`, wenn es läuft (bzw. im
 /// Pre-Wait ist); Sofort-Cues und ungültige Kinder sind gleich fertig bzw. Error.
 fn trigger_child(child: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
+    // Verschachtelte Gruppe: startet ihre eigenen Kinder (Timeline: alle,
+    // Sequential/Shuffle: das erste) und gilt als ein Schritt der Eltern-Gruppe.
+    if child.cue_type == CueType::Group {
+        return start_nested_group(child, commands);
+    }
     if child.validate_trigger().is_err() {
         // Ungültige Konfiguration → Kind geht in Error (kein Panic).
         let _ = child.transition_status(CueStatus::Error);
@@ -1691,6 +1765,52 @@ fn trigger_child(child: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
             false
         }
     }
+}
+
+/// Startet eine Gruppe, die selbst Kind einer Gruppe ist. Rückgabe wie
+/// [`trigger_child`]: `true`, solange die Gruppe läuft (sonst sofort fertig).
+/// Weiter geht es über die Fertig-Meldungen der Kinder
+/// ([`CueList::advance_group`]).
+fn start_nested_group(group: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
+    let group_id = group.id;
+    group.group_iterations_done = 0;
+    let running = match group.group_mode {
+        GroupMode::Timeline => {
+            let mut any_running = false;
+            for child in &mut group.children {
+                if !child.is_armed || child.status != CueStatus::Standby {
+                    continue;
+                }
+                child.parent_group = Some(group_id);
+                any_running |= trigger_child(child, commands);
+            }
+            any_running
+        }
+        GroupMode::Sequential | GroupMode::Shuffle => {
+            group.group_play_order = play_order(group, 0);
+            let mut started = false;
+            for id in group.group_play_order.clone() {
+                let Some(child) = group.children.iter_mut().find(|c| c.id == id) else {
+                    continue;
+                };
+                if !child.is_armed || child.status != CueStatus::Standby {
+                    continue;
+                }
+                child.parent_group = Some(group_id);
+                if trigger_child(child, commands) {
+                    started = true;
+                    break;
+                }
+            }
+            started
+        }
+    };
+    let _ = group.transition_status(if running {
+        CueStatus::Playing
+    } else {
+        CueStatus::Completed
+    });
+    running
 }
 
 /// Abspielreihenfolge einer Sequential/Shuffle-Gruppe für Durchgang `pass`:
@@ -2003,6 +2123,20 @@ mod tests {
     }
 
     #[test]
+    fn shift_range_selects_rows_inside_and_across_groups() {
+        let (mut list, ids) = grouped();
+        list.select_id(Some(ids["2.1"]));
+        list.select_range_to(ids["2.3"]);
+        assert_eq!(list.selection(), [ids["2.1"], ids["2.2"], ids["2.3"]]);
+        list.select_id(Some(ids["1"]));
+        list.select_range_to(ids["2.2"]);
+        assert_eq!(
+            list.selection(),
+            [ids["1"], ids["2"], ids["2.1"], ids["2.2"]]
+        );
+    }
+
+    #[test]
     fn html_cue_sends_its_initial_data_right_after_start() {
         let mut list = CueList::new();
         let mut cue = Cue::new("1", "Zeitplan", CueType::Html)
@@ -2197,6 +2331,240 @@ mod tests {
                 "Cue 2 bleibt stehen"
             );
             list.reset();
+        }
+    }
+
+    /// Play through: Meldet die Engine bei einem Kind einen Fehler (z. B. Datei
+    /// fehlt), wird es gestoppt und übersprungen – die Gruppe läuft weiter statt
+    /// stehen zu bleiben (Live-Betrieb: nie „es passiert nichts").
+    #[test]
+    fn play_through_group_skips_child_on_error() {
+        let mut list = CueList::new();
+        let group = Cue::new_group(
+            "1",
+            "Pause",
+            GroupMode::Sequential,
+            vec![audio("1.1"), audio("1.2"), audio("1.3")],
+        );
+        list.add(group);
+        let _ = list.go().unwrap();
+        let kid = |list: &CueList, i: usize| list.cues()[0].children[i].id;
+
+        let (_, commands) = list.set_status_with_follow(kid(&list, 0), CueStatus::Error);
+        assert!(
+            commands
+                .iter()
+                .any(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id == kid(&list, 0))),
+            "fehlerhaftes Kind wird gestoppt: {commands:?}"
+        );
+        assert!(
+            commands.iter().any(
+                |c| matches!(c, EngineCommand::Play { cue_id, .. } if *cue_id == kid(&list, 1))
+            ),
+            "nächstes Kind startet: {commands:?}"
+        );
+        assert_eq!(list.cues()[0].children[1].status, CueStatus::Playing);
+
+        let _ = list.set_status_with_follow(kid(&list, 1), CueStatus::Completed);
+        let _ = list.set_status_with_follow(kid(&list, 2), CueStatus::Completed);
+        assert_eq!(
+            list.cues()[0].status,
+            CueStatus::Completed,
+            "Gruppe endet trotz Fehler"
+        );
+    }
+
+    /// Endlos-Schleife mit einem kaputten Kind läuft weiter (Kind wird bei
+    /// jeder Runde erneut versucht); sind in einer Runde ALLE Kinder
+    /// fehlgeschlagen, endet die Gruppe statt endlos Fehler zu erzeugen.
+    #[test]
+    fn infinite_group_keeps_looping_past_errors_but_stops_if_all_fail() {
+        let mut list = CueList::new();
+        let mut group = Cue::new_group(
+            "1",
+            "Loop",
+            GroupMode::Sequential,
+            vec![audio("1.1"), audio("1.2")],
+        );
+        group.loop_mode = LoopMode::Infinite;
+        list.add(group);
+        let _ = list.go().unwrap();
+        let kid = |list: &CueList, i: usize| list.cues()[0].children[i].id;
+
+        for round in 0..3 {
+            let _ = list.set_status_with_follow(kid(&list, 0), CueStatus::Error);
+            let (_, commands) = list.set_status_with_follow(kid(&list, 1), CueStatus::Completed);
+            assert!(
+                commands.iter().any(
+                    |c| matches!(c, EngineCommand::Play { cue_id, .. } if *cue_id == kid(&list, 0))
+                ),
+                "Runde {round}: Schleife beginnt von vorn: {commands:?}"
+            );
+            assert_eq!(list.cues()[0].status, CueStatus::Playing);
+        }
+
+        let _ = list.set_status_with_follow(kid(&list, 0), CueStatus::Error);
+        let (_, commands) = list.set_status_with_follow(kid(&list, 1), CueStatus::Error);
+        assert!(
+            !commands
+                .iter()
+                .any(|c| matches!(c, EngineCommand::Play { .. })),
+            "alle Kinder kaputt: kein Neustart: {commands:?}"
+        );
+        assert_ne!(list.cues()[0].status, CueStatus::Playing, "Gruppe endet");
+    }
+
+    fn plays(commands: &[EngineCommand], id: Uuid) -> bool {
+        commands
+            .iter()
+            .any(|c| matches!(c, EngineCommand::Play { cue_id, .. } if *cue_id == id))
+    }
+
+    /// Verschachtelte Gruppe: Sequential [A, G(Timeline)[B, C], D] – G startet
+    /// B und C gleichzeitig, D erst wenn B und C fertig sind.
+    #[test]
+    fn nested_timeline_group_runs_as_one_step_of_sequence() {
+        let mut list = CueList::new();
+        let inner = Cue::new_group(
+            "2",
+            "G",
+            GroupMode::Timeline,
+            vec![audio("2.1"), audio("2.2")],
+        );
+        list.add(Cue::new_group(
+            "1",
+            "Pause",
+            GroupMode::Sequential,
+            vec![audio("1.1"), inner, audio("1.3")],
+        ));
+        let go = list.go().unwrap();
+        let top = |l: &CueList| l.cues()[0].clone();
+        let (a, g, d) = {
+            let t = top(&list);
+            (t.children[0].id, t.children[1].id, t.children[2].id)
+        };
+        let (b, c) = {
+            let t = top(&list);
+            (t.children[1].children[0].id, t.children[1].children[1].id)
+        };
+        assert!(plays(&go.commands, a));
+
+        let (_, cmds) = list.set_status_with_follow(a, CueStatus::Completed);
+        assert!(
+            plays(&cmds, b) && plays(&cmds, c),
+            "B und C gleichzeitig: {cmds:?}"
+        );
+        assert!(!plays(&cmds, d));
+        assert_eq!(list.find_cue(g).unwrap().status, CueStatus::Playing);
+
+        let (_, cmds) = list.set_status_with_follow(b, CueStatus::Completed);
+        assert!(!plays(&cmds, d), "C läuft noch");
+        let (_, cmds) = list.set_status_with_follow(c, CueStatus::Completed);
+        assert_eq!(list.find_cue(g).unwrap().status, CueStatus::Completed);
+        assert!(plays(&cmds, d), "nach G folgt D: {cmds:?}");
+
+        let _ = list.set_status_with_follow(d, CueStatus::Completed);
+        assert_eq!(list.cues()[0].status, CueStatus::Completed);
+    }
+
+    /// Verschachtelte Sequential-Gruppe spielt ihre Kinder nacheinander.
+    #[test]
+    fn nested_sequential_group_plays_its_children_in_order() {
+        let mut list = CueList::new();
+        let inner = Cue::new_group(
+            "2",
+            "G",
+            GroupMode::Sequential,
+            vec![audio("2.1"), audio("2.2")],
+        );
+        list.add(Cue::new_group(
+            "1",
+            "Top",
+            GroupMode::Sequential,
+            vec![inner, audio("1.2")],
+        ));
+        let go = list.go().unwrap();
+        let t = list.cues()[0].clone();
+        let (x, y, last) = (
+            t.children[0].children[0].id,
+            t.children[0].children[1].id,
+            t.children[1].id,
+        );
+        assert!(plays(&go.commands, x) && !plays(&go.commands, y));
+        let (_, cmds) = list.set_status_with_follow(x, CueStatus::Completed);
+        assert!(plays(&cmds, y) && !plays(&cmds, last));
+        let (_, cmds) = list.set_status_with_follow(y, CueStatus::Completed);
+        assert!(plays(&cmds, last), "{cmds:?}");
+    }
+
+    /// Stop der äußeren Gruppe stoppt auch die Enkel.
+    #[test]
+    fn stopping_outer_group_stops_nested_children() {
+        let mut list = CueList::new();
+        let inner = Cue::new_group(
+            "2",
+            "G",
+            GroupMode::Timeline,
+            vec![audio("2.1"), audio("2.2")],
+        );
+        list.add(Cue::new_group(
+            "1",
+            "Top",
+            GroupMode::Sequential,
+            vec![inner],
+        ));
+        let _ = list.go().unwrap();
+        let t = list.cues()[0].clone();
+        let (outer, b, c) = (
+            t.id,
+            t.children[0].children[0].id,
+            t.children[0].children[1].id,
+        );
+        let cmds = list.stop_running(outer);
+        for id in [b, c] {
+            assert!(cmds
+                .iter()
+                .any(|x| matches!(x, EngineCommand::Stop { cue_id } if *cue_id == id)));
+            assert_eq!(list.find_cue(id).unwrap().status, CueStatus::Stopped);
+        }
+    }
+
+    /// Endlos-Schleife mit verschachtelter Gruppe: nach der Runde wird auch
+    /// die innere Gruppe neu gearmt und wieder gespielt.
+    #[test]
+    fn looping_outer_group_replays_nested_group() {
+        let mut list = CueList::new();
+        let inner = Cue::new_group(
+            "2",
+            "G",
+            GroupMode::Timeline,
+            vec![audio("2.1"), audio("2.2")],
+        );
+        let mut top = Cue::new_group(
+            "1",
+            "Loop",
+            GroupMode::Sequential,
+            vec![audio("1.1"), inner],
+        );
+        top.loop_mode = LoopMode::Infinite;
+        list.add(top);
+        let _ = list.go().unwrap();
+        let t = list.cues()[0].clone();
+        let (a, b, c) = (
+            t.children[0].id,
+            t.children[1].children[0].id,
+            t.children[1].children[1].id,
+        );
+        for round in 0..3 {
+            let _ = list.set_status_with_follow(a, CueStatus::Completed);
+            let _ = list.set_status_with_follow(b, CueStatus::Completed);
+            let (_, cmds) = list.set_status_with_follow(c, CueStatus::Completed);
+            assert!(plays(&cmds, a), "Runde {round}: neu von vorn: {cmds:?}");
+            assert_eq!(
+                list.find_cue(b).unwrap().status,
+                CueStatus::Standby,
+                "Enkel neu gearmt"
+            );
         }
     }
 

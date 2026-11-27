@@ -13,6 +13,8 @@
 //! (`#[serde(default, skip_serializing)]`), werden beim Speichern aber
 //! nicht mehr geschrieben.
 
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 use crate::core::audio::AudioPatch;
@@ -53,6 +55,72 @@ pub struct ShowDocument {
     /// Ausblendzeit von Panic in Millisekunden (0 = sofort stoppen).
     #[serde(default = "default_panic_duration_ms")]
     pub panic_duration_ms: u64,
+    /// Sichtbare Bereiche je Modus (Edit/Show); `None` = ältere Show, dann
+    /// bleibt die aktuelle Anordnung.
+    #[serde(default)]
+    pub layouts: Option<ModeLayouts>,
+}
+
+/// Welche Bereiche des Fensters sichtbar sind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PanelLayout {
+    /// Masthead (Kopfbereich mit GO, Standby, Notizen).
+    pub masthead: bool,
+    /// Toolbar im Masthead.
+    pub toolbar: bool,
+    /// Toolbox (linke Leiste).
+    pub toolbox: bool,
+    /// Sidebar (rechte Leiste, Active Cues).
+    pub sidebar: bool,
+    /// Inspector (unteres Panel).
+    pub inspector: bool,
+}
+
+impl Default for PanelLayout {
+    fn default() -> Self {
+        Self {
+            masthead: true,
+            toolbar: true,
+            toolbox: true,
+            sidebar: true,
+            inspector: true,
+        }
+    }
+}
+
+/// Sichtbare Bereiche getrennt für Edit- und Show-Mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeLayouts {
+    pub edit: PanelLayout,
+    pub show: PanelLayout,
+}
+
+impl ModeLayouts {
+    /// Beide Modi mit derselben Anordnung.
+    pub fn both(layout: PanelLayout) -> Self {
+        Self {
+            edit: layout,
+            show: layout,
+        }
+    }
+
+    /// Anordnung des Modus (`show` = Show-Mode).
+    pub fn get(&self, show: bool) -> PanelLayout {
+        if show {
+            self.show
+        } else {
+            self.edit
+        }
+    }
+
+    /// Anordnung des Modus setzen.
+    pub fn set(&mut self, show: bool, layout: PanelLayout) {
+        if show {
+            self.show = layout;
+        } else {
+            self.edit = layout;
+        }
+    }
 }
 
 /// Standard-Ausblendzeit von Panic.
@@ -62,7 +130,58 @@ fn default_panic_duration_ms() -> u64 {
     DEFAULT_PANIC_DURATION_MS
 }
 
+/// Alle Mediendateien eines Cues (rekursiv inkl. Gruppen-Kinder): Audio/
+/// Video/Bild-Ziel, HTML-Datei, Diashow-Bilder. URLs bleiben außen vor.
+fn for_each_media_path(cue: &mut crate::core::Cue, f: &mut dyn FnMut(&mut PathBuf)) {
+    if let Some(target) = cue.target_path.as_mut() {
+        if !target.contains("://") && !target.trim().is_empty() {
+            let mut path = PathBuf::from(&*target);
+            f(&mut path);
+            *target = path.to_string_lossy().into_owned();
+        }
+    }
+    if let Some(crate::core::HtmlSource::File(path)) = cue.html_source.as_mut() {
+        f(path);
+    }
+    if let Some(show) = cue.slideshow.as_mut() {
+        for slide in &mut show.slides {
+            f(&mut slide.path);
+        }
+    }
+    for child in &mut cue.children {
+        for_each_media_path(child, f);
+    }
+}
+
 impl ShowDocument {
+    /// Ruft `f` für jede Mediendatei aller Cues auf (Pfade änderbar).
+    pub fn for_each_media_path(&mut self, f: &mut dyn FnMut(&mut PathBuf)) {
+        for i in 0..self.carts.cart_count() {
+            for cue in self.carts.cart_mut(i).cues_mut() {
+                for_each_media_path(cue, f);
+            }
+        }
+    }
+
+    /// Pfade unterhalb von `base` (Ordner der Show-Datei) relativ schreiben –
+    /// so funktioniert ein Show-Ordner auch auf einem anderen Rechner.
+    pub fn make_paths_relative(&mut self, base: &Path) {
+        self.for_each_media_path(&mut |path| {
+            if let Ok(rel) = path.strip_prefix(base) {
+                *path = rel.to_path_buf();
+            }
+        });
+    }
+
+    /// Relative Pfade gegen `base` (Ordner der Show-Datei) auflösen.
+    pub fn resolve_paths(&mut self, base: &Path) {
+        self.for_each_media_path(&mut |path| {
+            if path.is_relative() {
+                *path = base.join(&*path);
+            }
+        });
+    }
+
     /// Neues, leeres Show-Dokument (eine leere Cue-Liste, Default-Stage).
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -74,6 +193,7 @@ impl ShowDocument {
             audio_output: None,
             audio_patch: AudioPatch::default(),
             panic_duration_ms: DEFAULT_PANIC_DURATION_MS,
+            layouts: None,
         }
     }
 

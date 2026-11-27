@@ -1761,6 +1761,56 @@ fn engine_events_update_cues_in_inactive_carts() {
     assert_eq!(app.carts().active().cues()[0].status, CueStatus::Standby);
 }
 
+/// Engine meldet einen Fehler für ein Kind einer Play-through-Gruppe (z. B.
+/// Datei fehlt): Das Kind wird übersprungen, das nächste startet – die Gruppe
+/// darf im Live-Betrieb nicht stehen bleiben.
+#[test]
+fn engine_error_in_play_through_group_skips_to_next_child() {
+    let (mut app, cmd_rx, evt_tx) = hotkey_app();
+    let (id_1, id_2) = {
+        let list = app.carts_mut().active_mut();
+        list.cues_mut().clear();
+        list.set_cursor(0);
+        list.add(Cue::new_group(
+            "1",
+            "Pause",
+            GroupMode::Sequential,
+            vec![
+                Cue::new("1.1", "kaputt", CueType::Audio),
+                Cue::new("1.2", "ok", CueType::Audio),
+            ],
+        ));
+        let g = &list.cues()[0];
+        (g.children[0].id, g.children[1].id)
+    };
+    app.go_now();
+    let _ = cmd_rx.try_iter().count();
+
+    evt_tx
+        .send(EngineEvent::Error {
+            cue_id: Some(id_1),
+            message: "file not found".to_string(),
+        })
+        .unwrap();
+    app.poll_engine_events();
+
+    assert_eq!(
+        app.carts().find_cue_any(id_1).unwrap().status,
+        CueStatus::Error
+    );
+    assert_eq!(
+        app.carts().find_cue_any(id_2).unwrap().status,
+        CueStatus::Playing,
+        "nächstes Kind läuft"
+    );
+    assert!(
+        cmd_rx
+            .try_iter()
+            .any(|c| matches!(c, EngineCommand::Play { cue_id, .. } if cue_id == id_2)),
+        "Play-Command für das nächste Kind wurde dispatched"
+    );
+}
+
 #[test]
 fn escape_panics_when_no_text_field_focused() {
     let (mut app, cmd_rx, _evt) = hotkey_app();
@@ -3257,10 +3307,11 @@ fn group_runtime_sums_or_takes_the_latest_end() {
     assert_eq!(app.group_runtime(&seq), None);
 }
 
-/// Dateien auf eine Gruppe gezogen landen darin (in Reihenfolge), auf einen
-/// Cue gezogen direkt dahinter; ohne Zeile zählt eine ausgewählte Gruppe.
+/// Datei-Drop wie Verschieben: in die Gruppe (hinten/vorne), vor/hinter einen
+/// Cue (auch neben ein Gruppen-Kind), mehrere Dateien in Reihenfolge; ohne
+/// Zeile unter dem Zeiger hinter den ausgewählten Cue (nicht in die Gruppe).
 #[test]
-fn dropped_files_land_in_the_group_or_behind_the_target() {
+fn dropped_files_land_exactly_at_the_drop_position() {
     use std::path::PathBuf;
     let mut app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
     app.new_show();
@@ -3271,34 +3322,47 @@ fn dropped_files_land_in_the_group_or_behind_the_target() {
     app.carts_mut().active_mut().add(group);
     app.carts_mut().active_mut().add(after);
     let files = [PathBuf::from("/m/a.mp3"), PathBuf::from("/m/b.mp3")];
-
-    app.add_cues_from_files(&files, Some(group_id));
-    let names = |app: &ShowApp, i: usize| -> Vec<String> {
-        app.carts().active().cues()[i]
+    let names = |app: &ShowApp| -> Vec<String> {
+        app.carts()
+            .active()
+            .cues()
+            .iter()
+            .map(|c| c.name.clone())
+            .collect()
+    };
+    let kids = |app: &ShowApp| -> Vec<String> {
+        app.carts().active().cues()[0]
             .children
             .iter()
             .map(|c| c.name.clone())
             .collect()
     };
-    assert_eq!(names(&app, 0), ["a.mp3", "b.mp3"]);
-    let child = &app.carts().active().cues()[0].children[0];
-    assert_eq!(child.parent_group, Some(group_id));
 
-    // Auf einen Cue: dahinter, in Reihenfolge.
-    app.add_cues_from_files(&files, Some(after_id));
-    let top: Vec<String> = app
-        .carts()
-        .active()
-        .cues()
-        .iter()
-        .map(|c| c.name.clone())
-        .collect();
-    assert_eq!(top, ["Playlist", "danach", "a.mp3", "b.mp3"]);
+    app.add_cues_from_files(&files, Some((group_id, DropPlace::Into)));
+    assert_eq!(kids(&app), ["a.mp3", "b.mp3"]);
+    assert_eq!(
+        app.carts().active().cues()[0].children[0].parent_group,
+        Some(group_id)
+    );
+    app.add_cues_from_files(
+        &[PathBuf::from("/m/c.wav")],
+        Some((group_id, DropPlace::IntoFirst)),
+    );
+    assert_eq!(kids(&app), ["c.wav", "a.mp3", "b.mp3"]);
+    // Zwischen zwei Kinder: hinter a.mp3.
+    let a = app.carts().active().cues()[0].children[1].id;
+    app.add_cues_from_files(&[PathBuf::from("/m/d.wav")], Some((a, DropPlace::After)));
+    assert_eq!(kids(&app), ["c.wav", "a.mp3", "d.wav", "b.mp3"]);
 
-    // Ohne Zeile unter dem Zeiger: ausgewählte Gruppe.
+    // Vor einen Cue der obersten Ebene, in Reihenfolge.
+    app.add_cues_from_files(&files, Some((after_id, DropPlace::Before)));
+    assert_eq!(names(&app), ["Playlist", "a.mp3", "b.mp3", "danach"]);
+
+    // Ohne Zeile unter dem Zeiger: hinter die ausgewählte Gruppe, nicht hinein.
     app.carts_mut().active_mut().select_id(Some(group_id));
-    app.add_cues_from_files(&[PathBuf::from("/m/c.wav")], None);
-    assert_eq!(names(&app, 0), ["a.mp3", "b.mp3", "c.wav"]);
+    app.add_cues_from_files(&[PathBuf::from("/m/e.wav")], None);
+    assert_eq!(names(&app)[1], "e.wav");
+    assert_eq!(kids(&app).len(), 4, "group untouched");
 }
 
 /// GO ohne Playhead (am Listenende): Playhead an den Anfang statt Fehler.
@@ -3329,4 +3393,134 @@ fn go_at_the_end_of_the_list_moves_the_playhead_to_the_first_cue() {
     assert!(app.last_error().is_none());
     app.go_now();
     assert_eq!(app.carts().active().cues()[0].status, CueStatus::Completed);
+}
+
+/// Sichtbare Bereiche je Modus: Show-Mode hat seine eigene Anordnung, beim
+/// Zurückschalten kommt die Edit-Anordnung wieder; beides steht in der Show.
+#[test]
+fn panel_layouts_are_kept_per_mode_and_saved_in_the_show() {
+    let mut app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    app.new_show();
+    app.ui.sidebar_visible = true;
+    app.ui.inspector_visible = true;
+    app.set_show_mode(true);
+    // Im Show-Mode Inspector und Toolbox ausblenden.
+    app.ui.inspector_visible = false;
+    app.ui.toolbox_visible = false;
+    app.set_show_mode(false);
+    assert!(app.ui.inspector_visible, "Edit-Anordnung zurück");
+    assert!(app.ui.toolbox_visible);
+    app.set_show_mode(true);
+    assert!(!app.ui.inspector_visible, "Show-Anordnung zurück");
+
+    let path = std::env::temp_dir().join(format!("kuhplay-layout-{}.kuhplay", std::process::id()));
+    app.save_show(&path);
+    app.set_show_mode(false);
+
+    let mut other = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    other.load_show(&path).expect("Show laden");
+    assert!(other.ui.inspector_visible, "Edit-Mode: Inspector sichtbar");
+    other.set_show_mode(true);
+    assert!(!other.ui.inspector_visible, "Show-Mode aus der Datei");
+    assert!(!other.ui.toolbox_visible);
+    let _ = std::fs::remove_file(path);
+}
+
+/// Ungespeicherte Änderungen: Bearbeiten zählt, Abspielen/Playhead nicht.
+#[test]
+fn unsaved_changes_ignore_playback_but_not_edits() {
+    let mut app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    app.new_show();
+    assert!(!app.has_unsaved_changes(), "neue Show ist sauber");
+    app.carts_mut()
+        .active_mut()
+        .add(Cue::new("1", "eins", CueType::Memo));
+    assert!(app.has_unsaved_changes(), "neuer Cue = Änderung");
+    let path = std::env::temp_dir().join(format!("kuhplay-dirty-{}.kuhplay", std::process::id()));
+    app.save_show(&path);
+    assert!(!app.has_unsaved_changes(), "gespeichert");
+    app.go_now();
+    app.carts_mut().active_mut().set_cursor(0);
+    app.carts_mut().active_mut().select(Some(0));
+    assert!(
+        !app.has_unsaved_changes(),
+        "Abspielen, Playhead, Auswahl zählen nicht"
+    );
+    app.carts_mut().active_mut().cues_mut()[0].name = "neu".into();
+    assert!(app.has_unsaved_changes(), "Umbenennen zählt");
+    app.load_show(&path).unwrap();
+    assert!(!app.has_unsaved_changes(), "frisch geladen");
+    let _ = std::fs::remove_file(path);
+}
+
+/// Export mit Medien: Ordner mit Show + Media/, Pfade relativ; geladen zeigen
+/// sie auf die Kopien. Doppelte Dateien einmal, gleiche Namen nummeriert.
+#[test]
+fn export_with_media_copies_files_and_relinks_paths() {
+    let root = std::env::temp_dir().join(format!("kuhplay-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let src_a = root.join("src/a");
+    let src_b = root.join("src/b");
+    std::fs::create_dir_all(&src_a).unwrap();
+    std::fs::create_dir_all(&src_b).unwrap();
+    std::fs::write(src_a.join("song.mp3"), b"one").unwrap();
+    std::fs::write(src_b.join("song.mp3"), b"two").unwrap();
+
+    let mut app = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    app.new_show();
+    let list = app.carts_mut().active_mut();
+    list.add(
+        Cue::new("1", "a", CueType::Audio).with_target(src_a.join("song.mp3").to_string_lossy()),
+    );
+    list.add(
+        Cue::new("2", "b", CueType::Audio).with_target(src_b.join("song.mp3").to_string_lossy()),
+    );
+    list.add(
+        Cue::new("3", "a again", CueType::Audio)
+            .with_target(src_a.join("song.mp3").to_string_lossy()),
+    );
+    list.add(Cue::new("4", "gone", CueType::Audio).with_target("/does/not/exist.wav"));
+
+    let report = app
+        .export_show_with_media(&root.join("out/My Show.kuhplay"))
+        .expect("export");
+    assert_eq!(report.copied, 2, "same file copied once");
+    assert_eq!(report.missing, ["/does/not/exist.wav"]);
+    let folder = root.join("out/My Show");
+    assert!(folder.join("My Show.kuhplay").is_file());
+    assert_eq!(
+        std::fs::read(folder.join("Media/song.mp3")).unwrap(),
+        b"one"
+    );
+    assert_eq!(
+        std::fs::read(folder.join("Media/song 2.mp3")).unwrap(),
+        b"two"
+    );
+    let json = std::fs::read_to_string(folder.join("My Show.kuhplay")).unwrap();
+    assert!(
+        json.contains("\"Media/song.mp3\""),
+        "relative path in the file"
+    );
+
+    let mut other = ShowApp::new(kuhplay::engine::spawn_mock_engine());
+    other.load_show(&folder.join("My Show.kuhplay")).unwrap();
+    let targets: Vec<String> = other
+        .carts()
+        .active()
+        .cues()
+        .iter()
+        .filter_map(|c| c.target_path.clone())
+        .collect();
+    assert_eq!(targets[0], folder.join("Media/song.mp3").to_string_lossy());
+    assert_eq!(
+        targets[1],
+        folder.join("Media/song 2.mp3").to_string_lossy()
+    );
+    assert_eq!(targets[2], targets[0]);
+    // Die geöffnete Show bleibt unverändert.
+    assert_eq!(
+        app.carts().active().cues()[0].target_path.as_deref(),
+        Some(&*src_a.join("song.mp3").to_string_lossy())
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

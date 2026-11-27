@@ -36,6 +36,7 @@ enum Command {
     ToggleAudition,
     KeyboardShortcuts,
     About,
+    ExportWithMedia,
 }
 
 /// Kürzel, die im Textfeld eine eigene Bedeutung haben und deshalb nicht als
@@ -187,6 +188,7 @@ impl NativeMenu {
                 &separator(),
                 &b.action("Save Show", A::SaveShow),
                 &b.action("Save Show As…", A::SaveShowAs),
+                &b.plain("Export Show with Media…", Command::ExportWithMedia),
             ],
         )?;
 
@@ -391,6 +393,7 @@ impl ShowApp {
             Command::ToggleAudition => self.audition_mode = !self.audition_mode,
             Command::KeyboardShortcuts => self.ui.shortcuts_open = true,
             Command::About => self.ui.about_open = true,
+            Command::ExportWithMedia => self.export_show_with_media_dialog(),
             Command::Shortcut(action) => match action {
                 A::Go => self.go_now(),
                 A::PanicAll => self.panic(),

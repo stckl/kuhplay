@@ -24,6 +24,7 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     // Nach dem Zeichnen geöffneter Stage-Editor (borrow-frei setzen).
     let mut edit_stage: Option<String> = None;
     // Stage-/Display-/Fenster-Felder ebenfalls disjunkt borgen.
+    let selection: Vec<uuid::Uuid> = app.carts.active().selection().to_vec();
     let stages = &mut app.stages;
     let stage_windows = &mut app.stage_windows;
     let Some(cue) = app.carts.selected_mut() else {
@@ -36,6 +37,19 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
     ) {
         ui.label(RichText::new("Geometry only for video, HTML5 and slideshow cues").weak());
         return;
+    }
+    // Mehrfachauswahl: Stage und Layer gelten für alle markierten Bild-Cues.
+    let primary = cue.id;
+    let before = (cue.stage.clone(), cue.layer);
+    let others = selection.iter().filter(|id| **id != primary).count();
+    if others > 0 {
+        ui.label(
+            RichText::new(format!(
+                "Stage and layer apply to all {} selected cues",
+                others + 1
+            ))
+            .color(theme::palette::TEXT_DIM),
+        );
     }
     ui.columns(2, |uis| {
         let [left, right] = uis else {
@@ -167,6 +181,30 @@ pub fn draw_geometry(ui: &mut egui::Ui, app: &mut ShowApp) {
             surface_editor(right, surface, content_size);
         }
     });
+    let after = (cue.stage.clone(), cue.layer);
+    if after != before {
+        let list = app.carts.active_mut();
+        for id in selection.iter().filter(|id| **id != primary) {
+            let Some(other) = list.find_cue_mut(*id).filter(|c| {
+                matches!(
+                    c.cue_type,
+                    CueType::Video
+                        | CueType::Html
+                        | CueType::SlideShow
+                        | CueType::Image
+                        | CueType::Text
+                )
+            }) else {
+                continue;
+            };
+            if after.0 != before.0 {
+                other.stage = after.0.clone();
+            }
+            if after.1 != before.1 {
+                other.layer = after.1;
+            }
+        }
+    }
     if let Some(name) = edit_stage {
         if let Some(stage) = app.stages.find(&name) {
             app.stage_editor_open = Some(stage.id);
