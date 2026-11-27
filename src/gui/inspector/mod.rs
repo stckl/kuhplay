@@ -168,7 +168,7 @@ pub fn tabs_for(cue_type: Option<CueType>) -> &'static [InspectorTab] {
         Some(CueType::Companion) => &[Basics, Triggers, Companion],
         Some(CueType::Timecode) => &[Basics, Triggers, Timecode],
         Some(CueType::Script) => &[Basics, Triggers, ScriptTab],
-        Some(CueType::Group) => &[Basics, Group, Triggers],
+        Some(CueType::Group) => &[Basics, Group, Data, Triggers],
         // Group, Stop, Script, Control, Wait, Memo, keine Auswahl.
         _ => &[Basics, Triggers],
     }

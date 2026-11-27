@@ -1811,6 +1811,54 @@ fn engine_error_in_play_through_group_skips_to_next_child() {
     );
 }
 
+/// Startdaten einer Gruppe während der Show ändern: nach der Tipp-Pause geht
+/// ein PushJson mit den neuen (wirksamen) Daten an den laufenden HTML-Cue.
+#[test]
+fn editing_group_data_pushes_live_to_running_html() {
+    let (mut app, cmd_rx, _evt_tx) = hotkey_app();
+    let (gid, hid) = {
+        let list = app.carts_mut().active_mut();
+        list.cues_mut().clear();
+        list.set_cursor(0);
+        let mut group = Cue::new_group(
+            "1",
+            "Pause",
+            GroupMode::Sequential,
+            vec![Cue::new("1.1", "Timetable", CueType::Html)
+                .with_html_source(kuhplay::core::HtmlSource::Inline("<p>x</p>".into()))
+                .with_data_json(r#"{"delay":1.6}"#)],
+        );
+        group.data_json_text = r#"{"time":"09:30"}"#.into();
+        list.add(group);
+        (list.cues()[0].id, list.cues()[0].children[0].id)
+    };
+    app.go_now();
+    let _ = cmd_rx.try_iter().count();
+
+    // Bearbeiten im Inspector (Data-Tab der Gruppe) – letzte Eingabe 1 s her.
+    app.carts_mut()
+        .active_mut()
+        .find_cue_mut(gid)
+        .unwrap()
+        .data_json_text = r#"{"time":"09:45"}"#.into();
+    app.data_edits
+        .insert(gid, std::time::Instant::now() - Duration::from_secs(1));
+    app.flush_data_edits();
+
+    let pushed: Vec<_> = cmd_rx
+        .try_iter()
+        .filter_map(|c| match c {
+            EngineCommand::PushJson { target, payload } if target == hid => Some(payload),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        pushed,
+        vec![serde_json::json!({"time":"09:45","delay":1.6})]
+    );
+    assert!(app.data_edits.is_empty());
+}
+
 #[test]
 fn escape_panics_when_no_text_field_focused() {
     let (mut app, cmd_rx, _evt) = hotkey_app();

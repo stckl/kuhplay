@@ -959,7 +959,7 @@ impl CueList {
                     commands.push(command);
                 }
                 push_volume_command(cue, commands);
-                push_initial_html_data(cue, commands);
+                push_initial_html_data(cue, None, commands);
             }
         }
     }
@@ -998,6 +998,7 @@ impl CueList {
                 // Alle armed Kinder werden in EINEM Go getriggert. Timeline
                 // staffelt zusätzlich über die individuellen Pre-Waits der
                 // Kinder (stecken bereits in den Commands).
+                let inherited = self.effective_data(group_id);
                 let cue = &mut self.cues[index];
                 let mut any_running = false;
                 for child in &mut cue.children {
@@ -1005,7 +1006,7 @@ impl CueList {
                         continue;
                     }
                     child.parent_group = Some(group_id);
-                    any_running |= trigger_child(child, commands);
+                    any_running |= trigger_child(child, inherited.as_ref(), commands);
                 }
                 let next = if any_running {
                     CueStatus::Playing
@@ -1071,6 +1072,7 @@ impl CueList {
     /// Gruppe (in Abspielreihenfolge). Play through überspringt sofort fertige
     /// Kinder (Memo, MIDI, …), damit die Kette nicht hängen bleibt.
     fn group_step(&mut self, group_id: Uuid, commands: &mut Vec<EngineCommand>) {
+        let inherited = self.effective_data(group_id);
         let Some(group) = self.find_cue_mut(group_id) else {
             return;
         };
@@ -1091,10 +1093,51 @@ impl CueList {
                 continue;
             }
             child.parent_group = Some(group_id);
-            if trigger_child(child, commands) || !through {
+            if trigger_child(child, inherited.as_ref(), commands) || !through {
                 return;
             }
         }
+    }
+
+    /// Wirksame Startdaten eines Cues: Daten aller Eltern-Gruppen (von außen
+    /// nach innen) ergänzt um die eigenen – so stehen z. B. die Daten einer
+    /// Pause an der Gruppe, die HTML-Kinder ergänzen nur `layout` o. Ä.
+    pub fn effective_data(&self, id: Uuid) -> Option<serde_json::Value> {
+        // Kette vom Cue nach außen sammeln, dann von außen nach innen mischen.
+        let mut chain = vec![id];
+        let mut current = id;
+        while let Some((Some(parent), _)) = locate(&self.cues, current) {
+            chain.push(parent);
+            current = parent;
+        }
+        chain
+            .iter()
+            .rev()
+            .fold(None, |acc, cid| match self.find_cue(*cid) {
+                Some(cue) => merge_data(acc, &cue.data_json_text),
+                None => acc,
+            })
+    }
+
+    /// Live-Update nach einer Daten-Änderung an `id`: für jeden laufenden
+    /// HTML-Cue darin (der Cue selbst bzw. alle in der Gruppe) ein `PushJson`
+    /// mit seinen wirksamen Daten.
+    pub fn live_data_pushes(&self, id: Uuid) -> Vec<EngineCommand> {
+        let Some(root) = self.find_cue(id) else {
+            return Vec::new();
+        };
+        let mut running = Vec::new();
+        collect_running_html(root, &mut running);
+        running
+            .into_iter()
+            .filter_map(|cid| {
+                self.effective_data(cid)
+                    .map(|payload| EngineCommand::PushJson {
+                        target: cid,
+                        payload,
+                    })
+            })
+            .collect()
     }
 
     /// Triggert einen Control-Cue (Sofort-Cue, wirkt auf die Liste selbst).
@@ -1735,11 +1778,18 @@ pub(crate) fn group_fade(
 
 /// Triggert ein Gruppen-Kind. Rückgabe: `true`, wenn es läuft (bzw. im
 /// Pre-Wait ist); Sofort-Cues und ungültige Kinder sind gleich fertig bzw. Error.
-fn trigger_child(child: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
+/// `inherited`: Daten der Eltern-Gruppen (siehe [`CueList::effective_data`]) –
+/// HTML-Kinder bekommen sie, ergänzt um ihre eigenen Startdaten.
+fn trigger_child(
+    child: &mut Cue,
+    inherited: Option<&serde_json::Value>,
+    commands: &mut Vec<EngineCommand>,
+) -> bool {
     // Verschachtelte Gruppe: startet ihre eigenen Kinder (Timeline: alle,
     // Sequential/Shuffle: das erste) und gilt als ein Schritt der Eltern-Gruppe.
     if child.cue_type == CueType::Group {
-        return start_nested_group(child, commands);
+        let merged = merge_data(inherited.cloned(), &child.data_json_text);
+        return start_nested_group(child, merged.as_ref(), commands);
     }
     if child.validate_trigger().is_err() {
         // Ungültige Konfiguration → Kind geht in Error (kein Panic).
@@ -1770,13 +1820,23 @@ fn trigger_child(child: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
             let _ = child.transition_status(next);
             commands.push(cmd);
             push_volume_command(child, commands);
-            push_initial_html_data(child, commands);
+            push_initial_html_data(child, inherited, commands);
             true
         }
         None => {
             let _ = child.transition_status(CueStatus::Completed);
             false
         }
+    }
+}
+
+/// IDs der laufenden HTML-Cues unter `cue` (inkl. `cue` selbst).
+fn collect_running_html(cue: &Cue, out: &mut Vec<Uuid>) {
+    if cue.cue_type == CueType::Html && cue.status.is_active() {
+        out.push(cue.id);
+    }
+    for child in &cue.children {
+        collect_running_html(child, out);
     }
 }
 
@@ -1794,7 +1854,11 @@ fn collect_animated_ids(cue: &Cue, out: &mut Vec<Uuid>) {
 /// [`trigger_child`]: `true`, solange die Gruppe läuft (sonst sofort fertig).
 /// Weiter geht es über die Fertig-Meldungen der Kinder
 /// ([`CueList::advance_group`]).
-fn start_nested_group(group: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
+fn start_nested_group(
+    group: &mut Cue,
+    inherited: Option<&serde_json::Value>,
+    commands: &mut Vec<EngineCommand>,
+) -> bool {
     let group_id = group.id;
     group.group_iterations_done = 0;
     let running = match group.group_mode {
@@ -1805,7 +1869,7 @@ fn start_nested_group(group: &mut Cue, commands: &mut Vec<EngineCommand>) -> boo
                     continue;
                 }
                 child.parent_group = Some(group_id);
-                any_running |= trigger_child(child, commands);
+                any_running |= trigger_child(child, inherited, commands);
             }
             any_running
         }
@@ -1820,7 +1884,7 @@ fn start_nested_group(group: &mut Cue, commands: &mut Vec<EngineCommand>) -> boo
                     continue;
                 }
                 child.parent_group = Some(group_id);
-                if trigger_child(child, commands) {
+                if trigger_child(child, inherited, commands) {
                     started = true;
                     break;
                 }
@@ -1859,15 +1923,39 @@ fn play_order(group: &Cue, pass: u32) -> Vec<Uuid> {
 /// mitschicken – die Engine stellt sie nach dem Laden zu, vor dem Trigger
 /// „in", die Seite ist also gleich befüllt. Ungültiges JSON meldet die
 /// Problemanzeige; hier wird es übergangen.
-fn push_initial_html_data(cue: &Cue, commands: &mut Vec<EngineCommand>) {
-    if cue.cue_type != CueType::Html || cue.data_json_text.trim().is_empty() {
+fn push_initial_html_data(
+    cue: &Cue,
+    inherited: Option<&serde_json::Value>,
+    commands: &mut Vec<EngineCommand>,
+) {
+    if cue.cue_type != CueType::Html {
         return;
     }
-    if let Ok(payload) = serde_json::from_str(&cue.data_json_text) {
+    if let Some(payload) = merge_data(inherited.cloned(), &cue.data_json_text) {
         commands.push(EngineCommand::PushJson {
             target: cue.id,
             payload,
         });
+    }
+}
+
+/// Startdaten zusammenführen: `own` (JSON-Text eines Cues) ergänzt bzw.
+/// überschreibt die geerbten Daten (oberste Ebene der Objekte). Leerer oder
+/// ungültiger Text ändert nichts.
+pub(crate) fn merge_data(
+    inherited: Option<serde_json::Value>,
+    own: &str,
+) -> Option<serde_json::Value> {
+    let own = (!own.trim().is_empty())
+        .then(|| serde_json::from_str::<serde_json::Value>(own).ok())
+        .flatten();
+    match (inherited, own) {
+        (Some(serde_json::Value::Object(mut base)), Some(serde_json::Value::Object(add))) => {
+            base.extend(add);
+            Some(serde_json::Value::Object(base))
+        }
+        (_, Some(own)) => Some(own),
+        (base, None) => base,
     }
 }
 
@@ -2643,6 +2731,83 @@ mod tests {
             .filter(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id == html))
             .count();
         assert_eq!(stops, 1, "{:?}", go.commands);
+    }
+
+    fn html(number: &str, data: &str) -> Cue {
+        Cue::new(number, number, CueType::Html)
+            .with_html_source(crate::core::HtmlSource::Inline("<p>x</p>".into()))
+            .with_data_json(data)
+    }
+
+    fn pushed(cmds: &[EngineCommand], id: Uuid) -> Option<serde_json::Value> {
+        cmds.iter().find_map(|c| match c {
+            EngineCommand::PushJson { target, payload } if *target == id => Some(payload.clone()),
+            _ => None,
+        })
+    }
+
+    /// Startdaten der Gruppe gehen an die HTML-Kinder, deren eigene Daten
+    /// ergänzen/überschreiben – auch über verschachtelte Gruppen hinweg.
+    #[test]
+    fn html_children_inherit_group_data() {
+        let mut list = CueList::new();
+        let inner = Cue::new_group(
+            "1.2",
+            "Split",
+            GroupMode::Timeline,
+            vec![html("1.2.1", r#"{"layout":"split"}"#)],
+        );
+        let mut group = Cue::new_group(
+            "1",
+            "Pause",
+            GroupMode::Sequential,
+            vec![html("1.1", r#"{"delay":1.6}"#), inner],
+        );
+        group.data_json_text = r#"{"section":"Pause","items":[1,2]}"#.into();
+        list.add(group);
+        let go = list.go().unwrap();
+        let first = list.cues()[0].children[0].id;
+        assert_eq!(
+            pushed(&go.commands, first).unwrap(),
+            serde_json::json!({"section":"Pause","items":[1,2],"delay":1.6})
+        );
+        let (_, cmds) = list.set_status_with_follow(first, CueStatus::Completed);
+        let split = list.cues()[0].children[1].children[0].id;
+        assert_eq!(
+            pushed(&cmds, split).unwrap(),
+            serde_json::json!({"section":"Pause","items":[1,2],"layout":"split"})
+        );
+    }
+
+    /// Daten der Gruppe live ändern: Push an die laufenden HTML-Kinder (mit
+    /// ihren wirksamen Daten), nicht an wartende.
+    #[test]
+    fn live_data_pushes_reach_running_html_only() {
+        let mut list = CueList::new();
+        let mut group = Cue::new_group(
+            "1",
+            "Pause",
+            GroupMode::Sequential,
+            vec![html("1.1", r#"{"delay":1}"#), html("1.2", "")],
+        );
+        group.data_json_text = r#"{"t":"alt"}"#.into();
+        list.add(group);
+        let _ = list.go().unwrap();
+        let (gid, a, b) = {
+            let g = &list.cues()[0];
+            (g.id, g.children[0].id, g.children[1].id)
+        };
+        list.find_cue_mut(gid).unwrap().data_json_text = r#"{"t":"neu"}"#.into();
+        let cmds = list.live_data_pushes(gid);
+        assert_eq!(
+            pushed(&cmds, a).unwrap(),
+            serde_json::json!({"t":"neu","delay":1})
+        );
+        assert!(pushed(&cmds, b).is_none(), "1.2 läuft noch nicht");
+        assert_eq!(
+            list.effective_data(b).unwrap(),
+            serde_json::json!({"t":"neu"})
+        );
     }
 
     /// Shuffle „new order each run" mischt nicht immer gleich, die

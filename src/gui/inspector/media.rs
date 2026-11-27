@@ -123,13 +123,26 @@ pub fn draw_source(ui: &mut egui::Ui, app: &mut ShowApp) {
         ui.end_row();
 
         // Startdaten: gehen beim GO direkt mit (vor „in"), ohne Data-Cue.
-        template_data_rows(
+        // Geändert, während der Cue läuft → nach kurzer Pause live senden.
+        if template_data_rows(
             ui,
             &schema,
             &mut cue.data_json_text,
             &mut app.text_field_ids,
             "Initial data",
+        ) {
+            app.data_edits.insert(cue.id, std::time::Instant::now());
+        }
+        theme::field_label(ui, "Live");
+        ui.label(
+            RichText::new(
+                "Änderungen gehen ~1 s nach dem Tippen an den laufenden Cue \
+                 (ergänzt die Daten seiner Gruppe).",
+            )
+            .small()
+            .color(theme::palette::TEXT_DIM),
         );
+        ui.end_row();
     });
 }
 
@@ -301,9 +314,9 @@ fn template_data_rows(
     text: &mut String,
     text_field_ids: &mut std::collections::HashSet<egui::Id>,
     editor_label: &str,
-) {
+) -> bool {
     theme::field_label(ui, editor_label);
-    super::json_editor(ui, text, text_field_ids);
+    let changed = super::json_editor(ui, text, text_field_ids).changed();
     ui.end_row();
 
     theme::field_label(ui, "JSON valid");
@@ -392,11 +405,20 @@ fn template_data_rows(
         }
         None => {}
     }
+    changed
 }
 
 /// Tab „Data" (HTML-Data-Cue): Ziel-HTML (HTML5-Cues des Carts), JSON-Editor
 /// mit Live-Validierung und Test-Push (`PushJson`).
 pub fn draw_data(ui: &mut egui::Ui, app: &mut ShowApp) {
+    if app
+        .carts
+        .selected()
+        .is_some_and(|c| c.cue_type == CueType::Group)
+    {
+        draw_group_data(ui, app);
+        return;
+    }
     let targets = app.html_targets();
     // Felddefinition des Ziel-Templates (welche Daten es erwartet).
     let schema = app
@@ -444,7 +466,7 @@ pub fn draw_data(ui: &mut egui::Ui, app: &mut ShowApp) {
         }
         ui.end_row();
 
-        template_data_rows(
+        let _ = template_data_rows(
             ui,
             &schema,
             &mut cue.data_json_text,
@@ -488,4 +510,77 @@ fn shuffle<T>(items: &mut [T]) {
         let j = (rand() % (i as u64 + 1)) as usize;
         items.swap(i, j);
     }
+}
+
+/// Tab „Data" einer Gruppe: Startdaten, die alle HTML-Cues darin erben
+/// (eigene Startdaten der Cues ergänzen sie). Änderungen gehen nach kurzer
+/// Tipp-Pause live an die laufenden HTML-Cues der Gruppe.
+fn draw_group_data(ui: &mut egui::Ui, app: &mut ShowApp) {
+    // Template-Felder des ersten HTML-Kinds (zur Prüfung des JSON).
+    let schema = app
+        .carts
+        .selected()
+        .and_then(|g| first_html(g).and_then(|id| app.template_schema_of(id)));
+    let running = app
+        .carts
+        .selected()
+        .map(|g| app.carts.active().live_data_pushes(g.id).len())
+        .unwrap_or(0);
+    let mut send_now = None;
+    {
+        let Some(cue) = app.carts.selected_mut() else {
+            return;
+        };
+        let id = cue.id;
+        theme::form_grid("inspector_group_data_grid").show(ui, |ui| {
+            if template_data_rows(
+                ui,
+                &schema,
+                &mut cue.data_json_text,
+                &mut app.text_field_ids,
+                "Group data",
+            ) {
+                app.data_edits.insert(id, std::time::Instant::now());
+            }
+            theme::field_label(ui, "Live");
+            ui.horizontal(|ui| {
+                let text = if running == 0 {
+                    "kein HTML-Cue der Gruppe läuft".to_string()
+                } else {
+                    format!("{running} laufende(r) HTML-Cue(s) – Änderungen gehen ~1 s nach dem Tippen raus")
+                };
+                ui.label(RichText::new(text).small().color(theme::palette::TEXT_DIM));
+                if ui
+                    .add_enabled(running > 0, egui::Button::new("Jetzt live senden"))
+                    .on_hover_text("Daten sofort an alle laufenden HTML-Cues der Gruppe schicken")
+                    .clicked()
+                {
+                    send_now = Some(id);
+                }
+            });
+            ui.end_row();
+            theme::field_label(ui, "Hinweis");
+            ui.label(
+                RichText::new(
+                    "Alle HTML-Cues dieser Gruppe (auch in verschachtelten Gruppen) bekommen \
+                     diese Daten; ihre eigenen Startdaten ergänzen bzw. überschreiben einzelne Felder.",
+                )
+                .small()
+                .color(theme::palette::TEXT_DIM),
+            );
+            ui.end_row();
+        });
+    }
+    if let Some(id) = send_now {
+        app.data_edits.remove(&id);
+        app.send_live_data(id);
+    }
+}
+
+/// Erster HTML-Cue in einer Gruppe (auch verschachtelt).
+fn first_html(cue: &crate::core::Cue) -> Option<uuid::Uuid> {
+    if cue.cue_type == CueType::Html {
+        return Some(cue.id);
+    }
+    cue.children.iter().find_map(first_html)
 }

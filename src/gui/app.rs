@@ -175,6 +175,9 @@ pub struct ShowApp {
     /// Textfelder nicht von Slidern (beide fordern Fokus beim Klick),
     /// daher registrieren die Zeichenfunktionen ihre Textfelder hier.
     pub text_field_ids: HashSet<egui::Id>,
+    /// Zuletzt geänderte Startdaten (Cue → Zeitpunkt der letzten Eingabe):
+    /// nach kurzer Tipp-Pause gehen sie live an laufende HTML-Cues.
+    pub data_edits: HashMap<Uuid, Instant>,
     /// Textfeld-IDs des vorherigen Frames (die Hotkeys lesen diese – ein
     /// Frame Verzögerung ist unkritisch, da Felder vor dem Anklicken
     /// bereits existieren müssen).
@@ -603,6 +606,7 @@ impl ShowApp {
             pending_go: false,
             last_error: None,
             text_field_ids: HashSet::new(),
+            data_edits: HashMap::new(),
             text_field_ids_prev: HashSet::new(),
             text_field_active: false,
             clock_last_check: None,
@@ -3262,7 +3266,8 @@ impl ShowApp {
             }
             match std::fs::copy(&source, media.join(&unique)) {
                 Ok(_) => {
-                    let rel = PathBuf::from("Media").join(&unique);
+                    // Immer „/" – die Show soll auf jedem System laden.
+                    let rel = PathBuf::from(format!("Media/{unique}"));
                     copied.insert(source, rel.clone());
                     *path = rel;
                 }
@@ -3763,6 +3768,43 @@ impl ShowApp {
             tracing::warn!(%cue_id, %err, "status update rejected by state machine");
         }
         self.dispatch(follow_commands);
+    }
+
+    /// Startdaten live senden: Ist die letzte Eingabe in den Startdaten eines
+    /// Cues (HTML oder Gruppe) [`DATA_EDIT_SETTLE`] her und das JSON gültig,
+    /// bekommen alle laufenden HTML-Cues darin ihre neuen Daten (PushJson).
+    pub fn flush_data_edits(&mut self) {
+        if self.data_edits.is_empty() {
+            return;
+        }
+        let due: Vec<Uuid> = self
+            .data_edits
+            .iter()
+            .filter(|(_, at)| at.elapsed() >= DATA_EDIT_SETTLE)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in due {
+            self.data_edits.remove(&id);
+            self.send_live_data(id);
+        }
+    }
+
+    /// Startdaten von `id` sofort an alle laufenden HTML-Cues darin senden
+    /// (nur bei gültigem JSON). Rückgabe: Anzahl erreichter HTML-Cues.
+    pub fn send_live_data(&mut self, id: Uuid) -> usize {
+        let valid = self.carts.find_cue_any(id).is_some_and(|c| {
+            c.data_json_text.trim().is_empty()
+                || serde_json::from_str::<serde_json::Value>(&c.data_json_text).is_ok()
+        });
+        if !valid {
+            return 0;
+        }
+        let commands: Vec<EngineCommand> = (0..self.carts.cart_count())
+            .flat_map(|i| self.carts.cart(i).live_data_pushes(id))
+            .collect();
+        let count = commands.len();
+        self.dispatch(commands);
+        count
     }
 
     /// Wählt den vorherigen oder nächsten Top-Level-Cue aus.
@@ -4383,6 +4425,7 @@ impl eframe::App for ShowApp {
             ctx.request_repaint();
         }
         self.fire_clock_triggers();
+        self.flush_data_edits();
         self.fade_out_ending_groups();
         self.preload_standby_video();
         self.poll_remote_commands();
@@ -4491,6 +4534,9 @@ fn cue_from_file(number: impl std::fmt::Display, path: &Path, stage: Option<&str
         _ => cue.with_target(path.to_string_lossy()),
     })
 }
+
+/// Tipp-Pause, nach der geänderte Startdaten live an laufende HTML-Cues gehen.
+pub const DATA_EDIT_SETTLE: Duration = Duration::from_millis(800);
 
 /// Antwort auf „Änderungen speichern?“ beim Schließen.
 enum CloseChoice {
