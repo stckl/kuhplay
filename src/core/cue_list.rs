@@ -1139,8 +1139,17 @@ impl CueList {
                     // (inkl. Fade-Out der Gruppe), der Status folgt sofort.
                     // Das Stop selbst nimmt auch ein stehendes letztes Bild weg.
                     let id = self.cues[t].id;
-                    commands.extend(self.stop_running(id));
-                    commands.push(EngineCommand::Stop { cue_id: id });
+                    let stops = self.stop_running(id);
+                    // Nur EIN Stop je Cue: ein zweites bricht bei HTML-Cues die
+                    // Out-Animation sofort ab. Läuft der Cue nicht mehr (z. B.
+                    // stehendes letztes Bild), nimmt dieses Stop das Bild weg.
+                    let already = stops
+                        .iter()
+                        .any(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id == id));
+                    commands.extend(stops);
+                    if !already {
+                        commands.push(EngineCommand::Stop { cue_id: id });
+                    }
                 }
                 None => {
                     commands.push(EngineCommand::StopAll);
@@ -1588,12 +1597,16 @@ impl CueList {
             Some(cue) => {
                 let fade_out = cue.group_fade_out;
                 let fades = cue.cue_type == CueType::Group && !fade_out.is_zero();
+                // HTML-/Text-Cues haben eine eigene Out-Animation (Trigger
+                // „out" beim Stop) – nicht wegblenden, sonst sieht man sie nicht.
+                let mut animated = Vec::new();
+                collect_animated_ids(cue, &mut animated);
                 let parent = cue.stop_running_collect(&mut commands);
                 // Gruppe mit Fade-Out: die Kinder ausblenden, dann stoppen.
                 if fades {
                     for command in &mut commands {
                         if let EngineCommand::Stop { cue_id } = *command {
-                            if cue_id != id {
+                            if cue_id != id && !animated.contains(&cue_id) {
                                 *command = group_fade(cue_id, None, 0.0, 0.0, fade_out, true);
                             }
                         }
@@ -1764,6 +1777,16 @@ fn trigger_child(child: &mut Cue, commands: &mut Vec<EngineCommand>) -> bool {
             let _ = child.transition_status(CueStatus::Completed);
             false
         }
+    }
+}
+
+/// IDs aller HTML-/Text-Cues unter `cue` (inkl. verschachtelter Gruppen).
+fn collect_animated_ids(cue: &Cue, out: &mut Vec<Uuid>) {
+    if matches!(cue.cue_type, CueType::Html | CueType::Text) {
+        out.push(cue.id);
+    }
+    for child in &cue.children {
+        collect_animated_ids(child, out);
     }
 }
 
@@ -2566,6 +2589,60 @@ mod tests {
                 "Enkel neu gearmt"
             );
         }
+    }
+
+    /// Gruppe mit Fade-Out stoppen: Videos blenden aus, HTML-Cues bekommen ein
+    /// echtes Stop – damit ihre eigene Out-Animation (Trigger „out") sichtbar
+    /// ist statt mit dem Bild weggeblendet zu werden.
+    #[test]
+    fn group_fade_out_keeps_html_children_on_their_out_animation() {
+        let mut list = CueList::new();
+        let html = Cue::new("1.1", "Timetable", CueType::Html)
+            .with_html_source(crate::core::HtmlSource::Inline("<p>x</p>".into()));
+        let video = Cue::new("1.2", "Film", CueType::Video).with_target("/media/x.mp4");
+        let mut group = Cue::new_group("1", "Pause", GroupMode::Timeline, vec![html, video]);
+        group.group_fade_out = std::time::Duration::from_secs(2);
+        list.add(group);
+        let _ = list.go().unwrap();
+        let t = list.cues()[0].clone();
+        let (gid, hid, vid) = (t.id, t.children[0].id, t.children[1].id);
+        let cmds = list.stop_running(gid);
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id == hid)),
+            "HTML: echtes Stop (Out-Animation): {cmds:?}"
+        );
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id == vid)),
+            "Video: blendet aus statt hartem Stop: {cmds:?}"
+        );
+    }
+
+    /// Control-Cue „Stop" auf einen laufenden HTML-Cue schickt genau EIN Stop
+    /// – ein zweites bricht in der Engine die Out-Animation sofort ab.
+    #[test]
+    fn control_stop_sends_single_stop_for_running_html() {
+        let mut list = CueList::new();
+        list.add(
+            Cue::new("1", "Titel", CueType::Html)
+                .with_html_source(crate::core::HtmlSource::Inline("<p>x</p>".into())),
+        );
+        list.add(
+            Cue::new("2", "Stop Titel", CueType::Control)
+                .with_control(ControlAction::Stop)
+                .with_control_target("1"),
+        );
+        let _ = list.go().unwrap();
+        let html = list.cues()[0].id;
+        let go = list.go().unwrap();
+        let stops = go
+            .commands
+            .iter()
+            .filter(|c| matches!(c, EngineCommand::Stop { cue_id } if *cue_id == html))
+            .count();
+        assert_eq!(stops, 1, "{:?}", go.commands);
     }
 
     /// Shuffle „new order each run" mischt nicht immer gleich, die

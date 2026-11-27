@@ -105,6 +105,10 @@ pub struct VideoBackend {
     /// Vorgeladene Player, die bleiben, bis sie laufen oder entladen werden
     /// (Load-Cue). Die übrigen sind der automatisch vorgeladene Standby-Cue.
     pinned: HashSet<Uuid>,
+    /// Größte Ausgabe-Fläche (größte Stage): größere Videos verkleinert schon
+    /// ffmpeg darauf – spart bei 4K auf einer 1080p-Stage drei Viertel des
+    /// Rohdatenstroms (Pipe + CPU-Compositing).
+    max_frame: (u32, u32),
 }
 
 impl VideoBackend {
@@ -116,6 +120,15 @@ impl VideoBackend {
             pending_seeks: HashMap::new(),
             preloaded: HashMap::new(),
             pinned: HashSet::new(),
+            max_frame: (1920, 1080),
+        }
+    }
+
+    /// Größte Stage-Fläche setzen (Engine, bei jeder Stage-Konfiguration).
+    /// Gilt für ab jetzt gestartete Videos.
+    pub fn set_max_frame(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.max_frame = (width, height);
         }
     }
 
@@ -405,7 +418,9 @@ impl VideoBackend {
         child_slot: Arc<Mutex<Option<Child>>>,
     ) {
         let mut cmd = Command::new(Self::ffmpeg_binary());
-        for arg in ffmpeg_decode_args(seek, path, hwaccel_enabled()) {
+        let target = decode_size(info.width, info.height, self.max_frame);
+        let scale = (target != (info.width, info.height)).then_some(target);
+        for arg in ffmpeg_decode_args(seek, path, hwaccel_enabled(), scale) {
             cmd.arg(arg);
         }
         cmd.stdout(Stdio::piped());
@@ -423,8 +438,7 @@ impl VideoBackend {
             }
         };
         let frames = self.frames.clone();
-        let w = info.width;
-        let h = info.height;
+        let (w, h) = target;
         let fps = info.fps.max(1.0);
         std::thread::Builder::new()
             .name(format!("video-reader-{cue_id}"))
@@ -645,7 +659,25 @@ fn reader_loop(
 /// Plattform VideoToolBox/NVDEC/VAAPI/DXVA, automatischer Fallback auf
 /// Software). Die Frames werden für die rgba-Ausgabe automatisch vom GPU
 /// heruntergeholt; das CPU-Compositing bleibt davon unberührt.
-pub fn ffmpeg_decode_args(seek: Duration, path: &str, hwaccel: bool) -> Vec<String> {
+/// Dekodier-Größe: passt `(w, h)` seitenverhältnistreu in `max` – nur
+/// verkleinern, nie vergrößern; gerade Maße (für Pixelformate mit Chroma-
+/// Subsampling unterwegs).
+pub fn decode_size(w: u32, h: u32, max: (u32, u32)) -> (u32, u32) {
+    if w == 0 || h == 0 || (w <= max.0 && h <= max.1) {
+        return (w, h);
+    }
+    let scale = (max.0 as f64 / w as f64).min(max.1 as f64 / h as f64);
+    let even = |v: f64| ((v.round() as u32) / 2 * 2).max(2);
+    (even(w as f64 * scale), even(h as f64 * scale))
+}
+
+/// `scale`: Ausgabe auf diese Größe verkleinern (siehe [`decode_size`]).
+pub fn ffmpeg_decode_args(
+    seek: Duration,
+    path: &str,
+    hwaccel: bool,
+    scale: Option<(u32, u32)>,
+) -> Vec<String> {
     let mut args = vec![
         "-nostdin".to_string(),
         "-loglevel".to_string(),
@@ -662,6 +694,12 @@ pub fn ffmpeg_decode_args(seek: Duration, path: &str, hwaccel: bool) -> Vec<Stri
         "-i".to_string(),
         path.to_string(),
         "-an".to_string(),
+    ]);
+    if let Some((w, h)) = scale {
+        args.push("-vf".to_string());
+        args.push(format!("scale={w}:{h}:flags=bilinear"));
+    }
+    args.extend([
         "-f".to_string(),
         "rawvideo".to_string(),
         "-pix_fmt".to_string(),
@@ -932,7 +970,7 @@ mod hwaccel_tests {
 
     #[test]
     fn decode_args_contain_hwaccel_when_enabled() {
-        let args = ffmpeg_decode_args(Duration::from_secs(2), "/tmp/x.mp4", true);
+        let args = ffmpeg_decode_args(Duration::from_secs(2), "/tmp/x.mp4", true, None);
         let pos = args.iter().position(|a| a == "-hwaccel").unwrap();
         assert_eq!(args[pos + 1], "auto");
         // hwaccel ist Input-Option: vor -i stehen.
@@ -945,8 +983,29 @@ mod hwaccel_tests {
     }
 
     #[test]
+    fn decode_size_shrinks_only_and_keeps_aspect() {
+        // 4K auf 1080p-Stage → 1920×1080.
+        assert_eq!(decode_size(3840, 2160, (1920, 1080)), (1920, 1080));
+        // Hochkant 1080×1920 passt in 1920×1080 nur verkleinert.
+        assert_eq!(decode_size(1080, 1920, (1920, 1080)), (608, 1080));
+        // Kleiner als die Stage: unverändert (nie vergrößern).
+        assert_eq!(decode_size(1280, 720, (1920, 1080)), (1280, 720));
+        // 4K-Stage: 4K bleibt 4K.
+        assert_eq!(decode_size(3840, 2160, (3840, 2160)), (3840, 2160));
+    }
+
+    #[test]
+    fn decode_args_scale_before_rawvideo_output() {
+        let args = ffmpeg_decode_args(Duration::ZERO, "/tmp/x.mp4", true, Some((1920, 1080)));
+        let vf = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args[vf + 1], "scale=1920:1080:flags=bilinear");
+        let out = args.iter().position(|a| a == "rawvideo").unwrap();
+        assert!(vf < out);
+    }
+
+    #[test]
     fn decode_args_without_hwaccel() {
-        let args = ffmpeg_decode_args(Duration::ZERO, "/tmp/x.mp4", false);
+        let args = ffmpeg_decode_args(Duration::ZERO, "/tmp/x.mp4", false, None);
         assert!(!args.contains(&"-hwaccel".to_string()));
         assert!(args.contains(&"-ss".to_string()));
     }

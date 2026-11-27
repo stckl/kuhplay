@@ -289,6 +289,9 @@ struct ActiveHtml {
     /// Stop mit Out-Animation läuft seit … (Trigger `out` geschickt). Endet bei
     /// `TriggerDone("out")` oder nach [`HTML_OUT_TIMEOUT`].
     closing_since: Option<Duration>,
+    /// Out-Animation wegen abgelaufener Dauer (nicht wegen Stop): danach gilt
+    /// der Cue als fertig (`Finished`) statt gestoppt.
+    finish_on_close: bool,
 }
 
 /// So lange ohne neuen Timecode gilt er als angehalten (Chasing pausiert).
@@ -2137,6 +2140,14 @@ impl MediaEngine for RealMediaEngine {
                 let name = stage.name.clone();
                 let regions = stage.regions.clone();
                 self.stages.insert(name.clone(), stage);
+                // Videos nicht größer dekodieren als die größte Stage.
+                let (mw, mh) = self.stages.values().fold((0u32, 0u32), |(w, h), s| {
+                    (
+                        w.max(s.geometry.width as u32),
+                        h.max(s.geometry.height as u32),
+                    )
+                });
+                self.video.set_max_frame(mw, mh);
                 self.compositor.mark_dirty(&name);
                 for region in regions {
                     if let Some(route) = region.route {
@@ -2841,6 +2852,24 @@ impl MediaEngine for RealMediaEngine {
                         });
                     }
                 } else {
+                    // HTML5 mit Dauer: erst die Out-Animation des Templates
+                    // (Trigger „out"), fertig erst danach – wie beim Stop.
+                    if matches!(playback.kind, PlaybackKind::Html(_)) {
+                        if let Some(html) = self.html.get_mut(&cue_id) {
+                            if html.closing_since.is_some() {
+                                continue;
+                            }
+                            if html.loaded {
+                                if let Some(webview) = &mut html.webview {
+                                    if webview.trigger("out", serde_json::Value::Null).is_ok() {
+                                        html.closing_since = Some(now);
+                                        html.finish_on_close = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let total = playback.loop_mode.total_iterations();
                     if playback.loop_mode.is_infinite() || playback.iterations_done + 1 < total {
                         playback.iterations_done += 1;
@@ -2907,6 +2936,7 @@ impl MediaEngine for RealMediaEngine {
                     loaded: false,
                     pending_data: self.pending_html_data.remove(&cue_id).unwrap_or_default(),
                     closing_since: None,
+                    finish_on_close: false,
                 },
             );
             out.push(EngineEvent::HtmlLoaded { cue_id });
@@ -3004,9 +3034,24 @@ impl MediaEngine for RealMediaEngine {
                 }
             }
         }
-        // Out-Animation fertig (oder Timeout): jetzt wirklich stoppen.
+        // Out-Animation fertig (oder Timeout): jetzt wirklich stoppen – bzw.
+        // nach abgelaufener Dauer als fertig melden (Gruppen laufen weiter).
         for cue_id in closing_done {
-            let _ = self.handle(EngineCommand::Stop { cue_id });
+            let finishes = self.html.get(&cue_id).is_some_and(|h| h.finish_on_close);
+            if !finishes {
+                let _ = self.handle(EngineCommand::Stop { cue_id });
+                continue;
+            }
+            self.html.remove(&cue_id);
+            if let Some(playback) = self.active.remove(&cue_id) {
+                self.frames.lock().unwrap().remove(&cue_id);
+                self.opacities.lock().unwrap().remove(&cue_id);
+                self.drop_fades_on(cue_id);
+                self.current_volumes.remove(&cue_id);
+                Self::mark_stage_dirty(&mut self.compositor, &playback);
+            }
+            out.push(EngineEvent::Finished { cue_id });
+            out.push(EngineEvent::PostWaitElapsed { cue_id });
         }
         // Script-Cues: WebView-Events pollen – nach Loaded/Fehler ist das
         // Script fertig → Finished + PostWaitElapsed (Cue endet).

@@ -153,6 +153,17 @@ fn for_each_media_path(cue: &mut crate::core::Cue, f: &mut dyn FnMut(&mut PathBu
     }
 }
 
+/// Relativer Pfad mit `/` als Trenner – so lädt eine unter Windows
+/// gespeicherte Show auch auf macOS/Linux (dort ist `\\` kein Trenner);
+/// Windows selbst akzeptiert `/` beim Auflösen.
+fn portable_relative(rel: &Path) -> PathBuf {
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    PathBuf::from(parts.join("/"))
+}
+
 impl ShowDocument {
     /// Ruft `f` für jede Mediendatei aller Cues auf (Pfade änderbar).
     pub fn for_each_media_path(&mut self, f: &mut dyn FnMut(&mut PathBuf)) {
@@ -168,7 +179,7 @@ impl ShowDocument {
     pub fn make_paths_relative(&mut self, base: &Path) {
         self.for_each_media_path(&mut |path| {
             if let Ok(rel) = path.strip_prefix(base) {
-                *path = rel.to_path_buf();
+                *path = portable_relative(rel);
             }
         });
     }
@@ -368,6 +379,16 @@ impl ShowDocument {
 
 #[cfg(test)]
 mod tests {
+
+    /// Relative Pfade immer mit `/` speichern (Windows → macOS/Linux).
+    #[test]
+    fn relative_paths_use_forward_slashes() {
+        let base = std::env::temp_dir().join("kp-show-base");
+        let rel = portable_relative(Path::new("Media").join("sub").join("song.mp3").as_path());
+        assert_eq!(rel.to_string_lossy(), "Media/sub/song.mp3");
+        // Rundreise: aufgelöst wieder unterhalb von base.
+        assert!(base.join(&rel).starts_with(&base));
+    }
     use super::*;
     use crate::core::{
         Cue, CueType, LoopMode, Region, Screen, ScreenRotation, StageGeometry, TestPatternKind,
